@@ -17,6 +17,9 @@ except ImportError:
     BINANCE_API_KEY = ""
     BINANCE_SECRET_KEY = ""
 
+# Sử dụng testnet hay mainnet
+TESTNET = True
+
 class MobileCoin:
     def __init__(self, name):
         self.name = name
@@ -25,16 +28,23 @@ class MobileCoin:
         self.min_order_amount = 10.0
         self.min_qty = 0.001
         self.step_size = 0.001
+        self.last_update_time = 0
+        self.data_valid = False
         
     def update_data(self):
         try:
-            client = Client(BINANCE_API_KEY, BINANCE_SECRET_KEY, testnet=True)
+            # Giới hạn request: 5 giây giữa các lần cập nhật
+            current_time = time.time()
+            if current_time - self.last_update_time < 5:
+                return self.data_valid
+                
+            client = Client(BINANCE_API_KEY, BINANCE_SECRET_KEY, testnet=TESTNET)
             
             # Cập nhật giá hiện tại
             ticker = client.get_symbol_ticker(symbol=self.name)
             self.price = float(ticker['price'])
             
-            # Lấy thông số làm tròn (chỉ khi chưa có)
+            # Lấy thông số hợp đồng (chỉ lần đầu)
             if not hasattr(self, 'symbol_info'):
                 exchange_info = client.futures_exchange_info()
                 for symbol in exchange_info['symbols']:
@@ -50,9 +60,12 @@ class MobileCoin:
                         elif f['filterType'] == 'MIN_NOTIONAL':
                             self.min_order_amount = float(f['minNotional'])
             
+            self.last_update_time = current_time
+            self.data_valid = True
             return True
         except Exception as e:
-            print(f"Error updating coin data: {e}")
+            print(f"Lỗi cập nhật dữ liệu: {e}")
+            self.data_valid = False
             return False
 
 
@@ -70,6 +83,7 @@ class MobileTradingBot:
         self.entry_price = 0.0
         self.last_trade_time = 0
         self.cooldown = 60  # 60 giây giữa các lệnh
+        self.data_retries = 0  # Đếm số lần thử lại khi mất kết nối
         
     def round_to_step(self, value, step):
         """Làm tròn giá trị theo bước quy định"""
@@ -77,9 +91,32 @@ class MobileTradingBot:
             return value
         return round(round(value / step) * step, 8)
     
-    def calculate_signal(self, prices):
-        """Tính toán tín hiệu giao dịch tối ưu"""
-        if len(prices) < 20:
+    def get_historical_prices(self):
+        """Lấy dữ liệu giá lịch sử với xử lý lỗi"""
+        try:
+            client = Client(BINANCE_API_KEY, BINANCE_SECRET_KEY, testnet=TESTNET)
+            
+            # Tính toán giới hạn dữ liệu cần lấy
+            period = max(self.strategy_settings['ma_short'], self.strategy_settings['ma_long'])
+            limit = min(period * 2, 100)  # Lấy đủ dữ liệu nhưng không quá 100
+            
+            klines = client.get_klines(
+                symbol=self.coin.name,
+                interval=self.strategy_settings['timeframe'],
+                limit=limit
+            )
+            return [float(kline[4]) for kline in klines]
+        except Exception as e:
+            print(f"Lỗi lấy dữ liệu lịch sử: {e}")
+            return []
+    
+    def calculate_signal(self):
+        """Tính toán tín hiệu giao dịch với kiểm tra dữ liệu"""
+        prices = self.get_historical_prices()
+        
+        # Kiểm tra xem có đủ dữ liệu không
+        if len(prices) < self.strategy_settings['ma_long']:
+            print(f"Không đủ dữ liệu: {len(prices)} < {self.strategy_settings['ma_long']}")
             return "neutral"
             
         # Chiến lược MA đơn giản
@@ -94,7 +131,7 @@ class MobileTradingBot:
         return "neutral"
     
     def place_trade(self):
-        """Đặt lệnh giao dịch tối ưu"""
+        """Đặt lệnh giao dịch với xử lý lỗi toàn diện"""
         if not self.active or self.position_open:
             return None
             
@@ -104,13 +141,22 @@ class MobileTradingBot:
             return None
             
         try:
-            client = Client(BINANCE_API_KEY, BINANCE_SECRET_KEY, testnet=True)
+            # Cập nhật dữ liệu coin trước khi giao dịch
+            if not self.coin.update_data():
+                self.data_retries += 1
+                if self.data_retries > 3:
+                    return "Lỗi: Không thể cập nhật dữ liệu sau 3 lần thử"
+                return None
+                
+            self.data_retries = 0  # Reset bộ đếm sau khi thành công
+            
+            client = Client(BINANCE_API_KEY, BINANCE_SECRET_KEY, testnet=TESTNET)
             
             # Lấy số dư tài khoản
             balance_info = client.futures_account_balance()
             usdt_balance = next((item for item in balance_info if item['asset'] == 'USDT'), None)
             if not usdt_balance:
-                return "No USDT balance found"
+                return "Lỗi: Không tìm thấy số dư USDT"
                 
             balance = float(usdt_balance['balance'])
             
@@ -121,19 +167,14 @@ class MobileTradingBot:
             
             # Kiểm tra số lượng tối thiểu
             if quantity < self.coin.min_qty:
-                return f"Quantity too small. Min: {self.coin.min_qty}, Calculated: {quantity}"
-            
-            # Lấy dữ liệu giá lịch sử
-            klines = client.get_klines(
-                symbol=self.coin.name,
-                interval=self.strategy_settings['timeframe'],
-                limit=50
-            )
-            prices = [float(kline[4]) for kline in klines]
+                return f"Lỗi: Khối lượng quá nhỏ. Tối thiểu: {self.coin.min_qty}, Tính toán: {quantity}"
             
             # Tính toán tín hiệu
-            signal = self.calculate_signal(prices)
+            signal = self.calculate_signal()
+            if signal == "neutral":
+                return "Không có tín hiệu giao dịch"
             
+            # Thực hiện giao dịch
             if signal == "long":
                 # Đặt lệnh long
                 order = client.futures_create_order(
@@ -197,12 +238,12 @@ class MobileTradingBot:
                 return f"SHORT: {quantity} @ {self.coin.price:.2f}"
                 
         except Exception as e:
-            return f"Error: {str(e)}"
+            return f"Lỗi giao dịch: {str(e)}"
         
         return None
     
     def get_tp_sl_info(self):
-        """Lấy thông tin TP/SL"""
+        """Lấy thông tin TP/SL cho vị thế hiện tại"""
         if not self.position_open:
             return None, None
             
@@ -223,17 +264,17 @@ class MobileTradingBot:
             return None
             
         try:
-            client = Client(BINANCE_API_KEY, BINANCE_SECRET_KEY, testnet=True)
+            client = Client(BINANCE_API_KEY, BINANCE_SECRET_KEY, testnet=TESTNET)
             positions = client.futures_position_information(symbol=self.coin.name)
             position = next((p for p in positions if float(p['positionAmt']) != 0), None)
             
             if not position or float(position['positionAmt']) == 0:
                 self.position_open = False
                 self.position_side = None
-                return "Position closed"
+                return "Vị thế đã đóng"
                 
         except Exception as e:
-            return f"Error checking position: {str(e)}"
+            return f"Lỗi kiểm tra vị thế: {str(e)}"
             
         return None
 
@@ -242,7 +283,7 @@ class MobileTradingApp:
     def __init__(self, root):
         self.root = root
         self.root.title("Trading Bot")
-        self.root.geometry("400x700")  # Kích thước phù hợp điện thoại
+        self.root.geometry("400x700")  # Kích thước tối ưu cho điện thoại
         self.root.option_add('*Font', 'Helvetica 14')  # Font lớn dễ đọc
         
         # Biến giao dịch
@@ -253,14 +294,17 @@ class MobileTradingApp:
             'timeframe': "15m"
         }
         
-        # Tạo giao diện thân thiện điện thoại
+        # Tạo giao diện thân thiện với điện thoại
         self.setup_mobile_ui()
         
         # Tải cài đặt nếu có
         self.load_settings()
+        
+        # Kiểm tra kết nối ban đầu
+        self.check_initial_connection()
     
     def setup_mobile_ui(self):
-        # Main frame với cuộn
+        # Main frame với khả năng cuộn
         main_frame = ttk.Frame(self.root)
         main_frame.pack(fill=tk.BOTH, expand=True)
         
@@ -302,12 +346,12 @@ class MobileTradingApp:
         self.risk_entry.grid(row=2, column=1, padx=5, pady=5, sticky="ew")
         self.risk_entry.insert(0, "5")
         
-        ttk.Label(control_frame, text="TP %:").grid(row=3, column=0, padx=5, pady=5, sticky="w")
+        ttk.Label(control_frame, text="Take Profit %:").grid(row=3, column=0, padx=5, pady=5, sticky="w")
         self.tp_entry = ttk.Entry(control_frame, width=5)
         self.tp_entry.grid(row=3, column=1, padx=5, pady=5, sticky="ew")
         self.tp_entry.insert(0, "2.0")
         
-        ttk.Label(control_frame, text="SL %:").grid(row=4, column=0, padx=5, pady=5, sticky="w")
+        ttk.Label(control_frame, text="Stop Loss %:").grid(row=4, column=0, padx=5, pady=5, sticky="w")
         self.sl_entry = ttk.Entry(control_frame, width=5)
         self.sl_entry.grid(row=4, column=1, padx=5, pady=5, sticky="ew")
         self.sl_entry.insert(0, "1.0")
@@ -333,11 +377,10 @@ class MobileTradingApp:
         self.ma_long_entry.grid(row=2, column=1, padx=5, pady=5, sticky="ew")
         self.ma_long_entry.insert(0, "20")
         
-        # Position info
+        # Position info - Hiển thị TP/SL
         self.position_frame = ttk.LabelFrame(self.scrollable_frame, text="📈 VỊ THẾ HIỆN TẠI")
         self.position_frame.pack(fill=tk.X, padx=10, pady=5, ipadx=5, ipady=5)
         
-        # Tạo nhãn trống sẽ cập nhật sau
         self.position_info = ttk.Label(self.position_frame, text="Không có vị thế mở")
         self.position_info.pack(padx=5, pady=5)
         
@@ -383,8 +426,8 @@ class MobileTradingApp:
                     f"Hướng: {self.bot.position_side}\n"
                     f"Giá vào: {self.bot.entry_price:.2f}\n"
                     f"Giá hiện tại: {self.bot.coin.price:.2f}\n"
-                    f"TP: {tp_price:.2f}\n"
-                    f"SL: {sl_price:.2f}"
+                    f"Take Profit: {tp_price:.2f}\n"
+                    f"Stop Loss: {sl_price:.2f}"
                 )
                 self.position_info.config(text=position_text)
                 return
@@ -392,6 +435,7 @@ class MobileTradingApp:
         self.position_info.config(text="Không có vị thế mở")
     
     def log_message(self, message):
+        """Ghi log với thời gian và cập nhật trạng thái"""
         self.log_text.config(state=tk.NORMAL)
         timestamp = datetime.now().strftime("%H:%M:%S")
         self.log_text.insert(tk.END, f"[{timestamp}] {message}\n")
@@ -399,13 +443,33 @@ class MobileTradingApp:
         self.log_text.see(tk.END)
         self.status_var.set(message)
     
+    def check_initial_connection(self):
+        """Kiểm tra kết nối ban đầu với Binance"""
+        try:
+            client = Client(BINANCE_API_KEY, BINANCE_SECRET_KEY, testnet=TESTNET)
+            client.get_server_time()
+            self.log_message("Kết nối Binance thành công")
+        except Exception as e:
+            self.log_message(f"Lỗi kết nối Binance: {str(e)}")
+            self.log_message("Vui lòng kiểm tra API keys và kết nối mạng")
+    
     def start_bot(self):
+        """Khởi động bot giao dịch"""
         coin_name = self.coin_entry.get().strip().upper()
         if not coin_name:
             messagebox.showerror("Lỗi", "Vui lòng nhập tên coin")
             return
             
         try:
+            # Kiểm tra coin có hợp lệ không
+            client = Client(BINANCE_API_KEY, BINANCE_SECRET_KEY, testnet=TESTNET)
+            exchange_info = client.futures_exchange_info()
+            valid_coins = [s['symbol'] for s in exchange_info['symbols']]
+            
+            if coin_name not in valid_coins:
+                messagebox.showerror("Lỗi", f"Coin {coin_name} không hợp lệ")
+                return
+            
             leverage = int(self.leverage_entry.get())
             risk_percent = float(self.risk_entry.get())
             take_profit = float(self.tp_entry.get())
@@ -443,10 +507,11 @@ class MobileTradingApp:
             # Bắt đầu cập nhật giao diện
             self.update_gui()
             
-        except ValueError:
-            messagebox.showerror("Lỗi", "Giá trị nhập không hợp lệ")
+        except Exception as e:
+            self.log_message(f"Lỗi khởi động bot: {str(e)}")
     
     def stop_bot(self):
+        """Dừng bot giao dịch"""
         if self.bot:
             self.bot.active = False
             self.start_btn.config(state=tk.NORMAL)
@@ -454,11 +519,12 @@ class MobileTradingApp:
             self.log_message("Bot đã dừng")
     
     def run_trading(self):
+        """Luồng chính thực hiện giao dịch"""
         while self.bot and self.bot.active:
             try:
                 # Cập nhật giá
                 if not self.bot.coin.update_data():
-                    self.log_message("Cập nhật giá thất bại")
+                    self.log_message("Cập nhật giá thất bại, thử lại sau")
                     time.sleep(10)
                     continue
                 
@@ -474,10 +540,10 @@ class MobileTradingApp:
                         self.log_message(result)
                 
                 # Chờ giữa các lần kiểm tra
-                time.sleep(10)
+                time.sleep(15)  # Giảm tần suất request
                 
             except Exception as e:
-                self.log_message(f"Lỗi: {str(e)}")
+                self.log_message(f"Lỗi hệ thống: {str(e)}")
                 time.sleep(30)
     
     def update_gui(self):
@@ -496,6 +562,7 @@ class MobileTradingApp:
             self.update_position_info()
     
     def save_settings(self):
+        """Lưu cài đặt vào file"""
         settings = {
             'coin': self.coin_entry.get(),
             'leverage': self.leverage_entry.get(),
@@ -513,6 +580,7 @@ class MobileTradingApp:
         self.log_message("Đã lưu cài đặt")
     
     def load_settings(self):
+        """Tải cài đặt từ file"""
         if os.path.exists("mobile_settings.json"):
             try:
                 with open("mobile_settings.json", "r") as f:
