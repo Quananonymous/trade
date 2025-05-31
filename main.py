@@ -2,6 +2,7 @@ import tkinter as tk
 from tkinter import ttk, messagebox, scrolledtext
 from binance.client import Client
 from binance.enums import *
+from binance.exceptions import BinanceAPIException
 import threading
 import time
 import json
@@ -9,19 +10,20 @@ import os
 import numpy as np
 from datetime import datetime
 import math
+import requests
+import socket
+import ssl
 
 # File config chỉ chứa API keys
 try:
-    from config import BINANCE_API_KEY, BINANCE_SECRET_KEY
+    from config import BINANCE_API_KEY, BINANCE_SECRET_KEY, USE_TESTNET
 except ImportError:
     BINANCE_API_KEY = ""
     BINANCE_SECRET_KEY = ""
-
-# Sử dụng testnet hay mainnet
-TESTNET = True
+    USE_TESTNET = True  # Mặc định dùng testnet
 
 class MobileCoin:
-    def __init__(self, name):
+    def __init__(self, name, logger):
         self.name = name
         self.price = 0.0
         self.max_leverage = 20
@@ -30,6 +32,7 @@ class MobileCoin:
         self.step_size = 0.001
         self.last_update_time = 0
         self.data_valid = False
+        self.logger = logger
         
     def update_data(self):
         try:
@@ -38,7 +41,13 @@ class MobileCoin:
             if current_time - self.last_update_time < 5:
                 return self.data_valid
                 
-            client = Client(BINANCE_API_KEY, BINANCE_SECRET_KEY, testnet=TESTNET)
+            # Tạo client với timeout rõ ràng
+            client = Client(
+                BINANCE_API_KEY, 
+                BINANCE_SECRET_KEY, 
+                testnet=USE_TESTNET,
+                requests_params={'timeout': 10}
+            )
             
             # Cập nhật giá hiện tại
             ticker = client.get_symbol_ticker(symbol=self.name)
@@ -50,6 +59,7 @@ class MobileCoin:
                 for symbol in exchange_info['symbols']:
                     if symbol['symbol'] == self.name:
                         self.symbol_info = symbol
+                        self.logger(f"Đã tải thông tin hợp đồng cho {self.name}")
                         break
                 
                 if hasattr(self, 'symbol_info'):
@@ -63,14 +73,30 @@ class MobileCoin:
             self.last_update_time = current_time
             self.data_valid = True
             return True
+        except BinanceAPIException as e:
+            self.logger(f"Lỗi API Binance: {e.status_code} - {e.message}")
+            self.data_valid = False
+            return False
+        except (requests.exceptions.ConnectionError, socket.gaierror) as e:
+            self.logger(f"Lỗi kết nối mạng: {str(e)}")
+            self.data_valid = False
+            return False
+        except (requests.exceptions.Timeout, socket.timeout) as e:
+            self.logger(f"Lỗi timeout: Không nhận được phản hồi từ Binance")
+            self.data_valid = False
+            return False
+        except ssl.SSLError as e:
+            self.logger(f"Lỗi SSL: {str(e)}")
+            self.data_valid = False
+            return False
         except Exception as e:
-            print(f"Lỗi cập nhật dữ liệu: {e}")
+            self.logger(f"Lỗi không xác định khi cập nhật dữ liệu: {str(e)}")
             self.data_valid = False
             return False
 
 
 class MobileTradingBot:
-    def __init__(self, coin, leverage, risk_percent, take_profit, stop_loss, strategy_settings):
+    def __init__(self, coin, leverage, risk_percent, take_profit, stop_loss, strategy_settings, logger):
         self.coin = coin
         self.leverage = leverage
         self.risk_percent = risk_percent
@@ -84,6 +110,7 @@ class MobileTradingBot:
         self.last_trade_time = 0
         self.cooldown = 60  # 60 giây giữa các lệnh
         self.data_retries = 0  # Đếm số lần thử lại khi mất kết nối
+        self.logger = logger
         
     def round_to_step(self, value, step):
         """Làm tròn giá trị theo bước quy định"""
@@ -92,9 +119,14 @@ class MobileTradingBot:
         return round(round(value / step) * step, 8)
     
     def get_historical_prices(self):
-        """Lấy dữ liệu giá lịch sử với xử lý lỗi"""
+        """Lấy dữ liệu giá lịch sử với xử lý lỗi toàn diện"""
         try:
-            client = Client(BINANCE_API_KEY, BINANCE_SECRET_KEY, testnet=TESTNET)
+            client = Client(
+                BINANCE_API_KEY, 
+                BINANCE_SECRET_KEY, 
+                testnet=USE_TESTNET,
+                requests_params={'timeout': 15}
+            )
             
             # Tính toán giới hạn dữ liệu cần lấy
             period = max(self.strategy_settings['ma_short'], self.strategy_settings['ma_long'])
@@ -106,8 +138,20 @@ class MobileTradingBot:
                 limit=limit
             )
             return [float(kline[4]) for kline in klines]
+        except BinanceAPIException as e:
+            self.logger(f"Lỗi API khi lấy dữ liệu lịch sử: {e.status_code} - {e.message}")
+            return []
+        except (requests.exceptions.ConnectionError, socket.gaierror) as e:
+            self.logger(f"Lỗi kết nối mạng khi lấy dữ liệu lịch sử: {str(e)}")
+            return []
+        except (requests.exceptions.Timeout, socket.timeout) as e:
+            self.logger(f"Lỗi timeout khi lấy dữ liệu lịch sử")
+            return []
+        except ssl.SSLError as e:
+            self.logger(f"Lỗi SSL khi lấy dữ liệu lịch sử: {str(e)}")
+            return []
         except Exception as e:
-            print(f"Lỗi lấy dữ liệu lịch sử: {e}")
+            self.logger(f"Lỗi không xác định khi lấy dữ liệu lịch sử: {str(e)}")
             return []
     
     def calculate_signal(self):
@@ -116,17 +160,20 @@ class MobileTradingBot:
         
         # Kiểm tra xem có đủ dữ liệu không
         if len(prices) < self.strategy_settings['ma_long']:
-            print(f"Không đủ dữ liệu: {len(prices)} < {self.strategy_settings['ma_long']}")
+            self.logger(f"Không đủ dữ liệu: {len(prices)} < {self.strategy_settings['ma_long']}")
             return "neutral"
             
         # Chiến lược MA đơn giản
-        short_ma = np.mean(prices[-self.strategy_settings['ma_short']:])
-        long_ma = np.mean(prices[-self.strategy_settings['ma_long']:])
-        
-        if short_ma > long_ma:
-            return "long"
-        elif short_ma < long_ma:
-            return "short"
+        try:
+            short_ma = np.mean(prices[-self.strategy_settings['ma_short']:])
+            long_ma = np.mean(prices[-self.strategy_settings['ma_long']:])
+            
+            if short_ma > long_ma:
+                return "long"
+            elif short_ma < long_ma:
+                return "short"
+        except Exception as e:
+            self.logger(f"Lỗi tính toán tín hiệu: {str(e)}")
         
         return "neutral"
     
@@ -150,7 +197,12 @@ class MobileTradingBot:
                 
             self.data_retries = 0  # Reset bộ đếm sau khi thành công
             
-            client = Client(BINANCE_API_KEY, BINANCE_SECRET_KEY, testnet=TESTNET)
+            client = Client(
+                BINANCE_API_KEY, 
+                BINANCE_SECRET_KEY, 
+                testnet=USE_TESTNET,
+                requests_params={'timeout': 15}
+            )
             
             # Lấy số dư tài khoản
             balance_info = client.futures_account_balance()
@@ -237,8 +289,16 @@ class MobileTradingBot:
                 self.last_trade_time = current_time
                 return f"SHORT: {quantity} @ {self.coin.price:.2f}"
                 
+        except BinanceAPIException as e:
+            return f"Lỗi API Binance: {e.status_code} - {e.message}"
+        except (requests.exceptions.ConnectionError, socket.gaierror) as e:
+            return f"Lỗi kết nối mạng: {str(e)}"
+        except (requests.exceptions.Timeout, socket.timeout) as e:
+            return "Lỗi timeout: Không nhận được phản hồi từ Binance"
+        except ssl.SSLError as e:
+            return f"Lỗi SSL: {str(e)}"
         except Exception as e:
-            return f"Lỗi giao dịch: {str(e)}"
+            return f"Lỗi không xác định khi đặt lệnh: {str(e)}"
         
         return None
     
@@ -264,7 +324,12 @@ class MobileTradingBot:
             return None
             
         try:
-            client = Client(BINANCE_API_KEY, BINANCE_SECRET_KEY, testnet=TESTNET)
+            client = Client(
+                BINANCE_API_KEY, 
+                BINANCE_SECRET_KEY, 
+                testnet=USE_TESTNET,
+                requests_params={'timeout': 10}
+            )
             positions = client.futures_position_information(symbol=self.coin.name)
             position = next((p for p in positions if float(p['positionAmt']) != 0), None)
             
@@ -416,6 +481,15 @@ class MobileTradingApp:
         self.root.update_idletasks()
         canvas.config(scrollregion=canvas.bbox("all"))
     
+    def log_message(self, message):
+        """Ghi log với thời gian và cập nhật trạng thái"""
+        self.log_text.config(state=tk.NORMAL)
+        timestamp = datetime.now().strftime("%H:%M:%S")
+        self.log_text.insert(tk.END, f"[{timestamp}] {message}\n")
+        self.log_text.config(state=tk.DISABLED)
+        self.log_text.see(tk.END)
+        self.status_var.set(message)
+    
     def update_position_info(self):
         """Cập nhật thông tin vị thế và TP/SL"""
         if self.bot and self.bot.position_open:
@@ -434,24 +508,47 @@ class MobileTradingApp:
         
         self.position_info.config(text="Không có vị thế mở")
     
-    def log_message(self, message):
-        """Ghi log với thời gian và cập nhật trạng thái"""
-        self.log_text.config(state=tk.NORMAL)
-        timestamp = datetime.now().strftime("%H:%M:%S")
-        self.log_text.insert(tk.END, f"[{timestamp}] {message}\n")
-        self.log_text.config(state=tk.DISABLED)
-        self.log_text.see(tk.END)
-        self.status_var.set(message)
-    
     def check_initial_connection(self):
         """Kiểm tra kết nối ban đầu với Binance"""
         try:
-            client = Client(BINANCE_API_KEY, BINANCE_SECRET_KEY, testnet=TESTNET)
+            client = Client(
+                BINANCE_API_KEY, 
+                BINANCE_SECRET_KEY, 
+                testnet=USE_TESTNET,
+                requests_params={'timeout': 10}
+            )
             client.get_server_time()
-            self.log_message("Kết nối Binance thành công")
+            
+            # Xác định loại mạng
+            net_type = "Testnet" if USE_TESTNET else "Mainnet"
+            self.log_message(f"Kết nối Binance {net_type} thành công")
+            
+            # Kiểm tra API keys có hợp lệ không
+            try:
+                balance_info = client.futures_account_balance()
+                if any(float(item['balance']) > 0 for item in balance_info):
+                    self.log_message("API keys hợp lệ")
+                else:
+                    self.log_message("API keys hợp lệ nhưng không có số dư")
+            except BinanceAPIException as e:
+                if e.status_code == 401:
+                    self.log_message("Lỗi: API keys không hợp lệ hoặc không đủ quyền")
+                else:
+                    self.log_message(f"Lỗi khi kiểm tra số dư: {e.message}")
+        except BinanceAPIException as e:
+            net_type = "Testnet" if USE_TESTNET else "Mainnet"
+            if e.status_code == 401:
+                self.log_message(f"Lỗi xác thực: API keys không hợp lệ cho {net_type}")
+            else:
+                self.log_message(f"Lỗi API Binance ({net_type}): {e.status_code} - {e.message}")
+        except (requests.exceptions.ConnectionError, socket.gaierror) as e:
+            self.log_message(f"Lỗi kết nối mạng: {str(e)}")
+        except (requests.exceptions.Timeout, socket.timeout) as e:
+            self.log_message("Lỗi timeout: Không kết nối được tới Binance")
+        except ssl.SSLError as e:
+            self.log_message(f"Lỗi SSL: {str(e)}")
         except Exception as e:
-            self.log_message(f"Lỗi kết nối Binance: {str(e)}")
-            self.log_message("Vui lòng kiểm tra API keys và kết nối mạng")
+            self.log_message(f"Lỗi không xác định khi kiểm tra kết nối: {str(e)}")
     
     def start_bot(self):
         """Khởi động bot giao dịch"""
@@ -462,7 +559,12 @@ class MobileTradingApp:
             
         try:
             # Kiểm tra coin có hợp lệ không
-            client = Client(BINANCE_API_KEY, BINANCE_SECRET_KEY, testnet=TESTNET)
+            client = Client(
+                BINANCE_API_KEY, 
+                BINANCE_SECRET_KEY, 
+                testnet=USE_TESTNET,
+                requests_params={'timeout': 10}
+            )
             exchange_info = client.futures_exchange_info()
             valid_coins = [s['symbol'] for s in exchange_info['symbols']]
             
@@ -481,14 +583,15 @@ class MobileTradingApp:
             self.strategy_settings['timeframe'] = self.timeframe_combo.get()
             
             # Tạo coin và bot
-            coin = MobileCoin(coin_name)
+            coin = MobileCoin(coin_name, self.log_message)
             if not coin.update_data():
-                self.log_message("Không lấy được dữ liệu coin")
+                self.log_message("Không lấy được dữ liệu coin, vui lòng kiểm tra kết nối")
                 return
                 
             self.bot = MobileTradingBot(
                 coin, leverage, risk_percent, 
-                take_profit, stop_loss, self.strategy_settings
+                take_profit, stop_loss, self.strategy_settings,
+                self.log_message
             )
             self.bot.active = True
             
@@ -619,3 +722,4 @@ if __name__ == "__main__":
     root = tk.Tk()
     app = MobileTradingApp(root)
     root.mainloop()
+    
