@@ -203,12 +203,16 @@ class FutureBotGUI:
         self.sl_entry = ttk.Entry(self.frame_order)
         self.sl_entry.grid(row=4, column=1, padx=5, pady=2)
         self.direction_var = tk.StringVar(value="long")
-        ttk.Radiobutton(self.frame_order, text="Long", variable=self.direction_var, value="long").grid(row=5, column=1, sticky="w")
-        ttk.Radiobutton(self.frame_order, text="Short", variable=self.direction_var, value="short").grid(row=5, column=1, sticky="e")
+        self.radio_long = ttk.Radiobutton(self.frame_order, text="Long", variable=self.direction_var, value="long")
+        self.radio_long.grid(row=5, column=1, sticky="w")
+        self.radio_short = ttk.Radiobutton(self.frame_order, text="Short", variable=self.direction_var, value="short")
+        self.radio_short.grid(row=5, column=1, sticky="e")
 
         self.btn_order = ttk.Button(self.frame_order, text="Đặt & Tự động lặp", command=self.place_order)
         self.btn_order.grid(row=6, column=0, columnspan=2, pady=5)
-        self.frame_order.config(state="disabled")
+
+        # Ban đầu disable các trường đặt lệnh
+        self.set_order_widgets_state("disabled")
 
         # Danh sách các vị thế đang mở
         self.frame_status = ttk.LabelFrame(root, text="Các vị thế đang theo dõi")
@@ -225,16 +229,31 @@ class FutureBotGUI:
         self.log_text = tk.Text(root, height=6, state="disabled")
         self.log_text.pack(fill="x", padx=10, pady=5)
 
+    def set_order_widgets_state(self, state):
+        widgets = [
+            self.symbol_entry,
+            self.leverage_entry,
+            self.percent_entry,
+            self.tp_entry,
+            self.sl_entry,
+            self.btn_order,
+            self.radio_long,
+            self.radio_short
+        ]
+        for w in widgets:
+            w.config(state=state)
+
     def connect_account(self):
         api = self.api_entry.get().strip()
         secret = self.secret_entry.get().strip()
         try:
             self.account = TaiKhoan(api, secret)
             self.status_label.config(text="Kết nối thành công!", foreground="green")
-            self.frame_order.config(state="normal")
+            self.set_order_widgets_state("normal")
         except Exception as e:
             messagebox.showerror("Lỗi", f"Kết nối thất bại: {e}")
             self.status_label.config(text="Kết nối thất bại.", foreground="red")
+            self.set_order_widgets_state("disabled")
 
     def place_order(self):
         if not self.account:
