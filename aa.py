@@ -14,42 +14,6 @@ except ImportError:
 API_KEY = BINANCE_API_KEY
 API_SECRET = BINANCE_SECRET_KEY
 
-# === Indicator Functions ===
-def calc_rsi(prices, period=14):
-    if len(prices) < period + 1: return None
-    deltas = np.diff(prices)
-    seed = deltas[:period]
-    up = seed[seed >= 0].sum() / period
-    down = -seed[seed < 0].sum() / period or 1
-    rs = up / down
-    rsi = 100 - 100 / (1 + rs)
-    for i in range(period, len(deltas)):
-        delta = deltas[i]
-        upval = max(delta, 0)
-        downval = -min(delta, 0)
-        up = (up * (period - 1) + upval) / period
-        down = (down * (period - 1) + downval) / period or 1
-        rs = up / down
-        rsi = 100 - 100 / (1 + rs)
-    return rsi
-
-def calc_ema(prices, period=21):
-    if len(prices) < period: return None
-    ema = np.mean(prices[:period])
-    k = 2 / (period + 1)
-    for price in prices[period:]:
-        ema = price * k + ema * (1 - k)
-    return ema
-
-def calc_macd(prices):
-    if len(prices) < 35: return None, None
-    ema12 = calc_ema(prices, 12)
-    ema26 = calc_ema(prices, 26)
-    macd = ema12 - ema26
-    signal = calc_ema(prices[-9:], 9)
-    return macd, signal
-
-# === API Helpers ===
 def sign(query):
     return hmac.new(API_SECRET.encode(), query.encode(), hashlib.sha256).hexdigest()
 
@@ -92,11 +56,68 @@ def place_order(symbol, side, qty):
     req = urllib.request.Request(url, headers={'X-MBX-APIKEY': API_KEY}, method='POST')
     return json.loads(urllib.request.urlopen(req).read())
 
+def place_stop_market(symbol, side, qty, stop_price):
+    ts = int(time.time() * 1000)
+    params = {
+        "symbol": symbol.upper(),
+        "side": side,
+        "type": "STOP_MARKET",
+        "quantity": qty,
+        "stopPrice": stop_price,
+        "timestamp": ts
+    }
+    query = urllib.parse.urlencode(params)
+    sig = sign(query)
+    url = f"https://fapi.binance.com/fapi/v1/order?{query}&signature={sig}"
+    req = urllib.request.Request(url, headers={'X-MBX-APIKEY': API_KEY}, method='POST')
+    return json.loads(urllib.request.urlopen(req).read())
+
+def cancel_all_stop_orders(symbol):
+    ts = int(time.time() * 1000)
+    query = f"symbol={symbol.upper()}&timestamp={ts}"
+    sig = sign(query)
+    url = f"https://fapi.binance.com/fapi/v1/allOpenOrders?{query}&signature={sig}"
+    req = urllib.request.Request(url, headers={'X-MBX-APIKEY': API_KEY}, method='DELETE')
+    urllib.request.urlopen(req)
+
 def get_current_price(symbol):
     url = f"https://fapi.binance.com/fapi/v1/ticker/price?symbol={symbol.upper()}"
     return float(json.loads(urllib.request.urlopen(url).read())['price'])
 
-# === Bot Logic ===
+def calc_rsi(prices, period=14):
+    if len(prices) < period + 1: return None
+    deltas = np.diff(prices)
+    seed = deltas[:period]
+    up = seed[seed >= 0].sum() / period
+    down = -seed[seed < 0].sum() / period or 1
+    rs = up / down
+    rsi = 100 - 100 / (1 + rs)
+    for i in range(period, len(deltas)):
+        delta = deltas[i]
+        upval = max(delta, 0)
+        downval = -min(delta, 0)
+        up = (up * (period - 1) + upval) / period
+        down = (down * (period - 1) + downval) / period or 1
+        rs = up / down
+        rsi = 100 - 100 / (1 + rs)
+    return rsi
+
+def calc_ema(prices, period=21):
+    if len(prices) < period: return None
+    ema = np.mean(prices[:period])
+    k = 2 / (period + 1)
+    for price in prices[period:]:
+        ema = price * k + ema * (1 - k)
+    return ema
+
+def calc_macd(prices):
+    if len(prices) < 35: return None, None
+    ema12 = calc_ema(prices, 12)
+    ema26 = calc_ema(prices, 26)
+    macd = ema12 - ema26
+    signal = calc_ema(prices[-9:], 9)
+    return macd, signal
+
 class IndicatorBot:
     def __init__(self, symbol, lev, percent, tp, sl, indicator, log_func, update_func):
         self.symbol = symbol
@@ -111,16 +132,21 @@ class IndicatorBot:
         self.side = ""
         self.qty = 0
         self.entry = 0
+        self.tp_order_id = None
+        self.sl_order_id = None
         self.ws = None
         self.prices = []
         self._stop = False
-        self._last_status = None  # Để tránh spam trạng thái
+        self._last_status = None
         self.thread = threading.Thread(target=self.run, daemon=True)
         self.thread.start()
 
     def stop(self):
         self._stop = True
         if self.ws: self.ws.close()
+        try:
+            cancel_all_stop_orders(self.symbol)
+        except: pass
 
     def run(self):
         def on_message(ws, msg):
@@ -134,23 +160,27 @@ class IndicatorBot:
                 signal = self.get_signal()
                 if signal:
                     self.open_position(signal)
-            elif self.status == "open":
-                pnl = (price - self.entry) * self.qty
-                roi = pnl * self.lev / abs(self.qty) if self.qty != 0 else 0
-                if (roi >= self.tp and self.tp > 0) or (roi <= -self.sl and self.sl > 0):
-                    self.close_position()
             # Chỉ cập nhật trạng thái khi vừa mở hoặc vừa đóng lệnh (tránh spam)
             if self.status != self._last_status:
                 self.update(self.symbol, self.status, self.side)
                 self._last_status = self.status
-        def on_error(ws, err): self.log(f"WebSocket lỗi {self.symbol}: {err}")
-        def on_close(ws, *_): self.log(f"WebSocket đóng {self.symbol}, reconnect..."); self.start_ws()
+
+        def on_error(ws, err):
+            self.log(f"WebSocket lỗi {self.symbol}: {err}")
+
+        def on_close(ws, *_):
+            self.log(f"WebSocket đóng {self.symbol}, tự động kết nối lại...")
+            if not self._stop:
+                time.sleep(3)
+                self.start_ws()
+
         self.start_ws = lambda: threading.Thread(target=lambda: websocket.WebSocketApp(
             f"wss://fstream.binance.com/ws/{self.symbol.lower()}@trade",
             on_message=on_message, on_error=on_error, on_close=on_close
         ).run_forever(), daemon=True).start()
         self.start_ws()
-        while not self._stop: time.sleep(1)
+        while not self._stop:
+            time.sleep(1)
 
     def get_signal(self):
         if len(self.prices) < 35: return None
@@ -178,6 +208,7 @@ class IndicatorBot:
 
     def open_position(self, side):
         try:
+            cancel_all_stop_orders(self.symbol)
             set_leverage(self.symbol, self.lev)
             balance = get_balance()
             price = get_current_price(self.symbol)
@@ -191,11 +222,28 @@ class IndicatorBot:
             self.status = "open"
             self.log(f"Vào lệnh {self.symbol} {side} TP={self.tp}% SL={self.sl}% theo {self.indicator}")
             self.update(self.symbol, self.status, self.side)
+            # Đặt lệnh STOP_MARKET TP/SL
+            tp_price, sl_price = self.calc_tp_sl_price()
+            if tp_price:
+                place_stop_market(self.symbol, "SELL" if side == "BUY" else "BUY", abs(qty), tp_price)
+            if sl_price:
+                place_stop_market(self.symbol, "SELL" if side == "BUY" else "BUY", abs(qty), sl_price)
         except Exception as e:
             self.log(f"Lỗi vào lệnh {self.symbol}: {e}")
 
+    def calc_tp_sl_price(self):
+        # Tính giá TP/SL dựa trên entry và phần trăm TP/SL
+        if self.side == "BUY":
+            tp_price = self.entry * (1 + self.tp / 100) if self.tp > 0 else None
+            sl_price = self.entry * (1 - self.sl / 100) if self.sl > 0 else None
+        else:
+            tp_price = self.entry * (1 - self.tp / 100) if self.tp > 0 else None
+            sl_price = self.entry * (1 + self.sl / 100) if self.sl > 0 else None
+        return (round(tp_price, 4) if tp_price else None, round(sl_price, 4) if sl_price else None)
+
     def close_position(self):
         try:
+            cancel_all_stop_orders(self.symbol)
             place_order(self.symbol, "SELL" if self.side == "BUY" else "BUY", abs(self.qty))
             self.status = "waiting"
             self.log(f"{self.symbol} đã chốt lệnh {self.side}, chờ tín hiệu mới ({self.indicator})")
@@ -203,7 +251,6 @@ class IndicatorBot:
         except Exception as e:
             self.log(f"Lỗi đóng {self.symbol}: {e}")
 
-# === GUI Setup ===
 class FuturesBotGUI:
     def __init__(self, root):
         self.root = root
@@ -216,7 +263,6 @@ class FuturesBotGUI:
 
         self.bots = {}
 
-        # Form nhập liệu dọc cho mobile
         form = ttk.Frame(root)
         form.grid(row=0, column=0, sticky="ew", padx=10, pady=5)
         row = 0
@@ -247,7 +293,6 @@ class FuturesBotGUI:
         row += 1
         ttk.Button(form, text="Thêm bot", command=self.menu_add).grid(row=row, column=0, columnspan=2, pady=10, sticky="ew")
 
-        # Danh sách bot dạng Listbox + Scrollbar (rolling)
         ttk.Label(root, text="Các bot đang chạy:").grid(row=1, column=0, sticky="w", padx=10)
         frame_list = ttk.Frame(root)
         frame_list.grid(row=2, column=0, padx=10, pady=5, sticky="ew")
@@ -258,17 +303,17 @@ class FuturesBotGUI:
         self.bot_list.config(yscrollcommand=scrollbar.set)
         ttk.Button(root, text="Dừng bot đã chọn", command=self.stop_selected_bot).grid(row=3, column=0, pady=5, sticky="ew")
 
-        # Log
         ttk.Label(root, text="Log:").grid(row=4, column=0, sticky="w", padx=10)
         self.log_text = tk.Text(root, height=8, width=40, bg="black", fg="lime", font=("Arial", 13))
         self.log_text.grid(row=5, column=0, padx=10, pady=5, sticky="ew")
+
+        self.check_positions()
 
     def log(self, msg):
         self.log_text.insert(tk.END, msg + "\n")
         self.log_text.see(tk.END)
 
     def update_tree(self, symbol, status, side):
-        # Chỉ cập nhật trạng thái bot trong Listbox khi vừa mở hoặc vừa đóng lệnh (tránh spam)
         for idx in range(self.bot_list.size()):
             if self.bot_list.get(idx).startswith(symbol):
                 self.bot_list.delete(idx)
@@ -309,6 +354,30 @@ class FuturesBotGUI:
             self.log(f"Đã dừng bot cho {symbol}")
             self.bot_list.delete(idx)
             del self.bots[symbol]
+
+    def check_positions(self):
+        try:
+            ts = int(time.time() * 1000)
+            query = f"timestamp={ts}"
+            sig = sign(query)
+            url = f"https://fapi.binance.com/fapi/v2/positionRisk?{query}&signature={sig}"
+            req = urllib.request.Request(url, headers={'X-MBX-APIKEY': API_KEY})
+            positions = json.loads(urllib.request.urlopen(req).read())
+            for pos in positions:
+                symbol = pos['symbol']
+                amt = float(pos['positionAmt'])
+                if symbol in self.bots:
+                    bot = self.bots[symbol]
+                    if bot.status == "open" and amt == 0:
+                        bot.status = "waiting"
+                        bot.side = ""
+                        bot.qty = 0
+                        bot.entry = 0
+                        bot.log(f"{symbol} đã bị đóng ngoài bot, chờ tín hiệu mới ({bot.indicator})")
+                        bot.update(symbol, bot.status, bot.side)
+        except Exception as e:
+            self.log(f"Lỗi kiểm tra vị thế: {e}")
+        self.root.after(30000, self.check_positions)
 
 if __name__ == "__main__":
     root = tk.Tk()
