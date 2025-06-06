@@ -114,6 +114,7 @@ class IndicatorBot:
         self.ws = None
         self.prices = []
         self._stop = False
+        self._last_status = None  # Để tránh spam trạng thái
         self.thread = threading.Thread(target=self.run, daemon=True)
         self.thread.start()
 
@@ -138,7 +139,10 @@ class IndicatorBot:
                 roi = pnl * self.lev / abs(self.qty) if self.qty != 0 else 0
                 if (roi >= self.tp and self.tp > 0) or (roi <= -self.sl and self.sl > 0):
                     self.close_position()
-            self.update(self.symbol, self.status, self.side)
+            # Chỉ cập nhật trạng thái khi vừa mở hoặc vừa đóng lệnh (tránh spam)
+            if self.status != self._last_status:
+                self.update(self.symbol, self.status, self.side)
+                self._last_status = self.status
         def on_error(ws, err): self.log(f"WebSocket lỗi {self.symbol}: {err}")
         def on_close(ws, *_): self.log(f"WebSocket đóng {self.symbol}, reconnect..."); self.start_ws()
         self.start_ws = lambda: threading.Thread(target=lambda: websocket.WebSocketApp(
@@ -243,10 +247,15 @@ class FuturesBotGUI:
         row += 1
         ttk.Button(form, text="Thêm bot", command=self.menu_add).grid(row=row, column=0, columnspan=2, pady=10, sticky="ew")
 
-        # Danh sách bot dạng Listbox đơn giản
+        # Danh sách bot dạng Listbox + Scrollbar (rolling)
         ttk.Label(root, text="Các bot đang chạy:").grid(row=1, column=0, sticky="w", padx=10)
-        self.bot_list = tk.Listbox(root, height=8, font=("Arial", 14), bg="black", fg="lime", selectbackground="gray")
-        self.bot_list.grid(row=2, column=0, padx=10, pady=5, sticky="ew")
+        frame_list = ttk.Frame(root)
+        frame_list.grid(row=2, column=0, padx=10, pady=5, sticky="ew")
+        self.bot_list = tk.Listbox(frame_list, height=8, font=("Arial", 14), bg="black", fg="lime", selectbackground="gray")
+        self.bot_list.pack(side=tk.LEFT, fill=tk.BOTH, expand=True)
+        scrollbar = ttk.Scrollbar(frame_list, orient="vertical", command=self.bot_list.yview)
+        scrollbar.pack(side=tk.RIGHT, fill=tk.Y)
+        self.bot_list.config(yscrollcommand=scrollbar.set)
         ttk.Button(root, text="Dừng bot đã chọn", command=self.stop_selected_bot).grid(row=3, column=0, pady=5, sticky="ew")
 
         # Log
@@ -259,7 +268,7 @@ class FuturesBotGUI:
         self.log_text.see(tk.END)
 
     def update_tree(self, symbol, status, side):
-        # Cập nhật trạng thái bot trong Listbox
+        # Chỉ cập nhật trạng thái bot trong Listbox khi vừa mở hoặc vừa đóng lệnh (tránh spam)
         for idx in range(self.bot_list.size()):
             if self.bot_list.get(idx).startswith(symbol):
                 self.bot_list.delete(idx)
