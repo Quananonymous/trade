@@ -207,56 +207,66 @@ class FuturesBotGUI:
         self.root.configure(bg="black")
         style = ttk.Style()
         style.theme_use("default")
-        style.configure("TLabel", background="black", foreground="lime")
-        style.configure("TButton", background="black", foreground="lime")
+        style.configure("TLabel", background="black", foreground="lime", font=("Arial", 16))
+        style.configure("TButton", background="black", foreground="lime", font=("Arial", 16))
 
         self.bots = {}
 
-        # Form nhập liệu trực tiếp
+        # Form nhập liệu dọc cho mobile
         form = ttk.Frame(root)
         form.grid(row=0, column=0, sticky="ew", padx=10, pady=5)
-        ttk.Label(form, text="Cặp coin:").grid(row=0, column=0)
-        self.symbol_entry = ttk.Entry(form, width=10)
-        self.symbol_entry.grid(row=0, column=1)
-        ttk.Label(form, text="Đòn bẩy:").grid(row=0, column=2)
-        self.lev_entry = ttk.Entry(form, width=5)
-        self.lev_entry.grid(row=0, column=3)
-        ttk.Label(form, text="% Số dư:").grid(row=0, column=4)
-        self.percent_entry = ttk.Entry(form, width=5)
-        self.percent_entry.grid(row=0, column=5)
-        ttk.Label(form, text="TP %:").grid(row=0, column=6)
-        self.tp_entry = ttk.Entry(form, width=5)
-        self.tp_entry.grid(row=0, column=7)
-        ttk.Label(form, text="SL %:").grid(row=0, column=8)
-        self.sl_entry = ttk.Entry(form, width=5)
-        self.sl_entry.grid(row=0, column=9)
-        ttk.Label(form, text="Chỉ báo:").grid(row=0, column=10)
+        row = 0
+        ttk.Label(form, text="Cặp coin:").grid(row=row, column=0, sticky="w")
+        self.symbol_entry = ttk.Entry(form, width=15, font=("Arial", 16))
+        self.symbol_entry.grid(row=row, column=1, pady=2)
+        row += 1
+        ttk.Label(form, text="Đòn bẩy:").grid(row=row, column=0, sticky="w")
+        self.lev_entry = ttk.Entry(form, width=15, font=("Arial", 16))
+        self.lev_entry.grid(row=row, column=1, pady=2)
+        row += 1
+        ttk.Label(form, text="% Số dư:").grid(row=row, column=0, sticky="w")
+        self.percent_entry = ttk.Entry(form, width=15, font=("Arial", 16))
+        self.percent_entry.grid(row=row, column=1, pady=2)
+        row += 1
+        ttk.Label(form, text="TP %:").grid(row=row, column=0, sticky="w")
+        self.tp_entry = ttk.Entry(form, width=15, font=("Arial", 16))
+        self.tp_entry.grid(row=row, column=1, pady=2)
+        row += 1
+        ttk.Label(form, text="SL %:").grid(row=row, column=0, sticky="w")
+        self.sl_entry = ttk.Entry(form, width=15, font=("Arial", 16))
+        self.sl_entry.grid(row=row, column=1, pady=2)
+        row += 1
+        ttk.Label(form, text="Chỉ báo:").grid(row=row, column=0, sticky="w")
         self.indicator_var = tk.StringVar(value="RSI")
-        self.indicator_menu = ttk.Combobox(form, textvariable=self.indicator_var, values=["RSI", "EMA", "MACD", "Tất cả"], width=8)
-        self.indicator_menu.grid(row=0, column=11)
-        ttk.Button(form, text="Thêm bot", command=self.menu_add).grid(row=0, column=12, padx=5)
+        self.indicator_menu = ttk.Combobox(form, textvariable=self.indicator_var, values=["RSI", "EMA", "MACD", "Tất cả"], width=13, font=("Arial", 16))
+        self.indicator_menu.grid(row=row, column=1, pady=2)
+        row += 1
+        ttk.Button(form, text="Thêm bot", command=self.menu_add).grid(row=row, column=0, columnspan=2, pady=10, sticky="ew")
 
-        # Bảng trạng thái bot
-        self.tree = ttk.Treeview(root, columns=("symbol", "status", "side", "tp", "sl", "lev", "percent", "indicator"), show="headings", height=8)
-        for col in self.tree["columns"]:
-            self.tree.heading(col, text=col)
-        self.tree.grid(row=1, column=0, padx=10, pady=5, sticky="ew")
-        ttk.Button(root, text="Dừng bot đã chọn", command=self.stop_selected_bot).grid(row=2, column=0, pady=5)
+        # Danh sách bot dạng Listbox đơn giản
+        ttk.Label(root, text="Các bot đang chạy:").grid(row=1, column=0, sticky="w", padx=10)
+        self.bot_list = tk.Listbox(root, height=8, font=("Arial", 14), bg="black", fg="lime", selectbackground="gray")
+        self.bot_list.grid(row=2, column=0, padx=10, pady=5, sticky="ew")
+        ttk.Button(root, text="Dừng bot đã chọn", command=self.stop_selected_bot).grid(row=3, column=0, pady=5, sticky="ew")
 
         # Log
-        self.log_text = tk.Text(root, height=8, width=100, bg="black", fg="lime")
-        self.log_text.grid(row=3, column=0, padx=10, pady=5)
+        ttk.Label(root, text="Log:").grid(row=4, column=0, sticky="w", padx=10)
+        self.log_text = tk.Text(root, height=8, width=40, bg="black", fg="lime", font=("Arial", 13))
+        self.log_text.grid(row=5, column=0, padx=10, pady=5, sticky="ew")
 
     def log(self, msg):
         self.log_text.insert(tk.END, msg + "\n")
         self.log_text.see(tk.END)
 
     def update_tree(self, symbol, status, side):
-        if symbol in self.tree.get_children():
-            vals = list(self.tree.item(symbol, "values"))
-            vals[1] = status
-            vals[2] = side
-            self.tree.item(symbol, values=vals)
+        # Cập nhật trạng thái bot trong Listbox
+        for idx in range(self.bot_list.size()):
+            if self.bot_list.get(idx).startswith(symbol):
+                self.bot_list.delete(idx)
+                break
+        bot = self.bots.get(symbol)
+        if bot:
+            self.bot_list.insert(tk.END, f"{symbol} | {status} | {side} | {bot.indicator}")
 
     def menu_add(self):
         symbol = self.symbol_entry.get().strip().upper()
@@ -274,19 +284,22 @@ class FuturesBotGUI:
             return
         bot = IndicatorBot(symbol, lev, percent, tp, sl, indicator, self.log, self.update_tree)
         self.bots[symbol] = bot
-        self.tree.insert("", "end", iid=symbol, values=(symbol, bot.status, bot.side, tp, sl, lev, percent, indicator))
+        self.bot_list.insert(tk.END, f"{symbol} | {bot.status} | {bot.side} | {indicator}")
         self.log(f"Đã thêm bot cho {symbol} với chỉ báo {indicator}")
 
     def stop_selected_bot(self):
-        selected = self.tree.selection()
-        for sym in selected:
-            bot = self.bots.get(sym)
-            if bot:
-                bot.stop()
-                bot.close_position()
-                self.log(f"Đã dừng bot cho {sym}")
-                self.tree.delete(sym)
-                del self.bots[sym]
+        selected = self.bot_list.curselection()
+        if not selected: return
+        idx = selected[0]
+        line = self.bot_list.get(idx)
+        symbol = line.split('|')[0].strip()
+        bot = self.bots.get(symbol)
+        if bot:
+            bot.stop()
+            bot.close_position()
+            self.log(f"Đã dừng bot cho {symbol}")
+            self.bot_list.delete(idx)
+            del self.bots[symbol]
 
 if __name__ == "__main__":
     root = tk.Tk()
