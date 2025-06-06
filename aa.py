@@ -7,9 +7,9 @@ import websocket
 
 try:
     from config import BINANCE_API_KEY, BINANCE_SECRET_KEY
-    USE_CONFIG = True
 except ImportError:
-    USE_CONFIG = False
+    BINANCE_API_KEY = ""
+    BINANCE_SECRET_KEY = ""
 
 API_KEY = BINANCE_API_KEY
 API_SECRET = BINANCE_SECRET_KEY
@@ -42,17 +42,12 @@ def calc_ema(prices, period=21):
     return ema
 
 def calc_macd(prices):
-    if len(prices) < 35: return None
+    if len(prices) < 35: return None, None
     ema12 = calc_ema(prices, 12)
     ema26 = calc_ema(prices, 26)
     macd = ema12 - ema26
     signal = calc_ema(prices[-9:], 9)
     return macd, signal
-
-def get_klines(symbol, interval="5m", limit=100):
-    url = f"https://fapi.binance.com/fapi/v1/klines?symbol={symbol.upper()}&interval={interval}&limit={limit}"
-    data = json.loads(urllib.request.urlopen(url).read())
-    return np.array([float(k[4]) for k in data])
 
 # === API Helpers ===
 def sign(query):
@@ -101,17 +96,9 @@ def get_current_price(symbol):
     url = f"https://fapi.binance.com/fapi/v1/ticker/price?symbol={symbol.upper()}"
     return float(json.loads(urllib.request.urlopen(url).read())['price'])
 
-def get_positions():
-    ts = int(time.time() * 1000)
-    query = f"timestamp={ts}"
-    sig = sign(query)
-    url = f"https://fapi.binance.com/fapi/v2/positionRisk?{query}&signature={sig}"
-    req = urllib.request.Request(url, headers={'X-MBX-APIKEY': API_KEY})
-    return json.loads(urllib.request.urlopen(req).read())
-
 # === Bot Logic ===
 class IndicatorBot:
-    def __init__(self, symbol, lev, percent, tp, sl, indicator, log_func):
+    def __init__(self, symbol, lev, percent, tp, sl, indicator, log_func, update_func):
         self.symbol = symbol
         self.lev = lev
         self.percent = percent
@@ -119,17 +106,24 @@ class IndicatorBot:
         self.sl = sl
         self.indicator = indicator
         self.log = log_func
+        self.update = update_func
         self.status = "waiting"
-        self.side = None
+        self.side = ""
         self.qty = 0
         self.entry = 0
         self.ws = None
         self.prices = []
+        self._stop = False
         self.thread = threading.Thread(target=self.run, daemon=True)
         self.thread.start()
 
+    def stop(self):
+        self._stop = True
+        if self.ws: self.ws.close()
+
     def run(self):
         def on_message(ws, msg):
+            if self._stop: return
             data = json.loads(msg)
             price = float(data['p'])
             self.prices.append(price)
@@ -144,6 +138,7 @@ class IndicatorBot:
                 roi = pnl * self.lev / abs(self.qty) if self.qty != 0 else 0
                 if (roi >= self.tp and self.tp > 0) or (roi <= -self.sl and self.sl > 0):
                     self.close_position()
+            self.update(self.symbol, self.status, self.side)
         def on_error(ws, err): self.log(f"WebSocket lỗi {self.symbol}: {err}")
         def on_close(ws, *_): self.log(f"WebSocket đóng {self.symbol}, reconnect..."); self.start_ws()
         self.start_ws = lambda: threading.Thread(target=lambda: websocket.WebSocketApp(
@@ -151,14 +146,14 @@ class IndicatorBot:
             on_message=on_message, on_error=on_error, on_close=on_close
         ).run_forever(), daemon=True).start()
         self.start_ws()
-        while True: time.sleep(1)
+        while not self._stop: time.sleep(1)
 
     def get_signal(self):
         if len(self.prices) < 35: return None
-        rsi_val = calc_rsi(np.array(self.prices))
-        ema_val = calc_ema(np.array(self.prices))
-        macd_val, macd_signal = calc_macd(np.array(self.prices))
-        # Chọn chỉ báo
+        arr = np.array(self.prices)
+        rsi_val = calc_rsi(arr)
+        ema_val = calc_ema(arr)
+        macd_val, macd_signal = calc_macd(arr)
         if self.indicator == "RSI":
             if rsi_val is not None and rsi_val <= 30: return "BUY"
             if rsi_val is not None and rsi_val >= 70: return "SELL"
@@ -191,6 +186,7 @@ class IndicatorBot:
             self.side = side
             self.status = "open"
             self.log(f"Vào lệnh {self.symbol} {side} TP={self.tp}% SL={self.sl}% theo {self.indicator}")
+            self.update(self.symbol, self.status, self.side)
         except Exception as e:
             self.log(f"Lỗi vào lệnh {self.symbol}: {e}")
 
@@ -199,6 +195,7 @@ class IndicatorBot:
             place_order(self.symbol, "SELL" if self.side == "BUY" else "BUY", abs(self.qty))
             self.status = "waiting"
             self.log(f"{self.symbol} đã chốt lệnh {self.side}, chờ tín hiệu mới ({self.indicator})")
+            self.update(self.symbol, self.status, "")
         except Exception as e:
             self.log(f"Lỗi đóng {self.symbol}: {e}")
 
@@ -215,52 +212,81 @@ class FuturesBotGUI:
 
         self.bots = {}
 
-        self.log_text = tk.Text(root, height=15, width=70, bg="black", fg="lime")
-        self.log_text.grid(row=10, columnspan=3)
+        # Form nhập liệu trực tiếp
+        form = ttk.Frame(root)
+        form.grid(row=0, column=0, sticky="ew", padx=10, pady=5)
+        ttk.Label(form, text="Cặp coin:").grid(row=0, column=0)
+        self.symbol_entry = ttk.Entry(form, width=10)
+        self.symbol_entry.grid(row=0, column=1)
+        ttk.Label(form, text="Đòn bẩy:").grid(row=0, column=2)
+        self.lev_entry = ttk.Entry(form, width=5)
+        self.lev_entry.grid(row=0, column=3)
+        ttk.Label(form, text="% Số dư:").grid(row=0, column=4)
+        self.percent_entry = ttk.Entry(form, width=5)
+        self.percent_entry.grid(row=0, column=5)
+        ttk.Label(form, text="TP %:").grid(row=0, column=6)
+        self.tp_entry = ttk.Entry(form, width=5)
+        self.tp_entry.grid(row=0, column=7)
+        ttk.Label(form, text="SL %:").grid(row=0, column=8)
+        self.sl_entry = ttk.Entry(form, width=5)
+        self.sl_entry.grid(row=0, column=9)
+        ttk.Label(form, text="Chỉ báo:").grid(row=0, column=10)
+        self.indicator_var = tk.StringVar(value="RSI")
+        self.indicator_menu = ttk.Combobox(form, textvariable=self.indicator_var, values=["RSI", "EMA", "MACD", "Tất cả"], width=8)
+        self.indicator_menu.grid(row=0, column=11)
+        ttk.Button(form, text="Thêm bot", command=self.menu_add).grid(row=0, column=12, padx=5)
 
-        menubar = tk.Menu(root)
-        menu_main = tk.Menu(menubar, tearoff=0)
-        menu_main.add_command(label="Thêm cặp", command=self.menu_add)
-        menu_main.add_command(label="Trạng thái", command=self.menu_status)
-        menu_main.add_separator()
-        menu_main.add_command(label="Thoát", command=root.quit)
-        menubar.add_cascade(label="Menu", menu=menu_main)
-        root.config(menu=menubar)
+        # Bảng trạng thái bot
+        self.tree = ttk.Treeview(root, columns=("symbol", "status", "side", "tp", "sl", "lev", "percent", "indicator"), show="headings", height=8)
+        for col in self.tree["columns"]:
+            self.tree.heading(col, text=col)
+        self.tree.grid(row=1, column=0, padx=10, pady=5, sticky="ew")
+        ttk.Button(root, text="Dừng bot đã chọn", command=self.stop_selected_bot).grid(row=2, column=0, pady=5)
+
+        # Log
+        self.log_text = tk.Text(root, height=8, width=100, bg="black", fg="lime")
+        self.log_text.grid(row=3, column=0, padx=10, pady=5)
 
     def log(self, msg):
         self.log_text.insert(tk.END, msg + "\n")
         self.log_text.see(tk.END)
 
+    def update_tree(self, symbol, status, side):
+        if symbol in self.tree.get_children():
+            vals = list(self.tree.item(symbol, "values"))
+            vals[1] = status
+            vals[2] = side
+            self.tree.item(symbol, values=vals)
+
     def menu_add(self):
-        symbol = tk.simpledialog.askstring("Cặp coin", "Nhập cặp (VD: BTCUSDT):")
-        if not symbol: return
-        symbol = symbol.upper()
-        tp = tk.simpledialog.askfloat("TP %", "Nhập TP ROI (VD: 20):") or 0
-        sl = tk.simpledialog.askfloat("SL %", "Nhập SL ROI (VD: 10):") or 0
-        lev = tk.simpledialog.askinteger("Đòn bẩy", "Nhập đòn bẩy (VD: 20):") or 1
-        percent = tk.simpledialog.askfloat("% số dư", "% số dư vào lệnh:") or 100
-        indicator = tk.simpledialog.askstring("Chỉ báo", "Chọn chỉ báo: RSI, EMA, MACD, Tất cả").upper()
-        if indicator not in ["RSI", "EMA", "MACD", "TẤT CẢ"]:
-            self.log("Chỉ báo không hợp lệ! Chọn: RSI, EMA, MACD, Tất cả")
+        symbol = self.symbol_entry.get().strip().upper()
+        try:
+            lev = int(self.lev_entry.get())
+            percent = float(self.percent_entry.get())
+            tp = float(self.tp_entry.get())
+            sl = float(self.sl_entry.get())
+            indicator = self.indicator_var.get()
+        except Exception:
+            self.log("Vui lòng nhập đúng thông số!")
             return
-        if indicator == "TẤT CẢ": indicator = "Tất cả"
-        bot = IndicatorBot(symbol, lev, percent, tp, sl, indicator, self.log)
+        if symbol in self.bots:
+            self.log(f"Đã có bot cho {symbol}")
+            return
+        bot = IndicatorBot(symbol, lev, percent, tp, sl, indicator, self.log, self.update_tree)
         self.bots[symbol] = bot
+        self.tree.insert("", "end", iid=symbol, values=(symbol, bot.status, bot.side, tp, sl, lev, percent, indicator))
         self.log(f"Đã thêm bot cho {symbol} với chỉ báo {indicator}")
 
-    def menu_status(self):
-        top = tk.Toplevel(self.root)
-        top.title("Trạng thái các lệnh")
-        for sym, bot in self.bots.items():
-            btn = tk.Button(top, text=f"{sym} [{bot.status} - {bot.side}]", command=lambda s=sym: self.manage_order(s))
-            btn.pack(pady=2)
-
-    def manage_order(self, sym):
-        bot = self.bots[sym]
-        action = messagebox.askquestion(sym, f"TP: {bot.tp}%\nSL: {bot.sl}%\nĐóng hoặc chỉnh sửa?", icon='question')
-        if action == 'yes':
-            bot.close_position()
-            self.log(f"Đã đóng {sym} thủ công")
+    def stop_selected_bot(self):
+        selected = self.tree.selection()
+        for sym in selected:
+            bot = self.bots.get(sym)
+            if bot:
+                bot.stop()
+                bot.close_position()
+                self.log(f"Đã dừng bot cho {sym}")
+                self.tree.delete(sym)
+                del self.bots[sym]
 
 if __name__ == "__main__":
     root = tk.Tk()
