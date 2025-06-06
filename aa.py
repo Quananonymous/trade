@@ -1,9 +1,9 @@
-from binance.client import Client
-from binance.enums import *
+import json, hmac, hashlib, time, threading
+import urllib.request, urllib.parse
 import tkinter as tk
 from tkinter import ttk, messagebox
-import threading
-import time
+import numpy as np
+import websocket
 
 try:
     from config import BINANCE_API_KEY, BINANCE_SECRET_KEY
@@ -11,321 +11,258 @@ try:
 except ImportError:
     USE_CONFIG = False
 
-import numpy as np
+API_KEY = BINANCE_API_KEY
+API_SECRET = BINANCE_SECRET_KEY
 
-# --- Chỉ báo RSI thực tế ---
-def get_signal(coin, client, interval="5m", rsi_period=14, rsi_overbought=70, rsi_oversold=30):
-    try:
-        klines = client.futures_klines(symbol=coin.get_name(), interval=interval, limit=rsi_period+20)
-        closes = np.array([float(k[4]) for k in klines])
-        if len(closes) < rsi_period + 1:
-            return None
-        deltas = np.diff(closes)
-        seed = deltas[:rsi_period]
-        up = seed[seed >= 0].sum() / rsi_period
-        down = -seed[seed < 0].sum() / rsi_period
-        rs = up / down if down != 0 else 0
+# === Indicator Functions ===
+def calc_rsi(prices, period=14):
+    if len(prices) < period + 1: return None
+    deltas = np.diff(prices)
+    seed = deltas[:period]
+    up = seed[seed >= 0].sum() / period
+    down = -seed[seed < 0].sum() / period or 1
+    rs = up / down
+    rsi = 100 - 100 / (1 + rs)
+    for i in range(period, len(deltas)):
+        delta = deltas[i]
+        upval = max(delta, 0)
+        downval = -min(delta, 0)
+        up = (up * (period - 1) + upval) / period
+        down = (down * (period - 1) + downval) / period or 1
+        rs = up / down
         rsi = 100 - 100 / (1 + rs)
-        for i in range(rsi_period, len(deltas)):
-            delta = deltas[i]
-            upval = max(delta, 0)
-            downval = -min(delta, 0)
-            up = (up * (rsi_period - 1) + upval) / rsi_period
-            down = (down * (rsi_period - 1) + downval) / rsi_period
-            rs = up / down if down != 0 else 0
-            rsi = 100 - 100 / (1 + rs)
-        # Quyết định tín hiệu
-        if rsi < rsi_oversold:
-            return "long"
-        elif rsi > rsi_overbought:
-            return "short"
-        else:
-            return None
-    except Exception as e:
-        return None
+    return rsi
 
-# Thư viện Coin
-class Coin:
-    def __init__(self, name, client):
-        self.name = name
-        self.client = client
-        self.price = 0.0
-        self.max_leverage = 20
-        self.min_order_amount = 0.0
-        self.step_size = 0.001
-        self.update_info()
+def calc_ema(prices, period=21):
+    if len(prices) < period: return None
+    ema = np.mean(prices[:period])
+    k = 2 / (period + 1)
+    for price in prices[period:]:
+        ema = price * k + ema * (1 - k)
+    return ema
 
-    def update_info(self):
-        ticker = self.client.futures_symbol_ticker(symbol=self.name)
-        self.price = float(ticker['price'])
-        info = self.client.futures_exchange_info()
-        for symbol in info['symbols']:
-            if symbol['symbol'] == self.name:
-                for f in symbol['filters']:
-                    if f['filterType'] == 'MARKET_LOT_SIZE':
-                        self.step_size = float(f['stepSize'])
-                    if f['filterType'] == 'MIN_NOTIONAL':
-                        self.min_order_amount = float(f['notional'])
-                if 'leverageFilter' in symbol:
-                    self.max_leverage = int(symbol['leverageFilter']['maxLeverage'])
-                break
+def calc_macd(prices):
+    if len(prices) < 35: return None
+    ema12 = calc_ema(prices, 12)
+    ema26 = calc_ema(prices, 26)
+    macd = ema12 - ema26
+    signal = calc_ema(prices[-9:], 9)
+    return macd, signal
 
-    def get_price(self):
-        self.update_info()
-        return self.price
+def get_klines(symbol, interval="5m", limit=100):
+    url = f"https://fapi.binance.com/fapi/v1/klines?symbol={symbol.upper()}&interval={interval}&limit={limit}"
+    data = json.loads(urllib.request.urlopen(url).read())
+    return np.array([float(k[4]) for k in data])
 
-    def get_max_leverage(self):
-        return self.max_leverage
+# === API Helpers ===
+def sign(query):
+    return hmac.new(API_SECRET.encode(), query.encode(), hashlib.sha256).hexdigest()
 
-    def get_min_order_amount(self):
-        return self.min_order_amount
+def get_step_size(symbol):
+    url = "https://fapi.binance.com/fapi/v1/exchangeInfo"
+    try:
+        data = json.loads(urllib.request.urlopen(url).read())
+        for s in data['symbols']:
+            if s['symbol'].lower() == symbol.lower():
+                for f in s['filters']:
+                    if f['filterType'] == 'LOT_SIZE':
+                        return float(f['stepSize'])
+    except: return 0.001
 
-    def get_step_size(self):
-        return self.step_size
+def set_leverage(symbol, lev):
+    ts = int(time.time() * 1000)
+    query = f"symbol={symbol.upper()}&leverage={lev}&timestamp={ts}"
+    sig = sign(query)
+    url = f"https://fapi.binance.com/fapi/v1/leverage?{query}&signature={sig}"
+    req = urllib.request.Request(url, headers={'X-MBX-APIKEY': API_KEY}, method='POST')
+    urllib.request.urlopen(req)
 
-    def get_name(self):
-        return self.name
+def get_balance():
+    ts = int(time.time() * 1000)
+    query = f"timestamp={ts}"
+    sig = sign(query)
+    url = f"https://fapi.binance.com/fapi/v2/account?{query}&signature={sig}"
+    req = urllib.request.Request(url, headers={'X-MBX-APIKEY': API_KEY})
+    data = json.loads(urllib.request.urlopen(req).read())
+    for asset in data['assets']:
+        if asset['asset'] == 'USDT':
+            return float(asset['availableBalance'])
+    return 0
 
-# Thư viện Tài Khoản
-class TaiKhoan:
-    def __init__(self, api_key, secret_key):
-        self.BINANCE_API_KEY = api_key
-        self.BINANCE_SECRET_KEY = secret_key
-        self.client = Client(api_key, secret_key)
-        self.balance = self.get_balance()
+def place_order(symbol, side, qty):
+    ts = int(time.time() * 1000)
+    query = f"symbol={symbol.upper()}&side={side}&type=MARKET&quantity={qty}&timestamp={ts}"
+    sig = sign(query)
+    url = f"https://fapi.binance.com/fapi/v1/order?{query}&signature={sig}"
+    req = urllib.request.Request(url, headers={'X-MBX-APIKEY': API_KEY}, method='POST')
+    return json.loads(urllib.request.urlopen(req).read())
 
-    def get_balance(self):
-        info = self.client.futures_account_balance()
-        for item in info:
-            if item['asset'] == 'USDT':
-                return float(item['balance'])
-        return 0.0
+def get_current_price(symbol):
+    url = f"https://fapi.binance.com/fapi/v1/ticker/price?symbol={symbol.upper()}"
+    return float(json.loads(urllib.request.urlopen(url).read())['price'])
 
-    def update_balance(self):
-        self.balance = self.get_balance()
-        return self.balance
+def get_positions():
+    ts = int(time.time() * 1000)
+    query = f"timestamp={ts}"
+    sig = sign(query)
+    url = f"https://fapi.binance.com/fapi/v2/positionRisk?{query}&signature={sig}"
+    req = urllib.request.Request(url, headers={'X-MBX-APIKEY': API_KEY})
+    return json.loads(urllib.request.urlopen(req).read())
 
-# Thư viện Trading Future Bot
-class TradingFutureBot:
-    def __init__(self, coin, leverage, percent_balance, tp, sl):
-        self.coin = coin
-        self.leverage = leverage
-        self.percent_balance = percent_balance
+# === Bot Logic ===
+class IndicatorBot:
+    def __init__(self, symbol, lev, percent, tp, sl, indicator, log_func):
+        self.symbol = symbol
+        self.lev = lev
+        self.percent = percent
         self.tp = tp
         self.sl = sl
-        self.status = True  # Đang chạy
-        self.thread = None
-        self.last_signal = None
-
-    def start_auto_trade(self, account, update_callback=None):
-        if self.thread and self.thread.is_alive():
-            return
-        self.status = True
-        self.thread = threading.Thread(target=self._auto_trade_loop, args=(account, update_callback), daemon=True)
+        self.indicator = indicator
+        self.log = log_func
+        self.status = "waiting"
+        self.side = None
+        self.qty = 0
+        self.entry = 0
+        self.ws = None
+        self.prices = []
+        self.thread = threading.Thread(target=self.run, daemon=True)
         self.thread.start()
 
-    def stop(self):
-        self.status = False
+    def run(self):
+        def on_message(ws, msg):
+            data = json.loads(msg)
+            price = float(data['p'])
+            self.prices.append(price)
+            if len(self.prices) > 100:
+                self.prices = self.prices[-100:]
+            if self.status == "waiting":
+                signal = self.get_signal()
+                if signal:
+                    self.open_position(signal)
+            elif self.status == "open":
+                pnl = (price - self.entry) * self.qty
+                roi = pnl * self.lev / abs(self.qty) if self.qty != 0 else 0
+                if (roi >= self.tp and self.tp > 0) or (roi <= -self.sl and self.sl > 0):
+                    self.close_position()
+        def on_error(ws, err): self.log(f"WebSocket lỗi {self.symbol}: {err}")
+        def on_close(ws, *_): self.log(f"WebSocket đóng {self.symbol}, reconnect..."); self.start_ws()
+        self.start_ws = lambda: threading.Thread(target=lambda: websocket.WebSocketApp(
+            f"wss://fstream.binance.com/ws/{self.symbol.lower()}@trade",
+            on_message=on_message, on_error=on_error, on_close=on_close
+        ).run_forever(), daemon=True).start()
+        self.start_ws()
+        while True: time.sleep(1)
 
-    def _auto_trade_loop(self, account, update_callback):
-        while self.status:
-            try:
-                signal = get_signal(self.coin, account.client)
-                if signal and signal != self.last_signal:
-                    if not self.check_position_open(account):
-                        result = self.place_order(account, signal)
-                        self.last_signal = signal
-                        if update_callback:
-                            update_callback(f"{self.coin.get_name()} [{signal.upper()}]: {result}")
-                time.sleep(10)
-            except Exception as e:
-                if update_callback:
-                    update_callback(f"Lỗi bot {self.coin.get_name()}: {e}")
-                time.sleep(10)
+    def get_signal(self):
+        if len(self.prices) < 35: return None
+        rsi_val = calc_rsi(np.array(self.prices))
+        ema_val = calc_ema(np.array(self.prices))
+        macd_val, macd_signal = calc_macd(np.array(self.prices))
+        # Chọn chỉ báo
+        if self.indicator == "RSI":
+            if rsi_val is not None and rsi_val <= 30: return "BUY"
+            if rsi_val is not None and rsi_val >= 70: return "SELL"
+        elif self.indicator == "EMA":
+            if ema_val is not None and self.prices[-1] > ema_val: return "BUY"
+            if ema_val is not None and self.prices[-1] < ema_val: return "SELL"
+        elif self.indicator == "MACD":
+            if macd_val is not None and macd_signal is not None:
+                if macd_val > macd_signal: return "BUY"
+                if macd_val < macd_signal: return "SELL"
+        elif self.indicator == "Tất cả":
+            if (rsi_val is not None and ema_val is not None and macd_val is not None and macd_signal is not None):
+                buy = (rsi_val <= 30) and (self.prices[-1] > ema_val) and (macd_val > macd_signal)
+                sell = (rsi_val >= 70) and (self.prices[-1] < ema_val) and (macd_val < macd_signal)
+                if buy: return "BUY"
+                if sell: return "SELL"
+        return None
 
-    def check_position_open(self, account):
-        positions = account.client.futures_position_information(symbol=self.coin.get_name())
-        for pos in positions:
-            if float(pos['positionAmt']) != 0:
-                return True
-        return False
-
-    def place_order(self, account, direction):
-        account.update_balance()
-        balance = account.balance
-        self.coin.update_info()
-        min_amount = self.coin.get_min_order_amount()
-        price = self.coin.get_price()
-        order_amount = balance * self.percent_balance * self.leverage / 100
-        qty = round(order_amount / price, 3)
-        if qty * price < min_amount or qty <= 0:
-            return "Không đủ điều kiện đặt lệnh!"
-
-        # Đặt đòn bẩy
-        account.client.futures_change_leverage(symbol=self.coin.get_name(), leverage=self.leverage)
-
-        # Đặt lệnh market
-        side = SIDE_BUY if direction == "long" else SIDE_SELL
-        order = account.client.futures_create_order(
-            symbol=self.coin.get_name(),
-            side=side,
-            type=ORDER_TYPE_MARKET,
-            quantity=qty
-        )
-
-        # Đặt TP/SL nếu có
-        if self.tp > 0:
-            tp_price = price * (1 + self.tp / 100) if direction == "long" else price * (1 - self.tp / 100)
-            account.client.futures_create_order(
-                symbol=self.coin.get_name(),
-                side=SIDE_SELL if direction == "long" else SIDE_BUY,
-                type=ORDER_TYPE_TAKE_PROFIT_MARKET,
-                stopPrice=round(tp_price, 2),
-                closePosition=True
-            )
-        if self.sl > 0:
-            sl_price = price * (1 - self.sl / 100) if direction == "long" else price * (1 + self.sl / 100)
-            account.client.futures_create_order(
-                symbol=self.coin.get_name(),
-                side=SIDE_SELL if direction == "long" else SIDE_BUY,
-                type=ORDER_TYPE_STOP_MARKET,
-                stopPrice=round(sl_price, 2),
-                closePosition=True
-            )
-        return f"Đã mở vị thế {direction.upper()} {self.coin.get_name()} với {qty} coin!"
-
-# Giao diện GUI với Tkinter, chỉ chọn cặp coin, không chọn hướng
-class FutureBotGUI:
-    def __init__(self, root):
-        self.root = root
-        self.root.title("Future Trading Bot")
-        self.account = None
-        self.bots = {}  # Quản lý nhiều bot theo tên coin
-
-        # Giao diện nhập API
-        frame_api = ttk.LabelFrame(root, text="Tài khoản Binance")
-        frame_api.pack(fill="x", padx=10, pady=5)
-        ttk.Label(frame_api, text="API Key:").grid(row=0, column=0, sticky="w")
-        ttk.Label(frame_api, text="Secret Key:").grid(row=1, column=0, sticky="w")
-        self.api_entry = ttk.Entry(frame_api, width=40)
-        self.api_entry.grid(row=0, column=1, padx=5, pady=2)
-        self.secret_entry = ttk.Entry(frame_api, width=40, show="*")
-        self.secret_entry.grid(row=1, column=1, padx=5, pady=2)
-        ttk.Button(frame_api, text="Kết nối", command=self.connect_account).grid(row=0, column=2, rowspan=2, padx=5)
-
-        # Nếu dùng config.py thì tự động điền key/secret
-        if USE_CONFIG:
-            self.api_entry.insert(0, BINANCE_API_KEY)
-            self.secret_entry.insert(0, BINANCE_SECRET_KEY)
-
-        # Giao diện đặt lệnh
-        self.frame_order = ttk.LabelFrame(root, text="Đặt lệnh Future (chỉ chọn cặp, bot tự quyết định hướng)")
-        self.frame_order.pack(fill="x", padx=10, pady=5)
-        ttk.Label(self.frame_order, text="Cặp coin:").grid(row=0, column=0, sticky="w")
-        ttk.Label(self.frame_order, text="Đòn bẩy:").grid(row=1, column=0, sticky="w")
-        ttk.Label(self.frame_order, text="% Số dư:").grid(row=2, column=0, sticky="w")
-        ttk.Label(self.frame_order, text="Take Profit (%):").grid(row=3, column=0, sticky="w")
-        ttk.Label(self.frame_order, text="Stop Loss (%):").grid(row=4, column=0, sticky="w")
-
-        self.symbol_entry = ttk.Entry(self.frame_order)
-        self.symbol_entry.grid(row=0, column=1, padx=5, pady=2)
-        self.leverage_entry = ttk.Entry(self.frame_order)
-        self.leverage_entry.grid(row=1, column=1, padx=5, pady=2)
-        self.percent_entry = ttk.Entry(self.frame_order)
-        self.percent_entry.grid(row=2, column=1, padx=5, pady=2)
-        self.tp_entry = ttk.Entry(self.frame_order)
-        self.tp_entry.grid(row=3, column=1, padx=5, pady=2)
-        self.sl_entry = ttk.Entry(self.frame_order)
-        self.sl_entry.grid(row=4, column=1, padx=5, pady=2)
-
-        self.btn_order = ttk.Button(self.frame_order, text="Thêm cặp & Tự động lặp", command=self.place_order)
-        self.btn_order.grid(row=5, column=0, columnspan=2, pady=5)
-
-        # Ban đầu disable các trường đặt lệnh
-        self.set_order_widgets_state("disabled")
-
-        # Danh sách các vị thế đang mở
-        self.frame_status = ttk.LabelFrame(root, text="Các cặp đang theo dõi")
-        self.frame_status.pack(fill="x", padx=10, pady=5)
-        self.status_list = tk.Listbox(self.frame_status, height=6)
-        self.status_list.pack(fill="x", padx=5, pady=5)
-        ttk.Button(self.frame_status, text="Dừng bot & đóng vị thế", command=self.close_position).pack(pady=5)
-
-        # Trạng thái
-        self.status_label = ttk.Label(root, text="Chưa kết nối tài khoản.", foreground="red")
-        self.status_label.pack(pady=5)
-
-        # Log
-        self.log_text = tk.Text(root, height=6, state="disabled")
-        self.log_text.pack(fill="x", padx=10, pady=5)
-
-    def set_order_widgets_state(self, state):
-        widgets = [
-            self.symbol_entry,
-            self.leverage_entry,
-            self.percent_entry,
-            self.tp_entry,
-            self.sl_entry,
-            self.btn_order
-        ]
-        for w in widgets:
-            w.config(state=state)
-
-    def connect_account(self):
-        api = self.api_entry.get().strip()
-        secret = self.secret_entry.get().strip()
+    def open_position(self, side):
         try:
-            self.account = TaiKhoan(api, secret)
-            self.status_label.config(text="Kết nối thành công!", foreground="green")
-            self.set_order_widgets_state("normal")
+            set_leverage(self.symbol, self.lev)
+            balance = get_balance()
+            price = get_current_price(self.symbol)
+            step = get_step_size(self.symbol)
+            qty = balance * (self.percent / 100) * self.lev / price
+            qty = round(qty - (qty % step), 6)
+            place_order(self.symbol, side, qty)
+            self.entry = price
+            self.qty = qty if side == "BUY" else -qty
+            self.side = side
+            self.status = "open"
+            self.log(f"Vào lệnh {self.symbol} {side} TP={self.tp}% SL={self.sl}% theo {self.indicator}")
         except Exception as e:
-            messagebox.showerror("Lỗi", f"Kết nối thất bại: {e}")
-            self.status_label.config(text="Kết nối thất bại.", foreground="red")
-            self.set_order_widgets_state("disabled")
-
-    def place_order(self):
-        if not self.account:
-            messagebox.showwarning("Chưa kết nối", "Vui lòng kết nối tài khoản Binance trước.")
-            return
-        try:
-            symbol = self.symbol_entry.get().strip().upper()
-            if symbol in self.bots:
-                messagebox.showwarning("Đã theo dõi", f"Đã có bot cho {symbol}.")
-                return
-            coin = Coin(symbol, self.account.client)
-            leverage = int(self.leverage_entry.get())
-            percent = float(self.percent_entry.get())
-            tp = float(self.tp_entry.get())
-            sl = float(self.sl_entry.get())
-            bot = TradingFutureBot(coin, leverage, percent, tp, sl)
-            self.bots[symbol] = bot
-            self.status_list.insert(tk.END, f"{symbol} | Đòn bẩy: {leverage} | %Số dư: {percent}")
-            bot.start_auto_trade(self.account, self.log)
-            messagebox.showinfo("Kết quả", f"Đã bắt đầu bot tự động cho {symbol}.")
-        except Exception as e:
-            messagebox.showerror("Lỗi", f"Lỗi khi đặt lệnh: {e}")
+            self.log(f"Lỗi vào lệnh {self.symbol}: {e}")
 
     def close_position(self):
-        selection = self.status_list.curselection()
-        if not selection:
-            messagebox.showwarning("Chọn vị thế", "Vui lòng chọn vị thế để dừng.")
-            return
-        idx = selection[0]
-        symbol = self.status_list.get(idx).split('|')[0].strip()
-        if symbol in self.bots:
-            self.bots[symbol].stop()
-            del self.bots[symbol]
-            self.status_list.delete(idx)
-            self.log(f"Đã dừng bot cho {symbol}.")
-            messagebox.showinfo("Đã dừng", f"Đã dừng bot cho {symbol}.\nBạn cần tự đóng vị thế trên Binance nếu muốn.")
+        try:
+            place_order(self.symbol, "SELL" if self.side == "BUY" else "BUY", abs(self.qty))
+            self.status = "waiting"
+            self.log(f"{self.symbol} đã chốt lệnh {self.side}, chờ tín hiệu mới ({self.indicator})")
+        except Exception as e:
+            self.log(f"Lỗi đóng {self.symbol}: {e}")
+
+# === GUI Setup ===
+class FuturesBotGUI:
+    def __init__(self, root):
+        self.root = root
+        self.root.title("Futures Indicator Bot")
+        self.root.configure(bg="black")
+        style = ttk.Style()
+        style.theme_use("default")
+        style.configure("TLabel", background="black", foreground="lime")
+        style.configure("TButton", background="black", foreground="lime")
+
+        self.bots = {}
+
+        self.log_text = tk.Text(root, height=15, width=70, bg="black", fg="lime")
+        self.log_text.grid(row=10, columnspan=3)
+
+        menubar = tk.Menu(root)
+        menu_main = tk.Menu(menubar, tearoff=0)
+        menu_main.add_command(label="Thêm cặp", command=self.menu_add)
+        menu_main.add_command(label="Trạng thái", command=self.menu_status)
+        menu_main.add_separator()
+        menu_main.add_command(label="Thoát", command=root.quit)
+        menubar.add_cascade(label="Menu", menu=menu_main)
+        root.config(menu=menubar)
 
     def log(self, msg):
-        self.log_text.config(state="normal")
         self.log_text.insert(tk.END, msg + "\n")
         self.log_text.see(tk.END)
-        self.log_text.config(state="disabled")
+
+    def menu_add(self):
+        symbol = tk.simpledialog.askstring("Cặp coin", "Nhập cặp (VD: BTCUSDT):")
+        if not symbol: return
+        symbol = symbol.upper()
+        tp = tk.simpledialog.askfloat("TP %", "Nhập TP ROI (VD: 20):") or 0
+        sl = tk.simpledialog.askfloat("SL %", "Nhập SL ROI (VD: 10):") or 0
+        lev = tk.simpledialog.askinteger("Đòn bẩy", "Nhập đòn bẩy (VD: 20):") or 1
+        percent = tk.simpledialog.askfloat("% số dư", "% số dư vào lệnh:") or 100
+        indicator = tk.simpledialog.askstring("Chỉ báo", "Chọn chỉ báo: RSI, EMA, MACD, Tất cả").upper()
+        if indicator not in ["RSI", "EMA", "MACD", "TẤT CẢ"]:
+            self.log("Chỉ báo không hợp lệ! Chọn: RSI, EMA, MACD, Tất cả")
+            return
+        if indicator == "TẤT CẢ": indicator = "Tất cả"
+        bot = IndicatorBot(symbol, lev, percent, tp, sl, indicator, self.log)
+        self.bots[symbol] = bot
+        self.log(f"Đã thêm bot cho {symbol} với chỉ báo {indicator}")
+
+    def menu_status(self):
+        top = tk.Toplevel(self.root)
+        top.title("Trạng thái các lệnh")
+        for sym, bot in self.bots.items():
+            btn = tk.Button(top, text=f"{sym} [{bot.status} - {bot.side}]", command=lambda s=sym: self.manage_order(s))
+            btn.pack(pady=2)
+
+    def manage_order(self, sym):
+        bot = self.bots[sym]
+        action = messagebox.askquestion(sym, f"TP: {bot.tp}%\nSL: {bot.sl}%\nĐóng hoặc chỉnh sửa?", icon='question')
+        if action == 'yes':
+            bot.close_position()
+            self.log(f"Đã đóng {sym} thủ công")
 
 if __name__ == "__main__":
     root = tk.Tk()
-    FutureBotGUI(root)
+    FuturesBotGUI(root)
     root.mainloop()
