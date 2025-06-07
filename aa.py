@@ -20,90 +20,142 @@ def sign(query):
 def get_step_size(symbol):
     url = "https://fapi.binance.com/fapi/v1/exchangeInfo"
     try:
-        data = json.loads(urllib.request.urlopen(url).read())
+        response = urllib.request.urlopen(url)
+        data = json.loads(response.read())
         for s in data['symbols']:
             if s['symbol'].lower() == symbol.lower():
                 for f in s['filters']:
                     if f['filterType'] == 'LOT_SIZE':
                         return float(f['stepSize'])
-    except: return 0.001
+    except Exception as e:
+        print(f"Error getting step size: {e}")
+        return 0.001
+    return 0.001
 
 def set_leverage(symbol, lev):
-    ts = int(time.time() * 1000)
-    query = f"symbol={symbol.upper()}&leverage={lev}&timestamp={ts}"
-    sig = sign(query)
-    url = f"https://fapi.binance.com/fapi/v1/leverage?{query}&signature={sig}"
-    req = urllib.request.Request(url, headers={'X-MBX-APIKEY': API_KEY}, method='POST')
-    urllib.request.urlopen(req)
+    try:
+        ts = int(time.time() * 1000)
+        query = f"symbol={symbol.upper()}&leverage={lev}&timestamp={ts}"
+        sig = sign(query)
+        url = f"https://fapi.binance.com/fapi/v1/leverage?{query}&signature={sig}"
+        req = urllib.request.Request(url, headers={'X-MBX-APIKEY': API_KEY}, method='POST')
+        urllib.request.urlopen(req)
+    except Exception as e:
+        print(f"Error setting leverage: {e}")
 
 def get_balance():
-    ts = int(time.time() * 1000)
-    query = f"timestamp={ts}"
-    sig = sign(query)
-    url = f"https://fapi.binance.com/fapi/v2/account?{query}&signature={sig}"
-    req = urllib.request.Request(url, headers={'X-MBX-APIKEY': API_KEY})
-    data = json.loads(urllib.request.urlopen(req).read())
-    for asset in data['assets']:
-        if asset['asset'] == 'USDT':
-            return float(asset['availableBalance'])
+    try:
+        ts = int(time.time() * 1000)
+        query = f"timestamp={ts}"
+        sig = sign(query)
+        url = f"https://fapi.binance.com/fapi/v2/account?{query}&signature={sig}"
+        req = urllib.request.Request(url, headers={'X-MBX-APIKEY': API_KEY})
+        response = urllib.request.urlopen(req)
+        data = json.loads(response.read())
+        for asset in data['assets']:
+            if asset['asset'] == 'USDT':
+                return float(asset['availableBalance'])
+    except Exception as e:
+        print(f"Error getting balance: {e}")
     return 0
 
 def place_order(symbol, side, qty):
-    ts = int(time.time() * 1000)
-    query = f"symbol={symbol.upper()}&side={side}&type=MARKET&quantity={qty}&timestamp={ts}"
-    sig = sign(query)
-    url = f"https://fapi.binance.com/fapi/v1/order?{query}&signature={sig}"
-    req = urllib.request.Request(url, headers={'X-MBX-APIKEY': API_KEY}, method='POST')
-    return json.loads(urllib.request.urlopen(req).read())
+    try:
+        ts = int(time.time() * 1000)
+        query = f"symbol={symbol.upper()}&side={side}&type=MARKET&quantity={qty}&timestamp={ts}"
+        sig = sign(query)
+        url = f"https://fapi.binance.com/fapi/v1/order?{query}&signature={sig}"
+        req = urllib.request.Request(url, headers={'X-MBX-APIKEY': API_KEY}, method='POST')
+        response = urllib.request.urlopen(req)
+        return json.loads(response.read())
+    except Exception as e:
+        print(f"Error placing order: {e}")
+        return None
 
 def place_stop_market(symbol, side, qty, stop_price):
-    ts = int(time.time() * 1000)
-    params = {
-        "symbol": symbol.upper(),
-        "side": side,
-        "type": "STOP_MARKET",
-        "quantity": qty,
-        "stopPrice": stop_price,
-        "timestamp": ts
-    }
-    query = urllib.parse.urlencode(params)
-    sig = sign(query)
-    url = f"https://fapi.binance.com/fapi/v1/order?{query}&signature={sig}"
-    req = urllib.request.Request(url, headers={'X-MBX-APIKEY': API_KEY}, method='POST')
-    return json.loads(urllib.request.urlopen(req).read())
+    try:
+        ts = int(time.time() * 1000)
+        params = {
+            "symbol": symbol.upper(),
+            "side": side,
+            "type": "STOP_MARKET",
+            "quantity": qty,
+            "stopPrice": stop_price,
+            "reduceOnly": "true", 
+            "timestamp": ts
+        }
+        query = urllib.parse.urlencode(params)
+        sig = sign(query)
+        url = f"https://fapi.binance.com/fapi/v1/order?{query}&signature={sig}"
+        req = urllib.request.Request(url, headers={'X-MBX-APIKEY': API_KEY}, method='POST')
+        response = urllib.request.urlopen(req)
+        return json.loads(response.read())
+    except Exception as e:
+        print(f"Error placing stop market: {e}")
+        return None
 
-def cancel_all_stop_orders(symbol):
-    ts = int(time.time() * 1000)
-    query = f"symbol={symbol.upper()}&timestamp={ts}"
-    sig = sign(query)
-    url = f"https://fapi.binance.com/fapi/v1/allOpenOrders?{query}&signature={sig}"
-    req = urllib.request.Request(url, headers={'X-MBX-APIKEY': API_KEY}, method='DELETE')
-    urllib.request.urlopen(req)
+def place_take_profit_market(symbol, side, qty, stop_price):
+    try:
+        ts = int(time.time() * 1000)
+        params = {
+            "symbol": symbol.upper(),
+            "side": side,
+            "type": "TAKE_PROFIT_MARKET",
+            "quantity": qty,
+            "stopPrice": stop_price,
+            "reduceOnly": "true", 
+            "timestamp": ts
+        }
+        query = urllib.parse.urlencode(params)
+        sig = sign(query)
+        url = f"https://fapi.binance.com/fapi/v1/order?{query}&signature={sig}"
+        req = urllib.request.Request(url, headers={'X-MBX-APIKEY': API_KEY}, method='POST')
+        response = urllib.request.urlopen(req)
+        return json.loads(response.read())
+    except Exception as e:
+        print(f"Error placing take profit: {e}")
+        return None
+
+def cancel_all_orders(symbol):
+    try:
+        ts = int(time.time() * 1000)
+        query = f"symbol={symbol.upper()}&timestamp={ts}"
+        sig = sign(query)
+        url = f"https://fapi.binance.com/fapi/v1/allOpenOrders?{query}&signature={sig}"
+        req = urllib.request.Request(url, headers={'X-MBX-APIKEY': API_KEY}, method='DELETE')
+        urllib.request.urlopen(req)
+    except Exception as e:
+        print(f"Error canceling orders: {e}")
 
 def get_current_price(symbol):
-    url = f"https://fapi.binance.com/fapi/v1/ticker/price?symbol={symbol.upper()}"
-    return float(json.loads(urllib.request.urlopen(url).read())['price'])
+    try:
+        url = f"https://fapi.binance.com/fapi/v1/ticker/price?symbol={symbol.upper()}"
+        response = urllib.request.urlopen(url)
+        data = json.loads(response.read())
+        return float(data['price'])
+    except Exception as e:
+        print(f"Error getting price: {e}")
+        return 0
 
 def calc_rsi(prices, period=14):
-    if len(prices) < period + 1: return None
+    if len(prices) < period:
+        return None
     deltas = np.diff(prices)
-    seed = deltas[:period]
-    up = seed[seed >= 0].sum() / period
-    down = -seed[seed < 0].sum() / period or 1
-    rs = up / down
-    rsi = 100 - 100 / (1 + rs)
-    for i in range(period, len(deltas)):
-        delta = deltas[i]
-        upval = max(delta, 0)
-        downval = -min(delta, 0)
-        up = (up * (period - 1) + upval) / period
-        down = (down * (period - 1) + downval) / period or 1
-        rs = up / down
-        rsi = 100 - 100 / (1 + rs)
-    return rsi
+    gains = np.where(deltas > 0, deltas, 0)
+    losses = np.where(deltas < 0, -deltas, 0)
+    
+    avg_gain = np.mean(gains[:period])
+    avg_loss = np.mean(losses[:period])
+    
+    if avg_loss == 0:
+        return 100.0
+    
+    rs = avg_gain / avg_loss
+    return 100.0 - (100.0 / (1 + rs))
 
 def calc_ema(prices, period=21):
-    if len(prices) < period: return None
+    if len(prices) < period:
+        return None
     ema = np.mean(prices[:period])
     k = 2 / (period + 1)
     for price in prices[period:]:
@@ -111,7 +163,8 @@ def calc_ema(prices, period=21):
     return ema
 
 def calc_macd(prices):
-    if len(prices) < 35: return None, None
+    if len(prices) < 35:
+        return None, None
     ema12 = calc_ema(prices, 12)
     ema26 = calc_ema(prices, 26)
     macd = ema12 - ema26
@@ -132,9 +185,6 @@ class IndicatorBot:
         self.side = ""
         self.qty = 0
         self.entry = 0
-        self.tp_order_id = None
-        self.sl_order_id = None
-        self.ws = None
         self.prices = []
         self._stop = False
         self._last_status = None
@@ -143,175 +193,356 @@ class IndicatorBot:
 
     def stop(self):
         self._stop = True
-        if self.ws: self.ws.close()
+        if hasattr(self, 'ws') and self.ws:
+            self.ws.close()
         try:
-            cancel_all_stop_orders(self.symbol)
-        except: pass
+            cancel_all_orders(self.symbol)
+        except Exception as e:
+            self.log(f"Lỗi hủy lệnh: {e}")
 
     def run(self):
         def on_message(ws, msg):
-            if self._stop: return
-            data = json.loads(msg)
-            price = float(data['p'])
-            self.prices.append(price)
-            if len(self.prices) > 100:
-                self.prices = self.prices[-100:]
-            if self.status == "waiting":
-                signal = self.get_signal()
-                if signal:
-                    self.open_position(signal)
-            # Chỉ cập nhật trạng thái khi vừa mở hoặc vừa đóng lệnh (tránh spam)
-            if self.status != self._last_status:
-                self.update(self.symbol, self.status, self.side)
-                self._last_status = self.status
+            if self._stop: 
+                return
+            try:
+                data = json.loads(msg)
+                price = float(data['p'])
+                self.prices.append(price)
+                if len(self.prices) > 100:
+                    self.prices = self.prices[-100:]
+                    
+                if self.status == "waiting":
+                    signal = self.get_signal()
+                    if signal:
+                        self.open_position(signal)
+                
+                if self.status != self._last_status:
+                    self.update(self.symbol, self.status, self.side)
+                    self._last_status = self.status
+            except Exception as e:
+                self.log(f"Lỗi xử lý tin nhắn: {e}")
 
         def on_error(ws, err):
             self.log(f"WebSocket lỗi {self.symbol}: {err}")
 
-        def on_close(ws, *_):
-            self.log(f"WebSocket đóng {self.symbol}, tự động kết nối lại...")
+        def on_close(ws, *args):
+            self.log(f"WebSocket đóng {self.symbol}, kết nối lại...")
             if not self._stop:
                 time.sleep(3)
                 self.start_ws()
 
         self.start_ws = lambda: threading.Thread(target=lambda: websocket.WebSocketApp(
             f"wss://fstream.binance.com/ws/{self.symbol.lower()}@trade",
-            on_message=on_message, on_error=on_error, on_close=on_close
+            on_message=on_message, 
+            on_error=on_error, 
+            on_close=on_close
         ).run_forever(), daemon=True).start()
         self.start_ws()
         while not self._stop:
             time.sleep(1)
 
     def get_signal(self):
-        if len(self.prices) < 35: return None
+        if len(self.prices) < 35:
+            return None
+            
         arr = np.array(self.prices)
         rsi_val = calc_rsi(arr)
         ema_val = calc_ema(arr)
         macd_val, macd_signal = calc_macd(arr)
+        
         if self.indicator == "RSI":
-            if rsi_val is not None and rsi_val <= 30: return "BUY"
-            if rsi_val is not None and rsi_val >= 70: return "SELL"
+            if rsi_val is not None:
+                if rsi_val <= 30: 
+                    return "BUY"
+                if rsi_val >= 70: 
+                    return "SELL"
+                    
         elif self.indicator == "EMA":
-            if ema_val is not None and self.prices[-1] > ema_val: return "BUY"
-            if ema_val is not None and self.prices[-1] < ema_val: return "SELL"
+            if ema_val is not None:
+                if self.prices[-1] > ema_val: 
+                    return "BUY"
+                if self.prices[-1] < ema_val: 
+                    return "SELL"
+                    
         elif self.indicator == "MACD":
             if macd_val is not None and macd_signal is not None:
-                if macd_val > macd_signal: return "BUY"
-                if macd_val < macd_signal: return "SELL"
+                if macd_val > macd_signal: 
+                    return "BUY"
+                if macd_val < macd_signal: 
+                    return "SELL"
+                    
         elif self.indicator == "Tất cả":
-            if (rsi_val is not None and ema_val is not None and macd_val is not None and macd_signal is not None):
-                buy = (rsi_val <= 30) and (self.prices[-1] > ema_val) and (macd_val > macd_signal)
-                sell = (rsi_val >= 70) and (self.prices[-1] < ema_val) and (macd_val < macd_signal)
-                if buy: return "BUY"
-                if sell: return "SELL"
+            if (rsi_val is not None and 
+                ema_val is not None and 
+                macd_val is not None and 
+                macd_signal is not None):
+                    
+                buy_signals = 0
+                sell_signals = 0
+                
+                if rsi_val <= 30: 
+                    buy_signals += 1
+                if rsi_val >= 70: 
+                    sell_signals += 1
+                    
+                if self.prices[-1] > ema_val: 
+                    buy_signals += 1
+                if self.prices[-1] < ema_val: 
+                    sell_signals += 1
+                    
+                if macd_val > macd_signal: 
+                    buy_signals += 1
+                if macd_val < macd_signal: 
+                    sell_signals += 1
+                    
+                if buy_signals >= 2: 
+                    return "BUY"
+                if sell_signals >= 2: 
+                    return "SELL"
+                    
         return None
 
     def open_position(self, side):
         try:
-            cancel_all_stop_orders(self.symbol)
+            # Hủy tất cả lệnh trước khi vào lệnh mới
+            cancel_all_orders(self.symbol)
+            
+            # Đặt đòn bẩy
             set_leverage(self.symbol, self.lev)
+            
+            # Lấy số dư USDT
             balance = get_balance()
+            if balance <= 0:
+                self.log(f"Không đủ số dư USDT cho {self.symbol}")
+                return
+                
+            # Lấy giá hiện tại
             price = get_current_price(self.symbol)
+            if price <= 0:
+                self.log(f"Lỗi lấy giá cho {self.symbol}")
+                return
+                
+            # Tính số lượng dựa trên USDT
+            usdt_amount = balance * (self.percent / 100) * self.lev
             step = get_step_size(self.symbol)
-            qty = balance * (self.percent / 100) * self.lev / price
-            qty = round(qty - (qty % step), 6)
-            place_order(self.symbol, side, qty)
-            self.entry = price
-            self.qty = qty if side == "BUY" else -qty
+            qty = usdt_amount / price
+            
+            # Làm tròn số lượng theo step size
+            if step > 0:
+                qty = round(qty - (qty % step), 6)
+                
+            if qty <= 0:
+                self.log(f"Số lượng không hợp lệ cho {self.symbol}: {qty}")
+                return
+                
+            # Đặt lệnh chính
+            res = place_order(self.symbol, side, qty)
+            if not res:
+                self.log(f"Lỗi khi đặt lệnh cho {self.symbol}")
+                return
+                
+            # Lấy thông tin thực tế từ lệnh
+            if 'avgPrice' in res and res['avgPrice']:
+                self.entry = float(res['avgPrice'])
+            else:
+                self.entry = price
+
+            executed_qty = float(res['executedQty'])
+            if side == "BUY":
+                self.qty = executed_qty
+            else:
+                self.qty = -executed_qty
+
             self.side = side
             self.status = "open"
-            self.log(f"Vào lệnh {self.symbol} {side} TP={self.tp}% SL={self.sl}% theo {self.indicator}")
+            self.log(f"Đã vào lệnh {self.symbol} {side} tại {self.entry:.4f}")
+            self.log(f"Số lượng: {executed_qty}, Giá trị: {executed_qty * self.entry:.2f} USDT")
             self.update(self.symbol, self.status, self.side)
-            # Đặt lệnh STOP_MARKET TP/SL
-            tp_price, sl_price = self.calc_tp_sl_price()
-            if tp_price:
-                place_stop_market(self.symbol, "SELL" if side == "BUY" else "BUY", abs(qty), tp_price)
-            if sl_price:
-                place_stop_market(self.symbol, "SELL" if side == "BUY" else "BUY", abs(qty), sl_price)
-        except Exception as e:
-            self.log(f"Lỗi vào lệnh {self.symbol}: {e}")
 
-    def calc_tp_sl_price(self):
-        # Tính giá TP/SL dựa trên entry và phần trăm TP/SL
-        if self.side == "BUY":
-            tp_price = self.entry * (1 + self.tp / 100) if self.tp > 0 else None
-            sl_price = self.entry * (1 - self.sl / 100) if self.sl > 0 else None
-        else:
-            tp_price = self.entry * (1 - self.tp / 100) if self.tp > 0 else None
-            sl_price = self.entry * (1 + self.sl / 100) if self.sl > 0 else None
-        return (round(tp_price, 4) if tp_price else None, round(sl_price, 4) if sl_price else None)
+            # Tính giá TP và SL
+            if side == "BUY":
+                tp_price = self.entry * (1 + self.tp / 100) if self.tp > 0 else None
+                sl_price = self.entry * (1 - self.sl / 100) if self.sl > 0 else None
+            else:  # SELL
+                tp_price = self.entry * (1 - self.tp / 100) if self.tp > 0 else None
+                sl_price = self.entry * (1 + self.sl / 100) if self.sl > 0 else None
+
+            # Đặt lệnh TP trên Binance
+            if tp_price:
+                try:
+                    tp_side = "SELL" if side == "BUY" else "BUY"
+                    tp_res = place_take_profit_market(
+                        self.symbol, 
+                        tp_side, 
+                        abs(self.qty), 
+                        round(tp_price, 4)
+                    )
+                    if tp_res:
+                        self.log(f"✅ Đã đặt TP tại {tp_price:.4f} (ID: {tp_res['orderId']})")
+                        self.log(f"📊 Giá trị TP: {abs(self.qty) * tp_price:.2f} USDT")
+                    else:
+                        self.log("❌ Lỗi khi đặt lệnh TP")
+                except Exception as e:
+                    self.log(f"❌ Lỗi đặt TP: {e}")
+
+            # Đặt lệnh SL trên Binance
+            if sl_price:
+                try:
+                    sl_side = "SELL" if side == "BUY" else "BUY"
+                    sl_res = place_stop_market(
+                        self.symbol, 
+                        sl_side, 
+                        abs(self.qty), 
+                        round(sl_price, 4)
+                    )
+                    if sl_res:
+                        self.log(f"🛡️ Đã đặt SL tại {sl_price:.4f} (ID: {sl_res['orderId']})")
+                        self.log(f"📉 Giá trị SL: {abs(self.qty) * sl_price:.2f} USDT")
+                    else:
+                        self.log("❌ Lỗi khi đặt lệnh SL")
+                except Exception as e:
+                    self.log(f"❌ Lỗi đặt SL: {e}")
+
+        except Exception as e:
+            self.log(f"❌ Lỗi nghiêm trọng khi vào lệnh {self.symbol}: {e}")
 
     def close_position(self):
         try:
-            cancel_all_stop_orders(self.symbol)
-            place_order(self.symbol, "SELL" if self.side == "BUY" else "BUY", abs(self.qty))
+            cancel_all_orders(self.symbol)
+            if self.side == "BUY":
+                res = place_order(self.symbol, "SELL", self.qty)
+            else:
+                res = place_order(self.symbol, "BUY", abs(self.qty))
+                
+            if res:
+                price = float(res['avgPrice']) if 'avgPrice' in res else 0
+                self.log(f"Đã đóng lệnh {self.symbol} tại {price:.4f}")
+                self.log(f"Giá trị: {abs(self.qty) * price:.2f} USDT")
+            else:
+                self.log(f"Lỗi khi đóng lệnh {self.symbol}")
+                
             self.status = "waiting"
-            self.log(f"{self.symbol} đã chốt lệnh {self.side}, chờ tín hiệu mới ({self.indicator})")
+            self.side = ""
+            self.qty = 0
+            self.entry = 0
             self.update(self.symbol, self.status, "")
         except Exception as e:
-            self.log(f"Lỗi đóng {self.symbol}: {e}")
+            self.log(f"❌ Lỗi khi đóng lệnh {self.symbol}: {e}")
 
 class FuturesBotGUI:
     def __init__(self, root):
         self.root = root
         self.root.title("Futures Indicator Bot")
-        self.root.configure(bg="black")
+        self.root.geometry("500x700")
+        self.root.configure(bg="#121212")
+        
         style = ttk.Style()
-        style.theme_use("default")
-        style.configure("TLabel", background="black", foreground="lime", font=("Arial", 16))
-        style.configure("TButton", background="black", foreground="lime", font=("Arial", 16))
+        style.theme_use("clam")
+        style.configure(".", background="#121212", foreground="#00ff00")
+        style.configure("TFrame", background="#121212")
+        style.configure("TLabel", background="#121212", foreground="#00ff00", font=("Arial", 10))
+        style.configure("TButton", background="#333", foreground="#00ff00", font=("Arial", 10))
+        style.configure("TEntry", fieldbackground="#222", foreground="#00ff00")
+        style.configure("TCombobox", fieldbackground="#222", foreground="#00ff00")
+        style.map("TButton", background=[('active', '#555')])
 
         self.bots = {}
 
-        form = ttk.Frame(root)
-        form.grid(row=0, column=0, sticky="ew", padx=10, pady=5)
-        row = 0
-        ttk.Label(form, text="Cặp coin:").grid(row=row, column=0, sticky="w")
-        self.symbol_entry = ttk.Entry(form, width=15, font=("Arial", 16))
-        self.symbol_entry.grid(row=row, column=1, pady=2)
-        row += 1
-        ttk.Label(form, text="Đòn bẩy:").grid(row=row, column=0, sticky="w")
-        self.lev_entry = ttk.Entry(form, width=15, font=("Arial", 16))
-        self.lev_entry.grid(row=row, column=1, pady=2)
-        row += 1
-        ttk.Label(form, text="% Số dư:").grid(row=row, column=0, sticky="w")
-        self.percent_entry = ttk.Entry(form, width=15, font=("Arial", 16))
-        self.percent_entry.grid(row=row, column=1, pady=2)
-        row += 1
-        ttk.Label(form, text="TP %:").grid(row=row, column=0, sticky="w")
-        self.tp_entry = ttk.Entry(form, width=15, font=("Arial", 16))
-        self.tp_entry.grid(row=row, column=1, pady=2)
-        row += 1
-        ttk.Label(form, text="SL %:").grid(row=row, column=0, sticky="w")
-        self.sl_entry = ttk.Entry(form, width=15, font=("Arial", 16))
-        self.sl_entry.grid(row=row, column=1, pady=2)
-        row += 1
-        ttk.Label(form, text="Chỉ báo:").grid(row=row, column=0, sticky="w")
+        # Header
+        header = ttk.Frame(root)
+        header.pack(fill=tk.X, padx=10, pady=10)
+        ttk.Label(header, text="BOT FUTURES BINANCE", font=("Arial", 14, "bold")).pack()
+
+        # Form
+        form = ttk.LabelFrame(root, text="Cài đặt bot", padding=10)
+        form.pack(fill=tk.X, padx=10, pady=5)
+        
+        ttk.Label(form, text="Cặp coin:").grid(row=0, column=0, sticky="w", pady=5)
+        self.symbol_entry = ttk.Entry(form, width=15)
+        self.symbol_entry.grid(row=0, column=1, pady=5, sticky="ew")
+        self.symbol_entry.insert(0, "BTCUSDT")
+        
+        ttk.Label(form, text="Đòn bẩy:").grid(row=1, column=0, sticky="w", pady=5)
+        self.lev_entry = ttk.Entry(form, width=15)
+        self.lev_entry.grid(row=1, column=1, pady=5, sticky="ew")
+        self.lev_entry.insert(0, "10")
+        
+        ttk.Label(form, text="% Số dư:").grid(row=2, column=0, sticky="w", pady=5)
+        self.percent_entry = ttk.Entry(form, width=15)
+        self.percent_entry.grid(row=2, column=1, pady=5, sticky="ew")
+        self.percent_entry.insert(0, "10")
+        
+        ttk.Label(form, text="TP %:").grid(row=3, column=0, sticky="w", pady=5)
+        self.tp_entry = ttk.Entry(form, width=15)
+        self.tp_entry.grid(row=3, column=1, pady=5, sticky="ew")
+        self.tp_entry.insert(0, "1")
+        
+        ttk.Label(form, text="SL %:").grid(row=4, column=0, sticky="w", pady=5)
+        self.sl_entry = ttk.Entry(form, width=15)
+        self.sl_entry.grid(row=4, column=1, pady=5, sticky="ew")
+        self.sl_entry.insert(0, "1")
+        
+        ttk.Label(form, text="Chỉ báo:").grid(row=5, column=0, sticky="w", pady=5)
         self.indicator_var = tk.StringVar(value="RSI")
-        self.indicator_menu = ttk.Combobox(form, textvariable=self.indicator_var, values=["RSI", "EMA", "MACD", "Tất cả"], width=13, font=("Arial", 16))
-        self.indicator_menu.grid(row=row, column=1, pady=2)
-        row += 1
-        ttk.Button(form, text="Thêm bot", command=self.menu_add).grid(row=row, column=0, columnspan=2, pady=10, sticky="ew")
+        self.indicator_menu = ttk.Combobox(
+            form, 
+            textvariable=self.indicator_var, 
+            values=["RSI", "EMA", "MACD", "Tất cả"], 
+            width=13
+        )
+        self.indicator_menu.grid(row=5, column=1, pady=5, sticky="ew")
+        
+        add_btn = ttk.Button(form, text="Thêm bot", command=self.menu_add)
+        add_btn.grid(row=6, column=0, columnspan=2, pady=10, sticky="ew")
 
-        ttk.Label(root, text="Các bot đang chạy:").grid(row=1, column=0, sticky="w", padx=10)
-        frame_list = ttk.Frame(root)
-        frame_list.grid(row=2, column=0, padx=10, pady=5, sticky="ew")
-        self.bot_list = tk.Listbox(frame_list, height=8, font=("Arial", 14), bg="black", fg="lime", selectbackground="gray")
-        self.bot_list.pack(side=tk.LEFT, fill=tk.BOTH, expand=True)
-        scrollbar = ttk.Scrollbar(frame_list, orient="vertical", command=self.bot_list.yview)
-        scrollbar.pack(side=tk.RIGHT, fill=tk.Y)
+        # Bot list
+        bot_frame = ttk.LabelFrame(root, text="Các bot đang chạy", padding=10)
+        bot_frame.pack(fill=tk.BOTH, expand=True, padx=10, pady=5)
+        
+        list_frame = ttk.Frame(bot_frame)
+        list_frame.pack(fill=tk.BOTH, expand=True)
+        
+        self.bot_list = tk.Listbox(
+            list_frame, 
+            height=6, 
+            bg="#222", 
+            fg="#00ff00", 
+            selectbackground="#555",
+            font=("Arial", 10)
+        )
+        scrollbar = ttk.Scrollbar(list_frame, orient="vertical", command=self.bot_list.yview)
         self.bot_list.config(yscrollcommand=scrollbar.set)
-        ttk.Button(root, text="Dừng bot đã chọn", command=self.stop_selected_bot).grid(row=3, column=0, pady=5, sticky="ew")
+        
+        scrollbar.pack(side=tk.RIGHT, fill=tk.Y)
+        self.bot_list.pack(side=tk.LEFT, fill=tk.BOTH, expand=True)
+        
+        stop_btn = ttk.Button(bot_frame, text="Dừng bot đã chọn", command=self.stop_selected_bot)
+        stop_btn.pack(fill=tk.X, pady=5)
 
-        ttk.Label(root, text="Log:").grid(row=4, column=0, sticky="w", padx=10)
-        self.log_text = tk.Text(root, height=8, width=40, bg="black", fg="lime", font=("Arial", 13))
-        self.log_text.grid(row=5, column=0, padx=10, pady=5, sticky="ew")
-
+        # Log
+        log_frame = ttk.LabelFrame(root, text="Nhật ký hoạt động", padding=10)
+        log_frame.pack(fill=tk.BOTH, expand=True, padx=10, pady=5)
+        
+        self.log_text = tk.Text(
+            log_frame, 
+            height=8, 
+            bg="#222", 
+            fg="#00ff00", 
+            font=("Arial", 10)
+        )
+        self.log_text.pack(fill=tk.BOTH, expand=True)
+        
+        # Status bar
+        self.status_bar = ttk.Label(root, text="Sẵn sàng...", relief=tk.SUNKEN, anchor=tk.W)
+        self.status_bar.pack(side=tk.BOTTOM, fill=tk.X)
+        
+        # Start position checker
         self.check_positions()
 
     def log(self, msg):
         self.log_text.insert(tk.END, msg + "\n")
         self.log_text.see(tk.END)
+        self.status_bar.config(text=msg)
 
     def update_tree(self, symbol, status, side):
         for idx in range(self.bot_list.size()):
@@ -324,62 +555,88 @@ class FuturesBotGUI:
 
     def menu_add(self):
         symbol = self.symbol_entry.get().strip().upper()
+        if not symbol:
+            self.log("❌ Vui lòng nhập cặp coin!")
+            return
+            
         try:
             lev = int(self.lev_entry.get())
             percent = float(self.percent_entry.get())
             tp = float(self.tp_entry.get())
             sl = float(self.sl_entry.get())
             indicator = self.indicator_var.get()
-        except Exception:
-            self.log("Vui lòng nhập đúng thông số!")
+        except ValueError:
+            self.log("❌ Vui lòng nhập đúng thông số!")
             return
+            
         if symbol in self.bots:
-            self.log(f"Đã có bot cho {symbol}")
+            self.log(f"⚠️ Đã có bot cho {symbol}")
             return
-        bot = IndicatorBot(symbol, lev, percent, tp, sl, indicator, self.log, self.update_tree)
+            
+        # Kiểm tra API key
+        if not API_KEY or not API_SECRET:
+            self.log("❌ Chưa cấu hình API Key và Secret Key!")
+            return
+            
+        bot = IndicatorBot(
+            symbol, lev, percent, tp, sl, 
+            indicator, self.log, self.update_tree
+        )
         self.bots[symbol] = bot
         self.bot_list.insert(tk.END, f"{symbol} | {bot.status} | {bot.side} | {indicator}")
-        self.log(f"Đã thêm bot cho {symbol} với chỉ báo {indicator}")
+        self.log(f"✅ Đã thêm bot cho {symbol} với chỉ báo {indicator}")
 
     def stop_selected_bot(self):
         selected = self.bot_list.curselection()
-        if not selected: return
+        if not selected: 
+            return
+            
         idx = selected[0]
         line = self.bot_list.get(idx)
         symbol = line.split('|')[0].strip()
         bot = self.bots.get(symbol)
+        
         if bot:
             bot.stop()
-            bot.close_position()
-            self.log(f"Đã dừng bot cho {symbol}")
+            if bot.status == "open":
+                bot.close_position()
+            self.log(f"⛔ Đã dừng bot cho {symbol}")
             self.bot_list.delete(idx)
             del self.bots[symbol]
 
     def check_positions(self):
         try:
-            ts = int(time.time() * 1000)
-            query = f"timestamp={ts}"
-            sig = sign(query)
-            url = f"https://fapi.binance.com/fapi/v2/positionRisk?{query}&signature={sig}"
-            req = urllib.request.Request(url, headers={'X-MBX-APIKEY': API_KEY})
-            positions = json.loads(urllib.request.urlopen(req).read())
-            for pos in positions:
-                symbol = pos['symbol']
-                amt = float(pos['positionAmt'])
-                if symbol in self.bots:
-                    bot = self.bots[symbol]
-                    if bot.status == "open" and amt == 0:
+            for symbol, bot in list(self.bots.items()):
+                if bot.status == "open":
+                    # Kiểm tra vị thế còn tồn tại không
+                    ts = int(time.time() * 1000)
+                    query = f"symbol={symbol}&timestamp={ts}"
+                    sig = sign(query)
+                    url = f"https://fapi.binance.com/fapi/v2/positionRisk?{query}&signature={sig}"
+                    req = urllib.request.Request(url, headers={'X-MBX-APIKEY': API_KEY})
+                    response = urllib.request.urlopen(req)
+                    positions = json.loads(response.read())
+                    
+                    position_open = False
+                    for pos in positions:
+                        if pos['symbol'] == symbol and float(pos['positionAmt']) != 0:
+                            position_open = True
+                            break
+                            
+                    if not position_open:
                         bot.status = "waiting"
                         bot.side = ""
                         bot.qty = 0
                         bot.entry = 0
-                        bot.log(f"{symbol} đã bị đóng ngoài bot, chờ tín hiệu mới ({bot.indicator})")
+                        bot.log(f"ℹ️ Vị thế {symbol} đã đóng")
                         bot.update(symbol, bot.status, bot.side)
+                        
         except Exception as e:
-            self.log(f"Lỗi kiểm tra vị thế: {e}")
+            self.log(f"⚠️ Lỗi kiểm tra vị thế: {e}")
+            
         self.root.after(30000, self.check_positions)
 
 if __name__ == "__main__":
     root = tk.Tk()
-    FuturesBotGUI(root)
+    gui = FuturesBotGUI(root)
     root.mainloop()
