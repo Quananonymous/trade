@@ -605,10 +605,10 @@ class IndicatorBot:
     
         if b is None:
             return None
-    
-        if b > a:
+        diff = a - b
+        if diff > 50 or -10 > diff > -20:
             return "BUY"
-        elif a < b:
+        elif diff < -50 or 10 < diff < 20:
             return "SELL"
     
         return None
