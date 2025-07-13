@@ -606,9 +606,9 @@ class IndicatorBot:
         if b is None:
             return None
     
-        if 55 <= a <= 60 and 65 <= b <= 80 or a <= 15 and b > 25:
+        if 55 <= a <= 60 and 65 <= b <= 70 or a <= 10 and 20 > b > 15:
             return "BUY"
-        elif 40 <= a <= 45 and 20 <= b <= 35 or a >= 85 and b < 75:
+        elif 40 <= a <= 45 and 30 <= b <= 35 or a >= 90 and 80< b < 85:
             return "SELL"
     
         return None
