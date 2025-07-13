@@ -597,10 +597,12 @@ class IndicatorBot:
         rsi_val = calc_rsi(prices_arr)
         
         if rsi_val is not None:
-            self.last_rsi = rsi_val
-            if rsi_val >= 80: 
+            a = self.last_rsi = rsi_val
+            time.sleep(60)
+            b = self.last_rsi = rsi_val
+            if a - b > 25: 
                 return "SELL"
-            if rsi_val <= 20: 
+            if b - a < 25: 
                 return "BUY"
                     
         return None
