@@ -590,22 +590,30 @@ class IndicatorBot:
     def get_signal(self):
         if len(self.prices) < 40:
             return None
-            
+    
         prices_arr = np.array(self.prices)
-        
-        # Sử dụng RSI làm chỉ báo chính
-        rsi_val = calc_rsi(prices_arr)
-        
-        if rsi_val is not None:
-            a = self.last_rsi = rsi_val
-            time.sleep(60)
-            b = self.last_rsi = rsi_val
-            if a - b > 25: 
-                return "SELL"
-            if b - a < 25: 
-                return "BUY"
-                    
+        a = calc_rsi(prices_arr)
+    
+        if a is None:
+            return None
+    
+        # Chờ 60 giây để lấy RSI tại thời điểm mới
+        time.sleep(60)
+    
+        prices_arr = np.array(self.prices)
+        b = calc_rsi(prices_arr)
+    
+        if b is None:
+            return None
+    
+        diff = b - a
+        if diff >= 20:
+            return "BUY"
+        elif diff <= -20:
+            return "SELL"
+    
         return None
+
 
     def open_position(self, side):
         # Kiểm tra lại trạng thái trước khi vào lệnh
