@@ -615,9 +615,9 @@ class IndicatorBot:
             return None
 
 
-        if (a > b and c > b and b > 75):
+        if (a > b > c and a < 20):
             return "BUY"
-        elif (a < b and c < b and b > 25):
+        elif (a < b < c and a > 80):
             return "SELL"
     
         return None
