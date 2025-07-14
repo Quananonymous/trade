@@ -629,9 +629,9 @@ class IndicatorBot:
     
         if e is None:
             return None
-        if a > b > c > d and d < e:
+        if a > b > c > d and c < e:
             return "BUY"
-        elif a < b < c < d and e < d:
+        elif a < b < c < d and e < c:
             return "SELL"
     
         return None
