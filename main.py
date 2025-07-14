@@ -605,10 +605,26 @@ class IndicatorBot:
     
         if b is None:
             return None
-        diff = a - b
-        if diff > 50 or -10 > diff > -20:
+
+        time.sleep(5)
+    
+        prices_arr = np.array(self.prices)
+        c = calc_rsi(prices_arr)
+    
+        if c is None:
+            return None
+
+        time.sleep(5)
+    
+        prices_arr = np.array(self.prices)
+        d = calc_rsi(prices_arr)
+    
+        if d is None:
+            return None
+    
+        if a < b < c < d or a > b > c and c < d:
             return "BUY"
-        elif diff < -50 or 10 < diff < 20:
+        elif a > b > c > d or a < b < c and d < c:
             return "SELL"
     
         return None
