@@ -622,16 +622,9 @@ class IndicatorBot:
         if d is None:
             return None
 
-        time.sleep(3)
-    
-        prices_arr = np.array(self.prices)
-        e = calc_rsi(prices_arr)
-    
-        if e is None:
-            return None
-        if (a > b > c > d and d < e and e < 20) or (a < b < c < d < e and 70> e > 55):
+        if (a > b > c and d > c and a < 25):
             return "BUY"
-        elif (a < b < c < d and e < d and e > 80) or (a > b > c > d > e and 30 < e < 45):
+        elif (a < b < c and d < c and d > 75):
             return "SELL"
     
         return None
