@@ -617,7 +617,13 @@ class IndicatorBot:
                 if c is None:
                     return None
                 if b < c:
-                    return "BUY"
+                    time.sleep(3)
+                    prices_arr = np.array(self.prices)
+                    d= calc_rsi(prices_arr)       
+                    if d is None:
+                        return None
+                    if d > c:
+                        return "BUY"
         elif a > 85:
             time.sleep(3)
         
@@ -635,8 +641,15 @@ class IndicatorBot:
             
                 if c is None:
                     return None
+
                 if b > c:
-                    return "SELL"
+                    time.sleep(3)
+                    prices_arr = np.array(self.prices)
+                    d= calc_rsi(prices_arr)       
+                    if d is None:
+                        return None
+                    if d < c:
+                        return "SELL"
 
         return None
 
