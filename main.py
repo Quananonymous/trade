@@ -598,7 +598,7 @@ class IndicatorBot:
             return None
     
         # Chờ 60 giây để lấy RSI tại thời điểm mới
-        if a < 20:
+        if a < 15:
             time.sleep(3)
         
             prices_arr = np.array(self.prices)
@@ -616,9 +616,9 @@ class IndicatorBot:
             
                 if c is None:
                     return None
-                if b > c:
+                if b < c and c < 20:
                     return "BUY"
-        if a > 80:
+        elif a > 85:
             time.sleep(3)
         
             prices_arr = np.array(self.prices)
@@ -635,7 +635,7 @@ class IndicatorBot:
             
                 if c is None:
                     return None
-                if b < c:
+                if b > c and c > 85:
                     return "SELL"
 
         return None
