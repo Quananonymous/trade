@@ -616,7 +616,7 @@ class IndicatorBot:
             
                 if c is None:
                     return None
-                if b < c and c < 20:
+                if b < c:
                     return "BUY"
         elif a > 85:
             time.sleep(3)
@@ -635,7 +635,7 @@ class IndicatorBot:
             
                 if c is None:
                     return None
-                if b > c and c > 85:
+                if b > c:
                     return "SELL"
 
         return None
