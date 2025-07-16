@@ -594,37 +594,37 @@ class IndicatorBot:
         prices_arr = np.array(self.prices)
         a = calc_rsi(prices_arr)
     
-        if a >= 99:
-            time.sleep(3)
+        if a > 70:
+            time.sleep(60)
         
             prices_arr = np.array(self.prices)
             b = calc_rsi(prices_arr)
 
         
-            if b is None:
-                return None
-            if a > b:
-                
-                time.sleep(3)
-            
-                prices_arr = np.array(self.prices)
-                c = calc_rsi(prices_arr)
-            
-                if c is None:
-                    return None
-                if b > c:
-                    return "SELL"
-        elif a <= 1:
-            time.sleep(3)
-        
-            prices_arr = np.array(self.prices)
-            b = calc_rsi(prices_arr)
-
             if b is None:
                 return None
             if a < b:
                 
-                time.sleep(3)
+                time.sleep(60)
+            
+                prices_arr = np.array(self.prices)
+                c = calc_rsi(prices_arr)
+            
+                if c is None:
+                    return None
+                if b > c and c < 45:
+                    return "SELL"
+        elif a < 30:
+            time.sleep(30)
+        
+            prices_arr = np.array(self.prices)
+            b = calc_rsi(prices_arr)
+
+            if b is None:
+                return None
+            if a > b:
+                
+                time.sleep(30)
             
                 prices_arr = np.array(self.prices)
                 c = calc_rsi(prices_arr)
@@ -632,7 +632,7 @@ class IndicatorBot:
                 if c is None:
                     return None
 
-                if b < c:
+                if b < c and c > 55:
                     return "BUY"
 
 
