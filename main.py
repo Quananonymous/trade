@@ -594,14 +594,47 @@ class IndicatorBot:
         prices_arr = np.array(self.prices)
         a = calc_rsi(prices_arr)
     
-        if a is None:
-            return None
-    
-        # Chờ 60 giây để lấy RSI tại thời điểm mới
-        if a <= 1:
-            return "BUY"
-        elif a >= 99:
-            return "SELL"
+        if a >= 99:
+            time.sleep(3)
+        
+            prices_arr = np.array(self.prices)
+            b = calc_rsi(prices_arr)
+
+        
+            if b is None:
+                return None
+            if a > b:
+                
+                time.sleep(3)
+            
+                prices_arr = np.array(self.prices)
+                c = calc_rsi(prices_arr)
+            
+                if c is None:
+                    return None
+                if b > c:
+                    return "SELL"
+        elif a <= 1:
+            time.sleep(3)
+        
+            prices_arr = np.array(self.prices)
+            b = calc_rsi(prices_arr)
+
+            if b is None:
+                return None
+            if a < b:
+                
+                time.sleep(3)
+            
+                prices_arr = np.array(self.prices)
+                c = calc_rsi(prices_arr)
+            
+                if c is None:
+                    return None
+
+                if b < c:
+                    return "BUY"
+
 
         return None
 
