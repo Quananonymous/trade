@@ -622,7 +622,7 @@ class IndicatorBot:
                         return None
                     if d < c and d < 45:
                         return "SELL"
-        elif a < 20:
+        elif a < 10:
             time.sleep(30)
         
             prices_arr = np.array(self.prices)
