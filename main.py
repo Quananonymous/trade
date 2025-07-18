@@ -594,8 +594,8 @@ class IndicatorBot:
         prices_arr = np.array(self.prices)
         a = calc_rsi(prices_arr)
     
-        if a > 80:
-            time.sleep(60)
+        if a > 90:
+            time.sleep(30)
         
             prices_arr = np.array(self.prices)
             b = calc_rsi(prices_arr)
@@ -605,24 +605,24 @@ class IndicatorBot:
                 return None
             if a < b:
                 
-                time.sleep(60)
+                time.sleep(30)
             
                 prices_arr = np.array(self.prices)
                 c = calc_rsi(prices_arr)
             
                 if c is None:
                     return None
-                if b > c and c < 55:
-                    time.sleep(60)
+                if b - c > 10:
+                    time.sleep(30)
             
                     prices_arr = np.array(self.prices)
                     d = calc_rsi(prices_arr)
                 
                     if d is None:
                         return None
-                    if d < c and 30< d < 45:
+                    if c - d > 10:
                         return "SELL"
-        elif a < 20:
+        elif a < 10:
             time.sleep(30)
         
             prices_arr = np.array(self.prices)
@@ -632,7 +632,7 @@ class IndicatorBot:
                 return None
             if a > b:
                 
-                time.sleep(60)
+                time.sleep(30)
             
                 prices_arr = np.array(self.prices)
                 c = calc_rsi(prices_arr)
@@ -640,15 +640,15 @@ class IndicatorBot:
                 if c is None:
                     return None
 
-                if b < c and c > 45:
-                    time.sleep(60)
+                if c - b > 10:
+                    time.sleep(30)
             
                     prices_arr = np.array(self.prices)
                     d = calc_rsi(prices_arr)
                 
                     if d is None:
                         return None
-                    if d > c and 70 > d > 55:
+                    if d - c > 10:
                         return "BUY"
 
 
