@@ -432,6 +432,8 @@ class IndicatorBot:
         self.qty = 0
         self.entry = 0
         self.prices = []
+        self.rsi_history = []
+
         self._stop = False
         self.position_open = False
         self.last_trade_time = 0
@@ -465,6 +467,12 @@ class IndicatorBot:
         # Giới hạn số lượng giá lưu trữ
         if len(self.prices) > 100:
             self.prices = self.prices[-100:]
+        rsi = calc_rsi(np.array(self.prices))
+        if rsi is not None:
+            self.rsi_history.append(rsi)
+            if len(self.rsi_history) > 15:
+                self.rsi_history = self.rsi_history[-15:]
+
 
     def _run(self):
         """Luồng chính quản lý bot với kiểm soát lỗi chặt chẽ"""
@@ -588,70 +596,16 @@ class IndicatorBot:
                 self.last_error_log_time = time.time()
 
     def get_signal(self):
-        if len(self.prices) < 40:
+        if len(self.rsi_history) < 5:
             return None
     
-        prices_arr = np.array(self.prices)
-        a = calc_rsi(prices_arr)
+        r1, r2, r3, r4, r5 = self.rsi_history[-5:]
     
-        if a > 90:
-            time.sleep(30)
-        
-            prices_arr = np.array(self.prices)
-            b = calc_rsi(prices_arr)
-
-        
-            if b is None:
-                return None
-            if a < b:
-                
-                time.sleep(30)
-            
-                prices_arr = np.array(self.prices)
-                c = calc_rsi(prices_arr)
-            
-                if c is None:
-                    return None
-                if b - c > 10:
-                    time.sleep(30)
-            
-                    prices_arr = np.array(self.prices)
-                    d = calc_rsi(prices_arr)
-                
-                    if d is None:
-                        return None
-                    if c - d > 10:
-                        return "SELL"
-        elif a < 10:
-            time.sleep(30)
-        
-            prices_arr = np.array(self.prices)
-            b = calc_rsi(prices_arr)
-
-            if b is None:
-                return None
-            if a > b:
-                
-                time.sleep(30)
-            
-                prices_arr = np.array(self.prices)
-                c = calc_rsi(prices_arr)
-            
-                if c is None:
-                    return None
-
-                if c - b > 10:
-                    time.sleep(30)
-            
-                    prices_arr = np.array(self.prices)
-                    d = calc_rsi(prices_arr)
-                
-                    if d is None:
-                        return None
-                    if d - c > 10:
-                        return "BUY"
-
-
+        if r1 > r2 > r3 > r4 > r5 and r1 > 85 and (r1 - r5) > 15:
+            return "SELL"
+        elif r1 < r2 < r3 < r4 < r5 and r1 < 15 and (r5 - r1) > 15:
+            return "BUY"
+    
         return None
 
 
