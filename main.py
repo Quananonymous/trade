@@ -503,6 +503,12 @@ class IndicatorBot:
                     self.check_tp_sl()
                 
                 time.sleep(1)
+                # Kiểm tra tín hiệu ngược chiều để đóng vị thế
+                signal = self.get_signal()
+                if signal:
+                    if (self.side == "BUY" and signal == "SELL") or (self.side == "SELL" and signal == "BUY"):
+                        self.close_position(f"🔄 Tín hiệu đảo chiều sang {signal}")
+
                 
             except Exception as e:
                 if time.time() - self.last_error_log_time > 10:
