@@ -337,6 +337,35 @@ def calc_rsi(prices, period=14):
         logger.error(f"Lỗi tính RSI: {str(e)}")
         return None
 
+def calc_ema(prices, period):
+    prices = np.array(prices)
+    if len(prices) < period:
+        return None
+    weights = np.exp(np.linspace(-1., 0., period))
+    weights /= weights.sum()
+    ema = np.convolve(prices, weights, mode='valid')
+    return ema
+
+def get_ema_crossover_signal(prices, fast_period=9, slow_period=21):
+    if len(prices) < slow_period + 2:
+        return None
+
+    fast_ema = calc_ema(prices, fast_period)
+    slow_ema = calc_ema(prices, slow_period)
+
+    if fast_ema is None or slow_ema is None:
+        return None
+
+    f1, f2 = fast_ema[-2], fast_ema[-1]
+    s1, s2 = slow_ema[-2], slow_ema[-1]
+
+    if f1 < s1 and f2 > s2:
+        return "BUY"
+    elif f1 > s1 and f2 < s2:
+        return "SELL"
+    return None
+
+
 # ========== QUẢN LÝ WEBSOCKET HIỆU QUẢ VỚI KIỂM SOÁT LỖI ==========
 class WebSocketManager:
     def __init__(self):
@@ -609,15 +638,23 @@ class IndicatorBot:
                 self.last_error_log_time = time.time()
 
     def get_signal(self):
-        if len(self.rsi_history) < 5:
+        if len(self.rsi_history) < 5 or len(self.prices) < 30:
             return None
     
+        # --- RSI tín hiệu ---
         r1, r2, r3, r4, r5 = self.rsi_history[-5:]
+        rsi_signal = None
+        if r1 < r2 < r3 and r5 < r4 < r3 and r3 > 80 and (r3 - r5) > 10:
+            rsi_signal = "SELL"
+        elif r1 > r2 > r3 and r5 > r4 > r3 and r3 < 20 and (r5 - r3) > 10:
+            rsi_signal = "BUY"
     
-        if r1 < r2 < r3 and r5 < r4 < r3 and r3 > 95 and r3 - r5 > 30:
-            return "SELL"
-        elif r1 > r2 > r3 and r3< r4 < r5  and r3 < 5 and r5 - r3 > 30:
-            return "BUY"
+        # --- EMA crossover tín hiệu ---
+        ema_signal = get_ema_crossover_signal(self.prices)
+    
+        # --- Kết hợp 2 tín hiệu ---
+        if rsi_signal and ema_signal and rsi_signal == ema_signal:
+            return rsi_signal
     
         return None
 
