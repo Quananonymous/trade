@@ -116,11 +116,11 @@ def create_symbols_keyboard():
 
 def create_leverage_keyboard():
     """Tạo bàn phím chọn đòn bẩy"""
-    leverages = ["10", "20", "30", "50", "75", "100"]
+    leverages = ["3", "8", "10", "20", "30", "50", "75", "100"]
     keyboard = []
     row = []
     for lev in leverages:
-        row.append({"text": f"⚖️ {lev}x"})
+        row.append({"text": f" {lev}x"})
         if len(row) == 3:
             keyboard.append(row)
             row = []
@@ -748,7 +748,7 @@ class IndicatorBot:
                 f"🏷️ Giá vào: {self.entry:.4f}\n"
                 f"📊 Khối lượng: {executed_qty}\n"
                 f"💵 Giá trị: {executed_qty * self.entry:.2f} USDT\n"
-                f"⚖️ Đòn bẩy: {self.lev}x\n"
+                f" Đòn bẩy: {self.lev}x\n"
                 f"🎯 TP: {self.tp}% | 🛡️ SL: {self.sl}%"
             )
             self.log(message)
@@ -932,7 +932,7 @@ class BotManager:
                             f"📌 Hướng: {bot.side}\n"
                             f"🏷️ Giá vào: {bot.entry:.4f}\n"
                             f"📊 Khối lượng: {abs(bot.qty)}\n"
-                            f"⚖️ Đòn bẩy: {bot.lev}x\n"
+                            f" Đòn bẩy: {bot.lev}x\n"
                             f"🎯 TP: {bot.tp}% | 🛡️ SL: {bot.sl}%"
                         )
                         send_telegram(status_msg)
@@ -1005,11 +1005,11 @@ class BotManager:
                 self.user_states[chat_id] = {}
                 send_telegram("❌ Đã hủy thêm bot", chat_id, create_menu_keyboard())
             elif 'x' in text:
-                leverage = int(text.replace('⚖️', '').replace('x', '').strip())
+                leverage = int(text.replace('', '').replace('x', '').strip())
                 user_state['leverage'] = leverage
                 user_state['step'] = 'waiting_percent'
                 send_telegram(
-                    f"📌 Cặp: {user_state['symbol']}\n⚖️ Đòn bẩy: {leverage}x\n\nNhập % số dư muốn sử dụng (1-100):",
+                    f"📌 Cặp: {user_state['symbol']}\n Đòn bẩy: {leverage}x\n\nNhập % số dư muốn sử dụng (1-100):",
                     chat_id,
                     create_cancel_keyboard()
                 )
@@ -1025,7 +1025,7 @@ class BotManager:
                         user_state['percent'] = percent
                         user_state['step'] = 'waiting_tp'
                         send_telegram(
-                            f"📌 Cặp: {user_state['symbol']}\n⚖️ ĐB: {user_state['leverage']}x\n📊 %: {percent}%\n\nNhập % Take Profit (ví dụ: 10):",
+                            f"📌 Cặp: {user_state['symbol']}\n ĐB: {user_state['leverage']}x\n📊 %: {percent}%\n\nNhập % Take Profit (ví dụ: 10):",
                             chat_id,
                             create_cancel_keyboard()
                         )
@@ -1045,7 +1045,7 @@ class BotManager:
                         user_state['tp'] = tp
                         user_state['step'] = 'waiting_sl'
                         send_telegram(
-                            f"📌 Cặp: {user_state['symbol']}\n⚖️ ĐB: {user_state['leverage']}x\n📊 %: {user_state['percent']}%\n🎯 TP: {tp}%\n\nNhập % Stop Loss (ví dụ: 5):",
+                            f"📌 Cặp: {user_state['symbol']}\n ĐB: {user_state['leverage']}x\n📊 %: {user_state['percent']}%\n🎯 TP: {tp}%\n\nNhập % Stop Loss (ví dụ: 5):",
                             chat_id,
                             create_cancel_keyboard()
                         )
@@ -1072,7 +1072,7 @@ class BotManager:
                             send_telegram(
                                 f"✅ <b>ĐÃ THÊM BOT THÀNH CÔNG</b>\n\n"
                                 f"📌 Cặp: {symbol}\n"
-                                f"⚖️ Đòn bẩy: {leverage}x\n"
+                                f" Đòn bẩy: {leverage}x\n"
                                 f"📊 % Số dư: {percent}%\n"
                                 f"🎯 TP: {tp}%\n"
                                 f"🛡️ SL: {sl}%",
