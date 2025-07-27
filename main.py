@@ -653,7 +653,7 @@ class IndicatorBot:
         ema_signal = get_ema_crossover_signal(self.prices)
     
         # --- Kết hợp 2 tín hiệu ---
-        if (rsi_signal != "NO_BUY" and ema_signal = "BUY") or (rsi_signal != "NO_BUY" and ema_signal = "BUY"):
+        if (rsi_signal != "NO_BUY" and ema_signal == "BUY") or (rsi_signal != "NO_BUY" and ema_signal == "BUY"):
             return ema_signal
     
         return None
