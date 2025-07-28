@@ -543,14 +543,14 @@ class IndicatorBot:
                 if self.position_open and self.status == "open":
                     self.check_tp_sl()
                 
-                time.sleep(1)
+                time.sleep(500)
                 # Kiểm tra tín hiệu ngược chiều để đóng vị thế
                 
             except Exception as e:
                 if time.time() - self.last_error_log_time > 10:
                     self.log(f"Lỗi hệ thống: {str(e)}")
                     self.last_error_log_time = time.time()
-                time.sleep(5)
+                time.sleep(300)
 
     def stop(self):
         self._stop = True
