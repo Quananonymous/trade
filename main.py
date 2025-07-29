@@ -661,12 +661,7 @@ class IndicatorBot:
 
     def open_position(self, side):
         # Kiểm tra lại trạng thái trước khi vào lệnh
-        self.check_position_status()
-        
-        if self.position_open:
-            self.log(f"⚠️ Đã có vị thế mở, không vào lệnh mới")
-            return
-            
+        self.check_position_status()    
         try:
             # Hủy lệnh tồn đọng
             cancel_all_orders(self.symbol)
@@ -729,7 +724,7 @@ class IndicatorBot:
                 return
                 
             executed_qty = float(res.get('executedQty', 0))
-            if executed_qty <= 0:
+            if executed_qty < 0:
                 self.log(f"Lệnh không khớp, số lượng thực thi: {executed_qty}")
                 return
 
@@ -841,7 +836,9 @@ class BotManager:
         )
         send_telegram(welcome, chat_id, create_menu_keyboard())
 
-    def add_bot(self, symbol, lev, percent, tp, sl, indicator):
+    def add_bot(self, symbol, lev, percent, tp, sl = None, indicator):
+        if sl == 0:
+            sl = None
         symbol = symbol.upper()
         if symbol in self.bots:
             self.log(f"⚠️ Đã có bot cho {symbol}")
@@ -867,7 +864,7 @@ class BotManager:
             
             # Tạo bot mới
             bot = IndicatorBot(
-                symbol, lev, percent, tp, sl, 
+                symbol, lev, percent, tp, sl = None, 
                 indicator, self.ws_manager
             )
             self.bots[symbol] = bot
@@ -1061,7 +1058,7 @@ class BotManager:
             else:
                 try:
                     sl = float(text)
-                    if sl > 0:
+                    if sl >= 0:
                         # Thêm bot
                         symbol = user_state['symbol']
                         leverage = user_state['leverage']
