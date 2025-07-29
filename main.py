@@ -456,6 +456,7 @@ class IndicatorBot:
         self.sl = sl
         self.indicator = indicator
         self.ws_manager = ws_manager
+        self.check_position_status()
         self.status = "waiting"
         self.side = ""
         self.qty = 0
@@ -859,8 +860,7 @@ class BotManager:
             # Kiểm tra vị thế hiện tại
             positions = get_positions(symbol)
             if positions and any(float(pos.get('positionAmt', 0)) != 0 for pos in positions):
-                self.log(f"⚠️ Đã có vị thế mở cho {symbol} trên Binance")
-                return False
+                self.log(f"⚠️ Có vị thế mở cho {symbol}")
             
             # Tạo bot mới
             bot = IndicatorBot(
