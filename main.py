@@ -661,7 +661,7 @@ class IndicatorBot:
 
     def open_position(self, side):
         # Kiểm tra lại trạng thái trước khi vào lệnh
-        self.check_position_status()    
+        #self.check_position_status()    
         try:
             # Hủy lệnh tồn đọng
             cancel_all_orders(self.symbol)
