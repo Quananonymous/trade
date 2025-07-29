@@ -630,7 +630,7 @@ class IndicatorBot:
             # Kiểm tra TP/SL
             if roi >= self.tp:
                 self.close_position(f"✅ Đạt TP {self.tp}% (ROI: {roi:.2f}%)")
-            elif roi <= -self.sl:
+            elif self.sl is not None and roi <= -self.sl:
                 self.close_position(f"❌ Đạt SL {self.sl}% (ROI: {roi:.2f}%)")
                 
         except Exception as e:
