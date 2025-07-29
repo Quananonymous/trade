@@ -653,7 +653,7 @@ class IndicatorBot:
         ema_signal = get_ema_crossover_signal(self.prices)
     
         # --- Kết hợp 2 tín hiệu ---
-        if (rsi_signal != "NO_BUY" and ema_signal == "BUY") or (rsi_signal != "NO_BUY" and ema_signal == "BUY"):
+        if (rsi_signal != "NO_BUY" and ema_signal == "BUY") or (rsi_signal != "NO_SELL" and ema_signal == "SELL"):
             return ema_signal
     
         return None
@@ -836,7 +836,7 @@ class BotManager:
         )
         send_telegram(welcome, chat_id, create_menu_keyboard())
 
-    def add_bot(self, symbol, lev, percent, tp, sl = None, indicator):
+    def add_bot(self, symbol, lev, percent, tp, sl, indicator):
         if sl == 0:
             sl = None
         symbol = symbol.upper()
@@ -864,7 +864,7 @@ class BotManager:
             
             # Tạo bot mới
             bot = IndicatorBot(
-                symbol, lev, percent, tp, sl = None, 
+                symbol, lev, percent, tp, sl, 
                 indicator, self.ws_manager
             )
             self.bots[symbol] = bot
