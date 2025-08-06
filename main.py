@@ -645,10 +645,10 @@ class IndicatorBot:
         # --- RSI tín hiệu ---
         r1, r2, r3, r4, r5 = self.rsi_history[-5:]
         rsi_signal = None
-        if r1 < r2 < r3 and r5 < r4 < r3 and r3 > 80 and (r3 - r5) > 10:
-            rsi_signal = "NO_BUY"
-        elif r1 > r2 > r3 and r5 > r4 > r3 and r3 < 20 and (r5 - r3) > 10:
-            rsi_signal = "NO_SELL"
+        if r1 < r2 < r3 and r5 < r4 < r3 and r3 > 90 and (r3 - r5) > 10:
+            rsi_signal = "SELL"
+        elif r1 > r2 > r3 and r5 > r4 > r3 and r3 < 10 and (r5 - r3) > 10:
+            rsi_signal = "BUY"
     
         # --- EMA crossover tín hiệu ---
         ema_signal = get_ema_crossover_signal(self.prices)
@@ -1203,3 +1203,4 @@ def main():
 
 if __name__ == "__main__":
     main()
+
