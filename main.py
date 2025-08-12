@@ -534,7 +534,7 @@ class IndicatorBot:
                                 invested = self.entry * abs(self.qty) / self.lev
                                 roi = (profit / invested) * 100 if invested != 0 else 0
                     
-                                if roi >= 30 or roi <= -500:
+                                if roi >= 30:
                                     self.close_position(f"🔄 ROI {roi:.2f}% vượt ngưỡng, đảo chiều sang {signal}")
 
                     if signal and current_time - self.last_trade_time > 60:
@@ -544,14 +544,14 @@ class IndicatorBot:
                 if self.position_open and self.status == "open":
                     self.check_tp_sl()
                 
-                time.sleep(500)
+                time.sleep(1)
                 # Kiểm tra tín hiệu ngược chiều để đóng vị thế
                 
             except Exception as e:
                 if time.time() - self.last_error_log_time > 10:
                     self.log(f"Lỗi hệ thống: {str(e)}")
                     self.last_error_log_time = time.time()
-                time.sleep(300)
+                time.sleep(1)
 
     def stop(self):
         self._stop = True
@@ -1203,6 +1203,7 @@ def main():
 
 if __name__ == "__main__":
     main()
+
 
 
 
