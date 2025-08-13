@@ -654,7 +654,7 @@ class IndicatorBot:
         ema_signal = get_ema_crossover_signal(self.prices)
     
         # --- Kết hợp 2 tín hiệu ---
-        if (rsi_signal == "SELL" and ema_signal == "BUY") or (rsi_signal == "BUY" and ema_signal == "SELL"):
+        if rsi_signal == ema_signal:
             return rsi_signal
     
         return None
@@ -1203,6 +1203,7 @@ def main():
 
 if __name__ == "__main__":
     main()
+
 
 
 
