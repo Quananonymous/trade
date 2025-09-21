@@ -1154,7 +1154,7 @@ def main():
     manager = BotManager()
     if BOT_CONFIGS:
         for config in BOT_CONFIGS:
-            symbol, lev, percent, tp, sl = config
+            symbol, lev, percent, tp, sl, _ = config
             manager.add_bot(symbol, lev, percent, tp, sl, "WEIGHTED_SYSTEM")
     else:
         manager.log("⚠️ No bot configurations found!")
@@ -1175,3 +1175,4 @@ def main():
 
 if __name__ == "__main__":
     main()
+
