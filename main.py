@@ -1157,24 +1157,54 @@ class BotManager:
 # ========== MAIN FUNCTION ==========
 def main():
     manager = BotManager()
+    
+    if BOT_CONFIGS:
+        manager.log("Đang thực hiện huấn luyện ban đầu trên dữ liệu lịch sử...")
+        # Lặp qua từng cấu hình bot để huấn luyện
+        for config in BOT_CONFIGS:
+            symbol, lev, percent, tp, sl = config # Giả sử bạn đang dùng 5 giá trị
+            
+            # Lấy dữ liệu lịch sử đủ lớn để huấn luyện
+            df_history = get_klines(symbol, '15m', 200)
+            
+            if not df_history.empty:
+                manager.log(f"Bắt đầu huấn luyện cho {symbol} với 1000 nến 5 phút...")
+                # Lặp qua từng nến để tính tín hiệu và cập nhật trọng số
+                for i in range(50, len(df_history) - 1): # Bắt đầu từ nến thứ 50 để đảm bảo có đủ dữ liệu cho các chỉ báo
+                    df_slice = df_history.iloc[i-50:i+1] # Lấy một lát cắt dữ liệu để mô phỏng
+                    df_slice = add_technical_indicators(df_slice)
+                    
+                    if not df_slice.iloc[-1].isnull().any():
+                        signal, current_indicators = get_weighted_signal(df_slice)
+                        
+                        # Tính toán thay đổi giá của nến tiếp theo để đánh giá tín hiệu
+                        price_change_percent = ((df_history['close'].iloc[i+1] - df_history['close'].iloc[i]) / df_history['close'].iloc[i]) * 100
+                        
+                        if signal:
+                            update_weights_and_stats(signal, current_indicators, price_change_percent)
+                manager.log(f"Hoàn thành huấn luyện ban đầu cho {symbol}.")
+            else:
+                manager.log(f"Không đủ dữ liệu lịch sử để huấn luyện bot cho {symbol}.")
+
     if BOT_CONFIGS:
         for config in BOT_CONFIGS:
+            # Sau khi huấn luyện, thêm bot thực tế vào
             symbol, lev, percent, tp, sl, _ = config
             manager.add_bot(symbol, lev, percent, tp, sl, "WEIGHTED_SYSTEM")
     else:
-        manager.log("⚠️ No bot configurations found!")
+        manager.log("⚠️ Không tìm thấy cấu hình bot nào!")
     try:
         balance = get_balance()
-        manager.log(f"💰 INITIAL BALANCE: {balance:.2f} USDT")
+        manager.log(f"💰 SỐ DƯ KHỞI ĐẦU: {balance:.2f} USDT")
     except Exception as e:
-        manager.log(f"⚠️ Error getting initial balance: {str(e)}")
+        manager.log(f"⚠️ Lỗi khi lấy số dư khởi đầu: {str(e)}")
     try:
         while manager.running:
             time.sleep(1)
     except KeyboardInterrupt:
-        manager.log("👋 Received user stop signal...")
+        manager.log("👋 Nhận tín hiệu dừng từ người dùng...")
     except Exception as e:
-        manager.log(f"⚠️ SEVERE SYSTEM ERROR: {str(e)}")
+        manager.log(f"⚠️ LỖI HỆ THỐNG NGHIÊM TRỌNG: {str(e)}")
     finally:
         manager.stop_all()
 
