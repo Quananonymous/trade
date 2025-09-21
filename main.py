@@ -460,14 +460,14 @@ def get_weighted_signal(df):
     total_score = 0
     
     # RSI: Tín hiệu mua khi quá bán (< 30), bán khi quá mua (> 70)
-    if df['RSI'].iloc[-1] < 30:
+    if df['RSI'].iloc[-1] < 20 or 80 > df['RSI'].iloc[-1] > 60:
         current_indicators["RSI"] = 1
         total_score += indicator_weights["RSI"]
-    elif df['RSI'].iloc[-1] > 70:
+    if 40 > df['RSI'].iloc[-1] > 20 or df['RSI'].iloc[-1] > 80:
         current_indicators["RSI"] = -1
         total_score -= indicator_weights["RSI"]
     else:
-        current_indicators["RSI"] = 0
+        current_indicators["RSI"] = 0 # Trung lập
     
     # MACD: MACD line > signal line là tăng
     if df['MACD'].iloc[-1] > df['MACD_Signal'].iloc[-1]:
@@ -1277,6 +1277,7 @@ def main():
 
 if __name__ == "__main__":
     main()
+
 
 
 
