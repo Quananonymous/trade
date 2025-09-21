@@ -460,6 +460,7 @@ def get_weighted_signal(df):
     total_score = 0
     
     # RSI: Tín hiệu mua khi quá bán (< 30), bán khi quá mua (> 70)
+    rsi_value = df['RSI'].iloc[-1]
     if df['RSI'].iloc[-1] < 20 or 80 > df['RSI'].iloc[-1] > 60:
         current_indicators["RSI"] = 1
         total_score += indicator_weights["RSI"]
@@ -505,19 +506,22 @@ def get_weighted_signal(df):
         current_indicators["volume"] = -1
         total_score -= indicator_weights["volume"]
         
-    # Stochastic Oscillator: K line > D line and both are below 80 is bullish
-    if df['stoch_k'].iloc[-1] > df['stoch_d'].iloc[-1] and df['stoch_k'].iloc[-1] < 80:
+    # Stochastic Oscillator: K line > D line và cả hai đều dưới 80 là tăng
+    stoch_k_value = df['stoch_k'].iloc[-1]
+    stoch_d_value = df['stoch_d'].iloc[-1]
+    if stoch_k_value > stoch_d_value and stoch_k_value < 80:
         current_indicators["Stochastic"] = 1
         total_score += indicator_weights["Stochastic"]
     else:
         current_indicators["Stochastic"] = -1
         total_score -= indicator_weights["Stochastic"]
 
-    # Bollinger Bands: Price below the lower band is bullish, above the upper band is bearish
-    if df['close'].iloc[-1] < df['bollinger_low'].iloc[-1]:
+    # Bollinger Bands: Giá dưới dải băng dưới là tăng, trên dải băng trên là giảm
+    close_price = df['close'].iloc[-1]
+    if close_price < df['bollinger_low'].iloc[-1]:
         current_indicators["BollingerBands"] = 1
         total_score += indicator_weights["BollingerBands"]
-    elif df['close'].iloc[-1] > df['bollinger_high'].iloc[-1]:
+    elif close_price > df['bollinger_high'].iloc[-1]:
         current_indicators["BollingerBands"] = -1
         total_score -= indicator_weights["BollingerBands"]
     else:
@@ -532,10 +536,11 @@ def get_weighted_signal(df):
         total_score -= indicator_weights["Ichimoku"]
         
     # ADX: ADX > 25 và (+DI > -DI) là tín hiệu tăng mạnh
-    if df['ADX'].iloc[-1] > 25 and df['plus_di'].iloc[-1] > df['minus_di'].iloc[-1]:
+    adx_value = df['ADX'].iloc[-1]
+    if adx_value > 25 and df['plus_di'].iloc[-1] > df['minus_di'].iloc[-1]:
         current_indicators["ADX"] = 1
         total_score += indicator_weights["ADX"]
-    elif df['ADX'].iloc[-1] > 25 and df['minus_di'].iloc[-1] > df['plus_di'].iloc[-1]:
+    elif adx_value > 25 and df['minus_di'].iloc[-1] > df['plus_di'].iloc[-1]:
         current_indicators["ADX"] = -1
         total_score -= indicator_weights["ADX"]
     else:
@@ -548,8 +553,6 @@ def get_weighted_signal(df):
         signal = -1
         
     return signal, current_indicators
-
-# ... (Phần còn lại của code không thay đổi)
 
 def update_weights_and_stats(signal, current_indicators, price_change_percent):
     """Dynamically adjusts indicator weights based on their performance."""
@@ -1221,63 +1224,80 @@ class BotManager:
         elif text:
             self.send_main_menu(chat_id)
 
-# ========== MAIN FUNCTION ==========
-def main():
-    manager = BotManager()
+# ========== FUNCTIONS FOR INITIAL TRAINING ==========
+def perform_initial_training(manager, bot_configs):
+    """
+    Performs initial training on historical data for all bot configurations.
+    This function simulates trading on historical klines to pre-train indicator weights.
+    """
+    if not bot_configs:
+        manager.log("⚠️ No bot configurations found for training.")
+        return
+
+    manager.log("⏳ Starting initial training on historical data...")
     
-    if BOT_CONFIGS:
-        manager.log("Đang thực hiện huấn luyện ban đầu trên dữ liệu lịch sử...")
-        # Lặp qua từng cấu hình bot để huấn luyện
-        for config in BOT_CONFIGS:
-            symbol, lev, percent, tp, sl, _ = config
+    for config in bot_configs:
+        try:
+            symbol, _, _, _, _, _ = config
             
-            # Lấy dữ liệu lịch sử đủ lớn để huấn luyện
+            # Retrieve a large number of historical klines for training
             df_history = get_klines(symbol, '15m', 200)
             
-            if not df_history.empty:
-                manager.log(f"Bắt đầu huấn luyện cho {symbol} với 200 nến 15 phút...")
-                # Lặp qua từng nến để tính tín hiệu và cập nhật trọng số
-                for i in range(50, len(df_history) - 1): # Bắt đầu từ nến thứ 50 để đảm bảo có đủ dữ liệu cho các chỉ báo
-                    df_slice = df_history.iloc[i-50:i+1] # Lấy một lát cắt dữ liệu để mô phỏng
+            if not df_history.empty and len(df_history) >= 50:
+                manager.log(f"🚀 Starting initial training for {symbol} with 200 15m candles...")
+                
+                # Iterate through historical data to simulate signal generation and weight updates
+                for i in range(50, len(df_history) - 1): # Start from candle 50 to ensure enough data for indicators
+                    # Create a slice of data to simulate real-time analysis
+                    df_slice = df_history.iloc[i-50:i+1]
                     df_slice = add_technical_indicators(df_slice)
                     
                     if not df_slice.iloc[-1].isnull().any():
                         signal, current_indicators = get_weighted_signal(df_slice)
                         
-                        # Tính toán thay đổi giá của nến tiếp theo để đánh giá tín hiệu
+                        # Calculate price change of the next candle to evaluate the signal
                         price_change_percent = ((df_history['close'].iloc[i+1] - df_history['close'].iloc[i]) / df_history['close'].iloc[i]) * 100
                         
                         if signal:
                             update_weights_and_stats(signal, current_indicators, price_change_percent)
-                manager.log(f"Hoàn thành huấn luyện ban đầu cho {symbol}.")
+                
+                manager.log(f"✅ Initial training for {symbol} completed. Final weights updated.")
             else:
-                manager.log(f"Không đủ dữ liệu lịch sử để huấn luyện bot cho {symbol}.")
+                manager.log(f"❌ Not enough historical data to train the bot for {symbol}.")
+        
+        except Exception as e:
+            manager.log(f"❌ Error during initial training for {symbol}: {str(e)}")
+
+
+# ========== MAIN FUNCTION ==========
+def main():
+    manager = BotManager()
+    
+    # Perform initial training once before starting the live bots
+    perform_initial_training(manager, BOT_CONFIGS)
 
     if BOT_CONFIGS:
         for config in BOT_CONFIGS:
-            # Sau khi huấn luyện, thêm bot thực tế vào
             symbol, lev, percent, tp, sl, _ = config
             manager.add_bot(symbol, lev, percent, tp, sl, "WEIGHTED_SYSTEM")
     else:
-        manager.log("⚠️ Không tìm thấy cấu hình bot nào!")
+        manager.log("⚠️ No bot configurations found!")
+        
     try:
         balance = get_balance()
-        manager.log(f"💰 SỐ DƯ KHỞI ĐẦU: {balance:.2f} USDT")
+        manager.log(f"💰 INITIAL BALANCE: {balance:.2f} USDT")
     except Exception as e:
-        manager.log(f"⚠️ Lỗi khi lấy số dư khởi đầu: {str(e)}")
+        manager.log(f"⚠️ Error getting initial balance: {str(e)}")
+        
     try:
         while manager.running:
             time.sleep(1)
     except KeyboardInterrupt:
-        manager.log("👋 Nhận tín hiệu dừng từ người dùng...")
+        manager.log("👋 Received user stop signal...")
     except Exception as e:
-        manager.log(f"⚠️ LỖI HỆ THỐNG NGHIÊM TRỌNG: {str(e)}")
+        manager.log(f"⚠️ SEVERE SYSTEM ERROR: {str(e)}")
     finally:
         manager.stop_all()
 
 if __name__ == "__main__":
     main()
-
-
-
-
