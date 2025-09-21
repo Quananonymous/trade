@@ -47,16 +47,16 @@ API_SECRET = BINANCE_SECRET_KEY
 # ========== NEW GLOBAL VARIABLES FOR THE WEIGHTED SYSTEM ==========
 # Initial weights for each indicator (sum to 100).
 indicator_weights = {
-    "RSI": 10.0,
-    "MACD": 10.0,
-    "EMA9": 10.0,
-    "EMA21": 10.0,
-    "ATR": 10.0,
-    "volume": 10.0,
-    "Stochastic": 10.0,
-    "BollingerBands": 10.0,
-    "Ichimoku": 10.0,
-    "ADX": 10.0,
+    "RSI": 12.5,
+    "MACD": 12.5,
+    "EMA9": 12.5,
+    "EMA21": 12.5,
+    "ATR": 12.5,
+    "volume": 12.5,
+    "Stochastic": 12.5,
+    "BollingerBands": 12.5,
+    #"Ichimoku": 10.0,
+    #"ADX": 10.0,
 }
 
 # Counters for correct/incorrect predictions for each indicator
@@ -438,10 +438,10 @@ def get_weighted_signal(df):
     total_score = 0
     
     # RSI: > 50 is bullish (+1), < 50 is bearish (-1)
-    if df['RSI'].iloc[-1] < 20 or 80 > df['RSI'].iloc[-1] > 60::
+    if df['RSI'].iloc[-1] < 20 or 80 > df['RSI'].iloc[-1] > 60:
         current_indicators["RSI"] = 1
         total_score += indicator_weights["RSI"]
-    if 40 > df['RSI'].iloc[-1] > 20 or df['RSI'].iloc[-1] > 80::
+    if 40 > df['RSI'].iloc[-1] > 20 or df['RSI'].iloc[-1] > 80:
         current_indicators["RSI"] = -1
         total_score -= indicator_weights["RSI"]
         
@@ -487,12 +487,18 @@ def get_weighted_signal(df):
         current_indicators["BollingerBands"] = -1
         total_score -= indicator_weights["BollingerBands"]
     else:
-        current_indicators["BollingerBands"] = 0
+        # Nếu giá nằm giữa dải băng, cho một tín hiệu yếu dựa trên xu hướng
+        if df['close'].iloc[-1] > df['close'].iloc[-2]:
+            current_indicators["BollingerBands"] = 1
+            total_score += indicator_weights["BollingerBands"] * 0.1 # Trọng số thấp để tránh ảnh hưởng quá nhiều
+        else:
+            current_indicators["BollingerBands"] = -1
+            total_score -= indicator_weights["BollingerBands"] * 0.1
     
     # Ichimoku: Placeholder for a more complex indicator
     # For now, let's assume it provides a neutral signal
-    current_indicators["Ichimoku"] = 0
-    current_indicators["ADX"] = 0
+    #current_indicators["Ichimoku"] = 0
+    #current_indicators["ADX"] = 0
     
     signal = 0
     if total_score > 0:
@@ -1228,4 +1234,5 @@ def main():
 
 if __name__ == "__main__":
     main()
+
 
