@@ -438,10 +438,10 @@ def get_weighted_signal(df):
     total_score = 0
     
     # RSI: > 50 is bullish (+1), < 50 is bearish (-1)
-    if df['RSI'].iloc[-1] > 50:
+    if df['RSI'].iloc[-1] < 20 or 80 > df['RSI'].iloc[-1] > 60::
         current_indicators["RSI"] = 1
         total_score += indicator_weights["RSI"]
-    else:
+    if 40 > df['RSI'].iloc[-1] > 20 or df['RSI'].iloc[-1] > 80::
         current_indicators["RSI"] = -1
         total_score -= indicator_weights["RSI"]
         
@@ -1228,3 +1228,4 @@ def main():
 
 if __name__ == "__main__":
     main()
+
