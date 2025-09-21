@@ -438,10 +438,10 @@ def get_weighted_signal(df):
     total_score = 0
     
     # RSI: > 50 is bullish (+1), < 50 is bearish (-1)
-    if df['RSI'].iloc[-1] > 50:
+    if 80 > df['RSI'].iloc[-1] > 60 and df['RSI'].iloc[-1] < 20:
         current_indicators["RSI"] = 1
         total_score += indicator_weights["RSI"]
-    else:
+    if df['RSI'].iloc[-1] > 80 or 40 > df['RSI'].iloc[-1] > 20:
         current_indicators["RSI"] = -1
         total_score -= indicator_weights["RSI"]
         
@@ -507,27 +507,32 @@ def update_weights_and_stats(signal, current_indicators, price_change_percent):
     global indicator_weights
     global indicator_stats
     
+    # Tốc độ điều chỉnh (ví dụ: 1%)
+    adjustment_rate = 0.05
+
     is_correct_signal = (signal == 1 and price_change_percent > 0) or \
                         (signal == -1 and price_change_percent < 0)
 
     for indicator, status in current_indicators.items():
-        if status == 0: continue # Skip neutral indicators
+        if status == 0: continue # Bỏ qua các chỉ báo trung lập
+
+        # Tăng/giảm trọng số dựa trên sự chính xác của chỉ báo
         if is_correct_signal:
-            if status == signal:
-                indicator_weights[indicator] = min(indicator_weights[indicator] + 1, 100)
+            if status == signal: # Chỉ báo đúng hướng với tín hiệu tổng hợp và kết quả thực tế
+                indicator_weights[indicator] *= (1 + adjustment_rate)
                 indicator_stats[indicator]["correct"] += 1
-            else:
-                indicator_weights[indicator] = max(indicator_weights[indicator] - 1, 1)
+            else: # Chỉ báo sai hướng với tín hiệu tổng hợp nhưng kết quả lại đúng (trường hợp này hiếm nhưng vẫn xảy ra)
+                indicator_weights[indicator] *= (1 - adjustment_rate)
                 indicator_stats[indicator]["incorrect"] += 1
         else:
-            if status == signal:
-                indicator_weights[indicator] = max(indicator_weights[indicator] - 1, 1)
+            if status == signal: # Chỉ báo đúng hướng với tín hiệu tổng hợp nhưng kết quả thực tế lại sai
+                indicator_weights[indicator] *= (1 - adjustment_rate)
                 indicator_stats[indicator]["incorrect"] += 1
-            else:
-                indicator_weights[indicator] = min(indicator_weights[indicator] + 1, 100)
+            else: # Chỉ báo sai hướng với tín hiệu tổng hợp nhưng kết quả lại sai, vậy chỉ báo này lại đang "đúng"
+                indicator_weights[indicator] *= (1 + adjustment_rate)
                 indicator_stats[indicator]["correct"] += 1
     
-    # Normalize weights to sum to 100
+    # Chuẩn hóa lại các trọng số để tổng bằng 100
     total_weight = sum(indicator_weights.values())
     if total_weight <= 0:
         total_weight = 100
@@ -581,10 +586,10 @@ class WebSocketManager:
                 self._reconnect(symbol, callback)
             
         def on_close(ws, close_status_code, close_msg):
-            logger.info(f"WebSocket closed {symbol}: {close_status_code} - {close_msg}")
-            if not self._stop_event.is_set() and symbol in self.connections:
-                time.sleep(300)
-                self._reconnect(symbol, callback)
+                logger.info(f"WebSocket closed {symbol}: {close_status_code} - {close_msg}")
+                if not self._stop_event.is_set() and symbol in self.connections:
+                    time.sleep(300)
+                    self._reconnect(symbol, callback)
                 
         ws = websocket.WebSocketApp(
             url,
@@ -1175,4 +1180,3 @@ def main():
 
 if __name__ == "__main__":
     main()
-
