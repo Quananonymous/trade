@@ -47,16 +47,16 @@ API_SECRET = BINANCE_SECRET_KEY
 # ========== NEW GLOBAL VARIABLES FOR THE WEIGHTED SYSTEM ==========
 # Initial weights for each indicator (sum to 100).
 indicator_weights = {
-    "RSI": 12.5,
-    "MACD": 12.5,
-    "EMA9": 12.5,
-    "EMA21": 12.5,
-    "ATR": 12.5,
-    "volume": 12.5,
-    "Stochastic": 12.5,
-    "BollingerBands": 12.5,
-    #"Ichimoku": 10.0,
-    #"ADX": 10.0,
+    "RSI": 10.0,
+    "MACD": 10.0,
+    "EMA9": 10.0,
+    "EMA21": 10.0,
+    "ATR": 10.0,
+    "volume": 10.0,
+    "Stochastic": 10.0,
+    "BollingerBands": 10.0,
+    "Ichimoku": 10.0,
+    "ADX": 10.0,
 }
 
 # Counters for correct/incorrect predictions for each indicator
@@ -397,7 +397,33 @@ def calc_macd(series, fast_period=12, slow_period=26, signal_period=9):
     except Exception as e:
         logger.error(f"Error calculating MACD: {str(e)}")
         return pd.Series([None]), pd.Series([None]), pd.Series([None])
+
+def calc_ichimoku(df):
+    try:
+        high_9 = df['high'].rolling(window=9).max()
+        low_9 = df['low'].rolling(window=9).min()
+        df['ichimoku_tenkan_sen'] = (high_9 + low_9) / 2
         
+        high_26 = df['high'].rolling(window=26).max()
+        low_26 = df['low'].rolling(window=26).min()
+        df['ichimoku_kijun_sen'] = (high_26 + low_26) / 2
+        
+        return df['ichimoku_tenkan_sen'], df['ichimoku_kijun_sen']
+    except Exception as e:
+        logger.error(f"Error calculating Ichimoku: {str(e)}")
+        return pd.Series([None]), pd.Series([None])
+
+def calc_adx(df, period=14):
+    try:
+        # Simplified ADX calculation for demonstration
+        df['plus_di'] = df['high'].diff().rolling(period).mean()
+        df['minus_di'] = df['low'].diff().rolling(period).mean()
+        df['adx'] = (df['plus_di'] + df['minus_di']).abs() / 2
+        return df['adx']
+    except Exception as e:
+        logger.error(f"Error calculating ADX: {str(e)}")
+        return pd.Series([None])
+
 def add_technical_indicators(df):
     """Adds all technical indicators to the DataFrame."""
     if df.empty or len(df) < 50:
@@ -417,15 +443,11 @@ def add_technical_indicators(df):
     df['bollinger_high'] = df['close'].rolling(20).mean() + 2 * df['close'].rolling(20).std()
     df['bollinger_low'] = df['close'].rolling(20).mean() - 2 * df['close'].rolling(20).std()
     
-    # Ichimoku Cloud (simplified)
-    # df['ichimoku_tenkan_sen'] = (df['high'].rolling(9).max() + df['low'].rolling(9).min()) / 2
-    # df['ichimoku_kijun_sen'] = (df['high'].rolling(26).max() + df['low'].rolling(26).min()) / 2
-    # df['ichimoku_cloud_a'] = ((df['ichimoku_tenkan_sen'] + df['ichimoku_kijun_sen']) / 2).shift(26)
-    # df['ichimoku_cloud_b'] = ((df['high'].rolling(52).max() + df['low'].rolling(52).min()) / 2).shift(26)
+    # Ichimoku Cloud
+    df['ichimoku_tenkan_sen'], df['ichimoku_kijun_sen'] = calc_ichimoku(df)
     
-    # ADX (Average Directional Index)
-    # The full ADX calculation is complex, here's a placeholder
-    # df['ADX'] = ...
+    # ADX
+    df['ADX'] = calc_adx(df)
     
     return df
 
@@ -437,15 +459,17 @@ def get_weighted_signal(df):
     current_indicators = {}
     total_score = 0
     
-    # RSI: > 50 is bullish (+1), < 50 is bearish (-1)
-    if df['RSI'].iloc[-1] < 20 or 80 > df['RSI'].iloc[-1] > 60:
+    # RSI: Tín hiệu mua khi quá bán (< 30), bán khi quá mua (> 70)
+    if df['RSI'].iloc[-1] < 30:
         current_indicators["RSI"] = 1
         total_score += indicator_weights["RSI"]
-    if 40 > df['RSI'].iloc[-1] > 20 or df['RSI'].iloc[-1] > 80:
+    elif df['RSI'].iloc[-1] > 70:
         current_indicators["RSI"] = -1
         total_score -= indicator_weights["RSI"]
-        
-    # MACD: MACD line > signal line is bullish, otherwise bearish
+    else:
+        current_indicators["RSI"] = 0
+    
+    # MACD: MACD line > signal line là tăng
     if df['MACD'].iloc[-1] > df['MACD_Signal'].iloc[-1]:
         current_indicators["MACD"] = 1
         total_score += indicator_weights["MACD"]
@@ -453,7 +477,7 @@ def get_weighted_signal(df):
         current_indicators["MACD"] = -1
         total_score -= indicator_weights["MACD"]
     
-    # EMA Crossover: EMA9 > EMA21 and price > both is bullish
+    # EMA Crossover: EMA9 > EMA21 và giá > cả hai là tăng
     if df['close'].iloc[-1] > df['EMA9'].iloc[-1] and df['EMA9'].iloc[-1] > df['EMA21'].iloc[-1]:
         current_indicators["EMA9"] = 1
         current_indicators["EMA21"] = 1
@@ -463,6 +487,16 @@ def get_weighted_signal(df):
         current_indicators["EMA21"] = -1
         total_score -= indicator_weights["EMA9"] + indicator_weights["EMA21"]
 
+    # ATR: Tín hiệu tăng khi nến dài hơn ATR và đóng cửa ở nửa trên, giảm khi ngược lại
+    if df['close'].iloc[-1] > df['open'].iloc[-1] and df['high'].iloc[-1] - df['low'].iloc[-1] > df['ATR'].iloc[-1] * 1.5:
+        current_indicators["ATR"] = 1
+        total_score += indicator_weights["ATR"]
+    elif df['close'].iloc[-1] < df['open'].iloc[-1] and df['high'].iloc[-1] - df['low'].iloc[-1] > df['ATR'].iloc[-1] * 1.5:
+        current_indicators["ATR"] = -1
+        total_score -= indicator_weights["ATR"]
+    else:
+        current_indicators["ATR"] = 0
+    
     # Volume: High volume (> 1.5x avg) signals strength
     if df['volume'].iloc[-1] > df['volume'].rolling(window=20).mean().iloc[-1] * 1.5:
         current_indicators["volume"] = 1
@@ -479,7 +513,7 @@ def get_weighted_signal(df):
         current_indicators["Stochastic"] = -1
         total_score -= indicator_weights["Stochastic"]
 
-    # Bollinger Bands: Price above the upper band is bearish, below the lower band is bullish
+    # Bollinger Bands: Price below the lower band is bullish, above the upper band is bearish
     if df['close'].iloc[-1] < df['bollinger_low'].iloc[-1]:
         current_indicators["BollingerBands"] = 1
         total_score += indicator_weights["BollingerBands"]
@@ -487,26 +521,35 @@ def get_weighted_signal(df):
         current_indicators["BollingerBands"] = -1
         total_score -= indicator_weights["BollingerBands"]
     else:
-        # Nếu giá nằm giữa dải băng, cho một tín hiệu yếu dựa trên xu hướng
-        if df['close'].iloc[-1] > df['close'].iloc[-2]:
-            current_indicators["BollingerBands"] = 1
-            total_score += indicator_weights["BollingerBands"] * 0.1 # Trọng số thấp để tránh ảnh hưởng quá nhiều
-        else:
-            current_indicators["BollingerBands"] = -1
-            total_score -= indicator_weights["BollingerBands"] * 0.1
+        current_indicators["BollingerBands"] = 0
     
-    # Ichimoku: Placeholder for a more complex indicator
-    # For now, let's assume it provides a neutral signal
-    #current_indicators["Ichimoku"] = 0
-    #current_indicators["ADX"] = 0
+    # Ichimoku: Tenkan Sen > Kijun Sen là tín hiệu tăng
+    if df['ichimoku_tenkan_sen'].iloc[-1] > df['ichimoku_kijun_sen'].iloc[-1]:
+        current_indicators["Ichimoku"] = 1
+        total_score += indicator_weights["Ichimoku"]
+    else:
+        current_indicators["Ichimoku"] = -1
+        total_score -= indicator_weights["Ichimoku"]
+        
+    # ADX: ADX > 25 và (+DI > -DI) là tín hiệu tăng mạnh
+    if df['ADX'].iloc[-1] > 25 and df['plus_di'].iloc[-1] > df['minus_di'].iloc[-1]:
+        current_indicators["ADX"] = 1
+        total_score += indicator_weights["ADX"]
+    elif df['ADX'].iloc[-1] > 25 and df['minus_di'].iloc[-1] > df['plus_di'].iloc[-1]:
+        current_indicators["ADX"] = -1
+        total_score -= indicator_weights["ADX"]
+    else:
+        current_indicators["ADX"] = 0
     
     signal = 0
     if total_score > 0:
-        signal = 1  # Buy
+        signal = 1
     elif total_score < 0:
-        signal = -1 # Sell
+        signal = -1
         
     return signal, current_indicators
+
+# ... (Phần còn lại của code không thay đổi)
 
 def update_weights_and_stats(signal, current_indicators, price_change_percent):
     """Dynamically adjusts indicator weights based on their performance."""
@@ -1234,5 +1277,6 @@ def main():
 
 if __name__ == "__main__":
     main()
+
 
 
