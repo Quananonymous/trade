@@ -438,10 +438,10 @@ def get_weighted_signal(df):
     total_score = 0
     
     # RSI: > 50 is bullish (+1), < 50 is bearish (-1)
-    if 80 > df['RSI'].iloc[-1] > 60 and df['RSI'].iloc[-1] < 20:
+    if df['RSI'].iloc[-1] > 50:
         current_indicators["RSI"] = 1
         total_score += indicator_weights["RSI"]
-    if df['RSI'].iloc[-1] > 80 or 40 > df['RSI'].iloc[-1] > 20:
+    else:
         current_indicators["RSI"] = -1
         total_score -= indicator_weights["RSI"]
         
@@ -507,14 +507,14 @@ def update_weights_and_stats(signal, current_indicators, price_change_percent):
     global indicator_weights
     global indicator_stats
     
-    # Tốc độ điều chỉnh (ví dụ: 1%)
+    # Tốc độ điều chỉnh (ví dụ: 5%)
     adjustment_rate = 0.05
 
     is_correct_signal = (signal == 1 and price_change_percent > 0) or \
                         (signal == -1 and price_change_percent < 0)
 
     for indicator, status in current_indicators.items():
-        if status == 0: continue # Bỏ qua các chỉ báo trung lập
+        if status == 0: continue # Skip neutral indicators
 
         # Tăng/giảm trọng số dựa trên sự chính xác của chỉ báo
         if is_correct_signal:
@@ -679,26 +679,26 @@ class IndicatorBot:
             df = get_klines(self.symbol, "15m", 200)
             if df.empty or len(df) < 50:
                 self.log("Not enough data to generate signal.")
-                return None
+                return None, None
             
             df = add_technical_indicators(df)
             
             # Check for NaN values in the last row after adding indicators
             if df.iloc[-1].isnull().any():
                 self.log("Data for indicators is incomplete.")
-                return None
+                return None, None
             
             signal, current_indicators = get_weighted_signal(df)
             
             # Convert signal from 1/-1 to "BUY"/"SELL"
             if signal == 1:
-                return "BUY"
+                return "BUY", current_indicators
             elif signal == -1:
-                return "SELL"
-            return None
+                return "SELL", current_indicators
+            return None, None
         except Exception as e:
             self.log(f"get_signal error: {str(e)}")
-            return None
+            return None, None
 
     def _run(self):
         while not self._stop:
@@ -707,13 +707,13 @@ class IndicatorBot:
                 if current_time - self.last_position_check > self.position_check_interval:
                     self.check_position_status()
                     self.last_position_check = current_time
-                signal = self.get_signal()
+                signal, current_indicators = self.get_signal()
                 if not self.position_open and self.status == "waiting":
                     if current_time - self.last_close_time < self.cooldown_period:
                         time.sleep(1)
                         continue
                     if signal and current_time - self.last_trade_time > 60:
-                        self.open_position(signal)
+                        self.open_position(signal, current_indicators)
                         self.last_trade_time = current_time
                 if self.position_open and self.status == "open":
                     self.check_tp_sl()
@@ -795,7 +795,7 @@ class IndicatorBot:
                 self.log(f"TP/SL check error: {str(e)}")
                 self.last_error_log_time = time.time()
 
-    def open_position(self, side):
+    def open_position(self, side, current_indicators=None):
         self.check_position_status()
         try:
             cancel_all_orders(self.symbol)
@@ -847,7 +847,25 @@ class IndicatorBot:
             self.status = "open"
             self.position_open = True
             self.position_attempt_count = 0
-            message = (f"✅ <b>POSITION OPENED {self.symbol}</b>\n" f"📌 Direction: {side}\n" f"🏷️ Entry Price: {self.entry:.4f}\n" f"📊 Quantity: {executed_qty}\n" f"💵 Value: {executed_qty * self.entry:.2f} USDT\n" f" Leverage: {self.lev}x\n" f"🎯 TP: {self.tp}% | 🛡️ SL: {self.sl}%")
+            
+            # Lấy thông tin chỉ báo và trọng số
+            if current_indicators:
+                indicator_info = "Phân tích tín hiệu:\n"
+                for indicator, status in current_indicators.items():
+                    weight = indicator_weights.get(indicator, 0)
+                    sign_text = "🟢 Tăng" if status == 1 else "🔴 Giảm" if status == -1 else "⚪ Trung lập"
+                    indicator_info += f"- {indicator}: {weight:.2f}% ({sign_text})\n"
+            else:
+                indicator_info = "Không đủ dữ liệu chỉ báo."
+
+            message = (f"✅ <b>POSITION OPENED {self.symbol}</b>\n"
+                       f"📌 Direction: {side}\n"
+                       f"🏷️ Entry Price: {self.entry:.4f}\n"
+                       f"📊 Quantity: {executed_qty}\n"
+                       f"💵 Value: {executed_qty * self.entry:.2f} USDT\n"
+                       f" Leverage: {self.lev}x\n"
+                       f"🎯 TP: {self.tp}% | 🛡️ SL: {self.sl}%\n\n"
+                       f"{indicator_info}")
             self.log(message)
         except Exception as e:
             self.position_open = False
@@ -1162,13 +1180,13 @@ def main():
         manager.log("Đang thực hiện huấn luyện ban đầu trên dữ liệu lịch sử...")
         # Lặp qua từng cấu hình bot để huấn luyện
         for config in BOT_CONFIGS:
-            symbol, lev, percent, tp, sl = config # Giả sử bạn đang dùng 5 giá trị
+            symbol, lev, percent, tp, sl, _ = config
             
             # Lấy dữ liệu lịch sử đủ lớn để huấn luyện
             df_history = get_klines(symbol, '15m', 200)
             
             if not df_history.empty:
-                manager.log(f"Bắt đầu huấn luyện cho {symbol} với 1000 nến 5 phút...")
+                manager.log(f"Bắt đầu huấn luyện cho {symbol} với 200 nến 15 phút...")
                 # Lặp qua từng nến để tính tín hiệu và cập nhật trọng số
                 for i in range(50, len(df_history) - 1): # Bắt đầu từ nến thứ 50 để đảm bảo có đủ dữ liệu cho các chỉ báo
                     df_slice = df_history.iloc[i-50:i+1] # Lấy một lát cắt dữ liệu để mô phỏng
@@ -1210,4 +1228,3 @@ def main():
 
 if __name__ == "__main__":
     main()
-
