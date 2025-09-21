@@ -676,7 +676,7 @@ class IndicatorBot:
 
     def get_signal(self):
         try:
-            df = get_klines(self.symbol, "5m", 100)
+            df = get_klines(self.symbol, "15m", 200)
             if df.empty or len(df) < 50:
                 self.log("Not enough data to generate signal.")
                 return None
@@ -1180,3 +1180,4 @@ def main():
 
 if __name__ == "__main__":
     main()
+
