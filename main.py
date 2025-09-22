@@ -560,7 +560,7 @@ def update_weights_and_stats(signal, current_indicators, price_change_percent):
     global indicator_stats
     
     # Tốc độ điều chỉnh (ví dụ: 5%)
-    adjustment_rate = 0.05
+    adjustment_rate = 0.01
 
     is_correct_signal = (signal == 1 and price_change_percent > 0) or \
                         (signal == -1 and price_change_percent < 0)
@@ -1301,4 +1301,5 @@ def main():
 
 if __name__ == "__main__":
     main()
+
 
