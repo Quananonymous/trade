@@ -706,7 +706,7 @@ class IndicatorBot:
         self.last_position_check = 0
         self.last_error_log_time = 0
         self.last_close_time = 0
-        self.cooldown_period = 60
+        self.cooldown_period = 900
         self.max_position_attempts = 3
         self.position_attempt_count = 0
         
@@ -1301,3 +1301,4 @@ def main():
 
 if __name__ == "__main__":
     main()
+
