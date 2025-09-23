@@ -652,7 +652,7 @@ class WebSocketManager:
 
 # ========== MAIN BOT CLASS ==========
 class IndicatorBot:
-    def __init__(self, symbol, lev, percent, tp, sl, initial_weights=None):
+    def __init__(self, symbol, lev, percent, tp, sl, ws_manager, initial_weights=None):
         self.symbol = symbol.upper()
         self.lev = lev
         self.percent = percent
@@ -701,6 +701,7 @@ class IndicatorBot:
         self.thread = threading.Thread(target=self._run, daemon=True)
         self.thread.start()
         self.log(f"🟢 Bot started for {self.symbol}")
+
 
     def log(self, message):
         logger.info(f"[{self.symbol}] {message}")
@@ -1018,7 +1019,8 @@ class BotManager:
             positions = get_positions(symbol)
             if positions and any(float(pos.get('positionAmt', 0)) != 0 for pos in positions):
                 self.log(f"⚠️ Open position found for {symbol}")
-            bot = IndicatorBot(symbol, lev, percent, tp, sl, initial_weights)
+            # Lấy đối tượng ws_manager từ BotManager và truyền vào
+            bot = IndicatorBot(symbol, lev, percent, tp, sl, self.ws_manager, initial_weights)
             self.bots[symbol] = bot
             self.log(f"✅ Bot added: {symbol} | Lev: {lev}x | %: {percent} | TP/SL: {tp}%/{sl}%")
             return True
@@ -1320,3 +1322,4 @@ def main():
 
 if __name__ == "__main__":
     main()
+
