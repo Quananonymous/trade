@@ -430,10 +430,16 @@ def get_raw_indicator_signals(df):
     rsi_value = df['RSI'].iloc[-1]
     if rsi_value < 20 or 60 < rsi_value < 80:
         current_signals["RSI"] = 1
-    elif rsi_value > 70 or 20 < rsi_value < 40:
+    elif rsi_value > 80 or 20 < rsi_value < 40:
         current_signals["RSI"] = -1
     else:
         current_signals["RSI"] = 0
+
+    # MACD: MACD line > signal line là tăng
+    if df['MACD'].iloc[-1] > df['MACD_Signal'].iloc[-1]:
+        current_signals["MACD"] = 1
+    else:
+        current_signals["MACD"] = -1
 
     # MACD: MACD line > signal line là tăng
     if df['MACD'].iloc[-1] > df['MACD_Signal'].iloc[-1]:
@@ -447,7 +453,7 @@ def get_raw_indicator_signals(df):
     else:
         current_signals["EMA_Crossover"] = -1
 
-    # ATR & Volume: Nến dài hơn ATR và đóng cửa ở nửa trên + volume cao là tăng
+    # Volume Confirmation: Nến tăng + volume cao là tăng
     if df['close'].iloc[-1] > df['open'].iloc[-1] and df['volume'].iloc[-1] > df['volume'].rolling(window=20).mean().iloc[-1] * 1.5:
         current_signals["Volume_Confirmation"] = 1
     elif df['close'].iloc[-1] < df['open'].iloc[-1] and df['volume'].iloc[-1] > df['volume'].rolling(window=20).mean().iloc[-1] * 1.5:
@@ -508,7 +514,7 @@ def update_weights_and_stats(current_signals, price_change_percent, indicator_we
     
     # Giai đoạn hoạt động thực tế (tỷ lệ phần trăm)
     else:
-        adjustment_rate = 0.05
+        adjustment_rate = 0.005 # Điều chỉnh 0.5% mỗi nến
         for indicator, signal in current_signals.items():
             if (signal == 1 and is_price_up) or (signal == -1 and is_price_down):
                 indicator_weights[indicator] *= (1 + adjustment_rate)
@@ -621,18 +627,15 @@ class IndicatorBot:
         self.sl = sl
         self.ws_manager = ws_manager
         
-        # ========== CHUYỂN BIẾN TOÀN CỤC VÀO LỚP BOT ==========
+        # ========== KHỞI TẠO TRỌNG SỐ TỪ HUẤN LUYỆN BAN ĐẦU HOẶC THOÁT NẾU KHÔNG CÓ ==========
         if initial_weights:
             self.indicator_weights = initial_weights
         else:
-            self.indicator_weights = {
-                "RSI": 10.0, "MACD": 10.0, "EMA_Crossover": 10.0, "ATR": 10.0,
-                "Volume_Confirmation": 10.0, "Stochastic": 10.0, "BollingerBands": 10.0, "Ichimoku": 10.0, "ADX": 10.0,
-            }
-        self.indicator_stats = {
-                "RSI": 0, "MACD": 0, "EMA_Crossover": 0, "ATR": 0,
-                "Volume_Confirmation": 0, "Stochastic": 0, "BollingerBands": 0, "Ichimoku": 0, "ADX": 0,
-            }
+            self.log("❌ Không tìm thấy trọng số huấn luyện. Bot không thể khởi chạy.")
+            self._stop = True  # Dừng bot ngay lập tức nếu không có trọng số
+            return
+            
+        self.indicator_stats = {k: 0 for k in self.indicator_weights.keys()}
         # ========================================================
 
         self.check_position_status()
@@ -643,7 +646,7 @@ class IndicatorBot:
         self.prices = []
 
         self._stop = False
-        self.reversal_threshold = 50 # Ngưỡng đảo chiều
+        self.signal_threshold = 50.0  # Ngưỡng vào lệnh
         self.position_open = False
         self.last_trade_time = 0
         self.position_check_interval = 60
@@ -675,9 +678,9 @@ class IndicatorBot:
             current_signals = get_raw_indicator_signals(df)
             total_score = sum(current_signals.get(k, 0) * self.indicator_weights.get(k, 0) for k in current_signals)
             
-            if total_score > self.reversal_threshold: # Ngưỡng mở lệnh
+            if total_score > self.signal_threshold:
                 return "BUY", current_signals, total_score
-            elif total_score < -self.reversal_threshold:
+            elif total_score < -self.signal_threshold:
                 return "SELL", current_signals, total_score
             return None, current_signals, total_score
         except Exception as e:
@@ -690,7 +693,6 @@ class IndicatorBot:
             try:
                 current_time = time.time()
                 
-                # Cập nhật vị thế mỗi 60s
                 if current_time - self.last_position_check > self.position_check_interval:
                     self.check_position_status()
                     self.last_position_check = current_time
@@ -702,12 +704,10 @@ class IndicatorBot:
 
                 df = add_technical_indicators(df)
                 
-                # Check for NaN values in the last row after adding indicators
                 if df.iloc[-1].isnull().any():
                     time.sleep(1)
                     continue
                     
-                # Cập nhật trọng số sau mỗi nến đóng
                 if df['close_time'].iloc[-1] != last_candle_close_time:
                     last_candle_close_time = df['close_time'].iloc[-1]
                     
@@ -720,16 +720,14 @@ class IndicatorBot:
                     
                 signal, current_signals, total_score = self.get_signal(df)
                 
-                # Logic đảo chiều
-                if self.position_open and self.side == "BUY" and total_score < -self.reversal_threshold:
-                    self.close_position(f"🔄 Đảo chiều: Tổng điểm {total_score:.2f} < -{self.reversal_threshold}")
+                if self.position_open and self.side == "BUY" and signal == "SELL":
+                    self.close_position(f"🔄 Đảo chiều: Tín hiệu SELL mới được tạo.")
                     self.open_position("SELL", current_signals)
                     
-                elif self.position_open and self.side == "SELL" and total_score > self.reversal_threshold:
-                    self.close_position(f"🔄 Đảo chiều: Tổng điểm {total_score:.2f} > {self.reversal_threshold}")
+                elif self.position_open and self.side == "SELL" and signal == "BUY":
+                    self.close_position(f"🔄 Đảo chiều: Tín hiệu BUY mới được tạo.")
                     self.open_position("BUY", current_signals)
                 
-                # Mở lệnh mới
                 elif not self.position_open and self.status == "waiting":
                     if current_time - self.last_close_time < self.cooldown_period:
                         time.sleep(1)
@@ -738,7 +736,6 @@ class IndicatorBot:
                         self.open_position(signal, current_signals)
                         self.last_trade_time = current_time
                         
-                # Kiểm tra TP/SL
                 if self.position_open and self.status == "open":
                     self.check_tp_sl()
                 
@@ -957,9 +954,13 @@ class BotManager:
             if positions and any(float(pos.get('positionAmt', 0)) != 0 for pos in positions):
                 self.log(f"⚠️ Open position found for {symbol}")
             bot = IndicatorBot(symbol, lev, percent, tp, sl, self.ws_manager, initial_weights)
-            self.bots[symbol] = bot
-            self.log(f"✅ Bot added: {symbol} | Lev: {lev}x | %: {percent} | TP/SL: {tp}%/{sl}%")
-            return True
+            if bot._stop:
+                self.log(f"❌ Bot could not be started for {symbol} due to missing weights.")
+                return False
+            else:
+                self.bots[symbol] = bot
+                self.log(f"✅ Bot added: {symbol} | Lev: {lev}x | %: {percent} | TP/SL: {tp}%/{sl}%")
+                return True
         except Exception as e:
             self.log(f"❌ Error creating bot {symbol}: {str(e)}")
             return False
@@ -1177,15 +1178,12 @@ def perform_initial_training(manager, bot_configs):
         try:
             symbol, _, _, _, _, *initial_weights_list = config
 
-            # Khởi tạo mô hình trọng số và thống kê riêng cho từng bot
-            indicator_weights = {
-                "RSI": 10.0, "MACD": 10.0, "EMA_Crossover": 10.0, "ATR": 10.0,
-                "Volume_Confirmation": 10.0, "Stochastic": 10.0, "BollingerBands": 10.0, "Ichimoku": 10.0, "ADX": 10.0,
-            }
+            # Khởi tạo mô hình thống kê điểm
             indicator_stats = {
-                "RSI": 0, "MACD": 0, "EMA_Crossover": 0, "ATR": 0,
-                "Volume_Confirmation": 0, "Stochastic": 0, "BollingerBands": 0, "Ichimoku": 0, "ADX": 0,
+                "RSI": 0, "MACD": 0, "EMA_Crossover": 0, "Volume_Confirmation": 0,
+                "Stochastic": 0, "BollingerBands": 0, "Ichimoku": 0, "ADX": 0,
             }
+            indicator_weights = {}
 
             # Retrieve a large number of historical klines for training
             df_history = get_klines(symbol, '1m', 200)
@@ -1194,8 +1192,7 @@ def perform_initial_training(manager, bot_configs):
                 manager.log(f"🚀 Starting initial training for {symbol} with 200 1m candles...")
 
                 # Iterate through historical data to simulate signal generation and weight updates
-                for i in range(50, len(df_history) - 1): # Start from candle 50 to ensure enough data for indicators
-                    # Create a slice of data to simulate real-time analysis
+                for i in range(50, len(df_history) - 1):
                     df_slice = df_history.iloc[i-50:i+1].copy()
                     df_slice = add_technical_indicators(df_slice)
 
@@ -1203,7 +1200,7 @@ def perform_initial_training(manager, bot_configs):
                         price_change_percent = ((df_slice['close'].iloc[-1] - df_slice['open'].iloc[-1]) / df_slice['open'].iloc[-1]) * 100
                         current_signals = get_raw_indicator_signals(df_slice)
 
-                        indicator_weights, indicator_stats = update_weights_and_stats(
+                        _, indicator_stats = update_weights_and_stats(
                             current_signals, price_change_percent, indicator_weights, indicator_stats, True
                         )
 
@@ -1212,7 +1209,11 @@ def perform_initial_training(manager, bot_configs):
                 if total_score > 0:
                     for indicator, score in indicator_stats.items():
                         indicator_weights[indicator] = (abs(score) / total_score) * 100
-
+                else:
+                    num_indicators = len(indicator_stats)
+                    for indicator in indicator_stats:
+                        indicator_weights[indicator] = 100 / num_indicators
+                
                 manager.log(f"✅ Initial training for {symbol} completed. Final weights updated.")
 
                 # Cập nhật trọng số đã train vào cấu hình bot ban đầu
@@ -1228,7 +1229,6 @@ def perform_initial_training(manager, bot_configs):
 def main():
     manager = BotManager()
 
-    # Perform initial training once before starting the live bots
     perform_initial_training(manager, BOT_CONFIGS)
 
     if BOT_CONFIGS:
