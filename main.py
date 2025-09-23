@@ -46,9 +46,32 @@ API_SECRET = BINANCE_SECRET_KEY
 
 # ========== NEW GLOBAL VARIABLES FOR THE WEIGHTED SYSTEM ==========
 # Initial weights for each indicator (sum to 100).
-# BIẾN NÀY KHÔNG CÒN ĐƯỢC SỬ DỤNG NHƯ BIẾN TOÀN CỤC NỮA
-# indicator_weights = { ... }
-# indicator_stats = { ... }
+indicator_weights = {
+    "RSI": 10.0,
+    "MACD": 10.0,
+    "EMA9": 10.0,
+    "EMA21": 10.0,
+    "ATR": 10.0,
+    "volume": 10.0,
+    "Stochastic": 10.0,
+    "BollingerBands": 10.0,
+    "Ichimoku": 10.0,
+    "ADX": 10.0,
+}
+
+# Counters for correct/incorrect predictions for each indicator
+indicator_stats = {
+    "RSI": {"correct": 0, "incorrect": 0},
+    "MACD": {"correct": 0, "incorrect": 0},
+    "EMA9": {"correct": 0, "incorrect": 0},
+    "EMA21": {"correct": 0, "incorrect": 0},
+    "ATR": {"correct": 0, "incorrect": 0},
+    "volume": {"correct": 0, "incorrect": 0},
+    "Stochastic": {"correct": 0, "incorrect": 0},
+    "BollingerBands": {"correct": 0, "incorrect": 0},
+    "Ichimoku": {"correct": 0, "incorrect": 0},
+    "ADX": {"correct": 0, "incorrect": 0},
+}
 # ========== END OF NEW GLOBAL VARIABLES ==========
 
 # ========== TELEGRAM FUNCTIONS ==========
@@ -429,15 +452,14 @@ def add_technical_indicators(df):
     return df
 
 # ========== NEW SIGNAL FUNCTIONS ==========
-# Sửa đổi: Hàm này nhận thêm đối số indicator_weights
-def get_weighted_signal(df, indicator_weights):
+def get_weighted_signal(df):
     """Calculates a trading signal based on a weighted sum of indicator signals."""
+    global indicator_weights
     
     current_indicators = {}
     total_score = 0
     
     # RSI: Tín hiệu mua khi quá bán (< 30), bán khi quá mua (> 70)
-    rsi_value = df['RSI'].iloc[-1]
     if df['RSI'].iloc[-1] < 20 or 80 > df['RSI'].iloc[-1] > 60:
         current_indicators["RSI"] = 1
         total_score += indicator_weights["RSI"]
@@ -531,9 +553,10 @@ def get_weighted_signal(df, indicator_weights):
         
     return signal, current_indicators
 
-# Sửa đổi: Hàm này nhận thêm đối số indicator_weights và indicator_stats
-def update_weights_and_stats(signal, current_indicators, price_change_percent, indicator_weights, indicator_stats):
+def update_weights_and_stats(signal, current_indicators, price_change_percent):
     """Dynamically adjusts indicator weights based on their performance."""
+    global indicator_weights
+    global indicator_stats
     
     # Tốc độ điều chỉnh (ví dụ: 5%)
     adjustment_rate = 0.05
@@ -660,29 +683,39 @@ class WebSocketManager:
 
 # ========== MAIN BOT CLASS ==========
 class IndicatorBot:
-    def __init__(self, symbol, lev, percent, tp, sl, ws_manager, initial_weights=None):
+    def __init__(self, symbol, lev, percent, tp, sl, indicator, ws_manager):
         self.symbol = symbol.upper()
         self.lev = lev
         self.percent = percent
         self.tp = tp
         self.sl = sl
+        self.indicator = indicator # This is now just a label, e.g., "WEIGHTED_SYSTEM"
         self.ws_manager = ws_manager
         
         # ========== CHUYỂN BIẾN TOÀN CỤC VÀO LỚP BOT ==========
-        if initial_weights:
-            self.indicator_weights = initial_weights
-        else:
-            self.indicator_weights = {
-                "RSI": 10.0, "MACD": 10.0, "EMA9": 10.0, "EMA21": 10.0, "ATR": 10.0,
-                "volume": 10.0, "Stochastic": 10.0, "BollingerBands": 10.0, "Ichimoku": 10.0, "ADX": 10.0,
-            }
-        
+        self.indicator_weights = {
+            "RSI": 10.0,
+            "MACD": 10.0,
+            "EMA9": 10.0,
+            "EMA21": 10.0,
+            "ATR": 10.0,
+            "volume": 10.0,
+            "Stochastic": 10.0,
+            "BollingerBands": 10.0,
+            "Ichimoku": 10.0,
+            "ADX": 10.0,
+        }
         self.indicator_stats = {
-            "RSI": {"correct": 0, "incorrect": 0}, "MACD": {"correct": 0, "incorrect": 0},
-            "EMA9": {"correct": 0, "incorrect": 0}, "EMA21": {"correct": 0, "incorrect": 0},
-            "ATR": {"correct": 0, "incorrect": 0}, "volume": {"correct": 0, "incorrect": 0},
-            "Stochastic": {"correct": 0, "incorrect": 0}, "BollingerBands": {"correct": 0, "incorrect": 0},
-            "Ichimoku": {"correct": 0, "incorrect": 0}, "ADX": {"correct": 0, "incorrect": 0},
+            "RSI": {"correct": 0, "incorrect": 0},
+            "MACD": {"correct": 0, "incorrect": 0},
+            "EMA9": {"correct": 0, "incorrect": 0},
+            "EMA21": {"correct": 0, "incorrect": 0},
+            "ATR": {"correct": 0, "incorrect": 0},
+            "volume": {"correct": 0, "incorrect": 0},
+            "Stochastic": {"correct": 0, "incorrect": 0},
+            "BollingerBands": {"correct": 0, "incorrect": 0},
+            "Ichimoku": {"correct": 0, "incorrect": 0},
+            "ADX": {"correct": 0, "incorrect": 0},
         }
         # ========================================================
         
@@ -783,7 +816,7 @@ class IndicatorBot:
                                 profit = (current_price - self.entry) * self.qty if self.side == "BUY" else (self.entry - current_price) * abs(self.qty)
                                 invested = self.entry * abs(self.qty) / self.lev
                                 roi = (profit / invested) * 100 if invested != 0 else 0
-                                if abs(roi) != 0:
+                                if abs(roi) > 0.5:
                                     self.close_position(f"🔄 ROI {roi:.2f}% exceeded threshold, reversing to {signal}")
                 time.sleep(1)
             except Exception as e:
@@ -943,15 +976,6 @@ class IndicatorBot:
                 close_qty = max(close_qty, 0)
                 close_qty = round(close_qty, 8)
                 res = place_order(self.symbol, close_side, close_qty)
-
-                # Cập nhật trọng số sau khi đóng vị thế
-                df = get_klines(self.symbol, '1m', 300)
-                if not df.empty and len(df) >= 2:
-                    df = add_technical_indicators(df)
-                    signal, current_indicators = get_weighted_signal(df, self.indicator_weights)
-                    price_change_percent = ((df['close'].iloc[-1] - self.entry) / self.entry) * 100
-                    update_weights_and_stats(signal, current_indicators, price_change_percent, self.indicator_weights, self.indicator_stats)
-
                 if res:
                     price = float(res.get('avgPrice', 0))
                     message = (f"⛔ <b>POSITION CLOSED {self.symbol}</b>\n" f"📌 Reason: {reason}\n" f"🏷️ Exit Price: {price:.4f}\n" f"📊 Quantity: {close_qty}\n" f"💵 Value: {close_qty * price:.2f} USDT")
@@ -985,13 +1009,29 @@ class BotManager:
         if self.admin_chat_id:
             self.send_main_menu(self.admin_chat_id)
         
-        # Bỏ thread cập nhật trọng số toàn cục
-        # self.weight_update_thread = threading.Thread(target=self._weight_updater, daemon=True)
-        # self.weight_update_thread.start()
+        # Start a thread to update weights
+        self.weight_update_thread = threading.Thread(target=self._weight_updater, daemon=True)
+        self.weight_update_thread.start()
         
     def _weight_updater(self):
-        # Hàm này không còn cần thiết nữa vì việc cập nhật trọng số sẽ do mỗi bot tự thực hiện
-        pass
+        """Periodically updates indicator weights based on performance."""
+        while self.running:
+            for symbol, bot in self.bots.items():
+                try:
+                    df = get_klines(symbol, '1m', 300)
+                    if not df.empty and len(df) >= 2:
+                        df = add_technical_indicators(df)
+                        signal, current_indicators = get_weighted_signal(df, bot.indicator_weights)
+                        
+                        # Get price change between the last two closed candles
+                        current_close = df['close'].iloc[-2]
+                        next_close = df['close'].iloc[-1]
+                        price_change_percent = ((next_close - current_close) / current_close) * 100
+                        
+                        update_weights_and_stats(signal, current_indicators, price_change_percent, bot.indicator_weights, bot.indicator_stats)
+                except Exception as e:
+                    logger.error(f"Error in weight update thread for {symbol}: {str(e)}")
+            time.sleep(3600) # Update every hour
 
     def log(self, message):
         logger.info(f"[SYSTEM] {message}")
@@ -1001,7 +1041,7 @@ class BotManager:
         welcome = ("🤖 <b>BINANCE FUTURES TRADING BOT</b>\n\nChoose an option below:")
         send_telegram(welcome, chat_id, create_menu_keyboard())
 
-    def add_bot(self, symbol, lev, percent, tp, sl, initial_weights=None):
+    def add_bot(self, symbol, lev, percent, tp, sl, indicator):
         if sl == 0:
             sl = None
         symbol = symbol.upper()
@@ -1019,7 +1059,7 @@ class BotManager:
             positions = get_positions(symbol)
             if positions and any(float(pos.get('positionAmt', 0)) != 0 for pos in positions):
                 self.log(f"⚠️ Open position found for {symbol}")
-            bot = IndicatorBot(symbol, lev, percent, tp, sl, self.ws_manager, initial_weights)
+            bot = IndicatorBot(symbol, lev, percent, tp, sl, "WEIGHTED_SYSTEM", self.ws_manager)
             self.bots[symbol] = bot
             self.log(f"✅ Bot added: {symbol} | Lev: {lev}x | %: {percent} | TP/SL: {tp}%/{sl}%")
             return True
@@ -1154,7 +1194,7 @@ class BotManager:
                         leverage = user_state['leverage']
                         percent = user_state['percent']
                         tp = user_state['tp']
-                        if self.add_bot(symbol, leverage, percent, tp, sl):
+                        if self.add_bot(symbol, leverage, percent, tp, sl, "WEIGHTED_SYSTEM"):
                             send_telegram(f"✅ <b>BOT ADDED SUCCESSFULLY</b>\n\n" f"📌 Pair: {symbol}\n" f" Leverage: {leverage}x\n" f"📊 % Balance: {percent}%\n" f"🎯 TP: {tp}%\n" f"🛡️ SL: {sl}%", chat_id, create_menu_keyboard())
                         else:
                             send_telegram("❌ Could not add bot, please check logs", chat_id, create_menu_keyboard())
@@ -1225,7 +1265,6 @@ class BotManager:
             self.send_main_menu(chat_id)
 
 # ========== FUNCTIONS FOR INITIAL TRAINING ==========
-# Sửa đổi: Hàm này không cập nhật biến toàn cục mà lưu lại trọng số đã train vào cấu hình bot
 def perform_initial_training(manager, bot_configs):
     """
     Performs initial training on historical data for all bot configurations.
@@ -1255,7 +1294,7 @@ def perform_initial_training(manager, bot_configs):
             }
 
             # Retrieve a large number of historical klines for training
-            df_history = get_klines(symbol, '15m', 200)
+            df_history = get_klines(symbol, '1m', 300)
             
             if not df_history.empty and len(df_history) >= 50:
                 manager.log(f"🚀 Starting initial training for {symbol} with 200 15m candles...")
@@ -1278,6 +1317,7 @@ def perform_initial_training(manager, bot_configs):
                 manager.log(f"✅ Initial training for {symbol} completed. Final weights updated.")
                 
                 # Cập nhật trọng số đã train vào cấu hình bot ban đầu
+                # Đây là bước quan trọng để các bot khởi tạo với mô hình đã được đào tạo
                 for conf in BOT_CONFIGS:
                     if conf[0] == symbol:
                         conf.append(indicator_weights) # Thêm trọng số đã train vào cấu hình
@@ -1298,8 +1338,8 @@ def main():
 
     if BOT_CONFIGS:
         for config in BOT_CONFIGS:
-            symbol, lev, percent, tp, sl, _, initial_weights = config
-            manager.add_bot(symbol, lev, percent, tp, sl, initial_weights)
+            symbol, lev, percent, tp, sl, initial_weights = config
+            manager.add_bot(symbol, lev, percent, tp, sl, "WEIGHTED_SYSTEM", initial_weights)
     else:
         manager.log("⚠️ No bot configurations found!")
         
@@ -1321,4 +1361,3 @@ def main():
 
 if __name__ == "__main__":
     main()
-
