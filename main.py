@@ -747,25 +747,18 @@ class IndicatorBot:
                 if current_time - self.last_position_check > self.position_check_interval:
                     self.check_position_status()
                     self.last_position_check = current_time
+                
                 signal, current_indicators = self.get_signal()
                 
-                # Cập nhật trọng số theo chu kỳ (ví dụ mỗi 5 phút)
-                if current_time - self.last_trade_time > 300:
-                    df = get_klines(self.symbol, "1m", 300)
-                    if not df.empty and len(df) >= 2:
-                        df = add_technical_indicators(df)
-                        current_close = df['close'].iloc[-2]
-                        next_close = df['close'].iloc[-1]
-                        price_change_percent = ((next_close - current_close) / current_close) * 100
-                        update_weights_and_stats(signal, current_indicators, price_change_percent, self.indicator_weights, self.indicator_stats)
-
-                if not self.position_open and self.status == "waiting":
-                    if current_time - self.last_close_time < self.cooldown_period:
-                        time.sleep(1)
-                        continue
-                    if signal and current_time - self.last_trade_time > 3:
+                if current_time - self.last_trade_time > 3 and signal is not None:
+                    # Logic để mở lệnh
+                    if not self.position_open and self.status == "waiting":
+                        if current_time - self.last_close_time < self.cooldown_period:
+                            time.sleep(1)
+                            continue
                         self.open_position(signal, current_indicators)
                         self.last_trade_time = current_time
+                        
                 if self.position_open and self.status == "open":
                     self.check_tp_sl()
                     if signal:
@@ -777,13 +770,23 @@ class IndicatorBot:
                                 roi = (profit / invested) * 100 if invested != 0 else 0
                                 if abs(roi) > 0:
                                     self.close_position(f"🔄 ROI {roi:.2f}% exceeded threshold, reversing to {signal}")
+                
+                # Sửa lỗi: Thêm kiểm tra 'current_indicators is not None'
+                if current_time - self.last_trade_time > 300 and current_indicators is not None:
+                    df = get_klines(self.symbol, "1m", 300)
+                    if not df.empty and len(df) >= 2:
+                        df = add_technical_indicators(df)
+                        current_close = df['close'].iloc[-2]
+                        next_close = df['close'].iloc[-1]
+                        price_change_percent = ((next_close - current_close) / current_close) * 100
+                        update_weights_and_stats(signal, current_indicators, price_change_percent, self.indicator_weights, self.indicator_stats)
+
                 time.sleep(1)
             except Exception as e:
                 if time.time() - self.last_error_log_time > 10:
                     self.log(f"System error: {str(e)}")
                     self.last_error_log_time = time.time()
                 time.sleep(1)
-
     def stop(self):
         self._stop = True
         self.ws_manager.remove_symbol(self.symbol)
@@ -1320,3 +1323,4 @@ def main():
 
 if __name__ == "__main__":
     main()
+
