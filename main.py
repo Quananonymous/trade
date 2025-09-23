@@ -32,7 +32,7 @@ BINANCE_API_KEY = os.getenv('BINANCE_API_KEY', '')
 BINANCE_SECRET_KEY = os.getenv('BINANCE_SECRET_KEY', '')
 TELEGRAM_BOT_TOKEN = os.getenv('TELEGRAM_BOT_TOKEN', '')
 TELEGRAM_CHAT_ID = os.getenv('TELEGRAM_CHAT_ID', '')
-    
+
 # Get bot configuration from environment variables (JSON format)
 bot_config_json = os.getenv('BOT_CONFIGS', '[]')
 try:
@@ -50,22 +50,22 @@ def send_telegram(message, chat_id=None, reply_markup=None):
     if not TELEGRAM_BOT_TOKEN:
         logger.warning("Telegram Bot Token is not configured.")
         return
-    
+
     chat_id = chat_id or TELEGRAM_CHAT_ID
     if not chat_id:
         logger.warning("Telegram Chat ID is not configured.")
         return
-    
+
     url = f"https://api.telegram.org/bot{TELEGRAM_BOT_TOKEN}/sendMessage"
     payload = {
         "chat_id": chat_id,
         "text": message,
         "parse_mode": "HTML"
     }
-    
+
     if reply_markup:
         payload["reply_markup"] = json.dumps(reply_markup)
-    
+
     try:
         response = requests.post(url, json=payload, timeout=15)
         if response.status_code != 200:
@@ -107,7 +107,7 @@ def create_symbols_keyboard():
     if row:
         keyboard.append(row)
     keyboard.append([{"text": "❌ Hủy bỏ"}])
-    
+
     return {
         "keyboard": keyboard,
         "resize_keyboard": True,
@@ -127,7 +127,7 @@ def create_leverage_keyboard():
     if row:
         keyboard.append(row)
     keyboard.append([{"text": "❌ Hủy bỏ"}])
-    
+
     return {
         "keyboard": keyboard,
         "resize_keyboard": True,
@@ -156,7 +156,7 @@ def binance_api_request(url, method='GET', params=None, headers=None):
             else:
                 data = urllib.parse.urlencode(params).encode() if params else None
                 req = urllib.request.Request(url, data=data, headers=headers or {}, method=method)
-            
+
             with urllib.request.urlopen(req, timeout=15) as response:
                 if response.status == 200:
                     return json.loads(response.read().decode())
@@ -177,7 +177,7 @@ def binance_api_request(url, method='GET', params=None, headers=None):
         except Exception as e:
             logger.error(f"API connection error: {str(e)}")
             time.sleep(1)
-    
+
     logger.error(f"Failed to make API request after {max_retries} attempts")
     return None
 
@@ -187,7 +187,7 @@ def get_step_size(symbol):
         data = binance_api_request(url)
         if not data:
             return 0.001
-            
+
         for s in data['symbols']:
             if s['symbol'] == symbol.upper():
                 for f in s['filters']:
@@ -210,7 +210,7 @@ def set_leverage(symbol, lev):
         sig = sign(query)
         url = f"https://fapi.binance.com/fapi/v1/leverage?{query}&signature={sig}"
         headers = {'X-MBX-APIKEY': API_KEY}
-        
+
         response = binance_api_request(url, method='POST', headers=headers)
         if response and 'leverage' in response:
             return True
@@ -227,11 +227,11 @@ def get_balance():
         sig = sign(query)
         url = f"https://fapi.binance.com/fapi/v2/account?{query}&signature={sig}"
         headers = {'X-MBX-APIKEY': API_KEY}
-        
+
         data = binance_api_request(url, headers=headers)
         if not data:
             return 0
-            
+
         for asset in data['assets']:
             if asset['asset'] == 'USDT':
                 return float(asset['availableBalance'])
@@ -254,7 +254,7 @@ def place_order(symbol, side, qty):
         sig = sign(query)
         url = f"https://fapi.binance.com/fapi/v1/order?{query}&signature={sig}"
         headers = {'X-MBX-APIKEY': API_KEY}
-        
+
         return binance_api_request(url, method='POST', headers=headers)
     except Exception as e:
         logger.error(f"Error placing order: {str(e)}")
@@ -269,7 +269,7 @@ def cancel_all_orders(symbol):
         sig = sign(query)
         url = f"https://fapi.binance.com/fapi/v1/allOpenOrders?{query}&signature={sig}"
         headers = {'X-MBX-APIKEY': API_KEY}
-        
+
         binance_api_request(url, method='DELETE', headers=headers)
         return True
     except Exception as e:
@@ -294,32 +294,32 @@ def get_positions(symbol=None):
         params = {"timestamp": ts}
         if symbol:
             params["symbol"] = symbol.upper()
-            
+
         query = urllib.parse.urlencode(params)
         sig = sign(query)
         url = f"https://fapi.binance.com/fapi/v2/positionRisk?{query}&signature={sig}"
         headers = {'X-MBX-APIKEY': API_KEY}
-        
+
         positions = binance_api_request(url, headers=headers)
         if not positions:
             return []
-            
+
         if symbol:
             for pos in positions:
                 if pos['symbol'] == symbol.upper():
                     return [pos]
-            
+
         return positions
     except Exception as e:
         logger.error(f"Error getting positions: {str(e)}")
         send_telegram(f"⚠️ <b>POSITIONS ERROR:</b> {symbol if symbol else ''} - {str(e)}")
     return []
-    
+
 def get_klines(symbol, interval, limit=100):
     url = f"https://fapi.binance.com/fapi/v1/klines?symbol={symbol.upper()}&interval={interval}&limit={limit}"
     data = binance_api_request(url)
     if data:
-        df = pd.DataFrame(data, columns=["open_time","open","high","low","close","volume","close_time","quote_asset_volume","number_of_trades","taker_buy_base","taker_buy_quote","ignore"])
+        df = pd.DataFrame(data, columns=["open_time", "open", "high", "low", "close", "volume", "close_time", "quote_asset_volume", "number_of_trades", "taker_buy_base", "taker_buy_quote", "ignore"])
         df = df.astype({"open": float, "high": float, "low": float, "close": float, "volume": float})
         return df
     return pd.DataFrame()
@@ -373,11 +373,11 @@ def calc_ichimoku(df):
         high_9 = df['high'].rolling(window=9).max()
         low_9 = df['low'].rolling(window=9).min()
         df['ichimoku_tenkan_sen'] = (high_9 + low_9) / 2
-        
+
         high_26 = df['high'].rolling(window=26).max()
         low_26 = df['low'].rolling(window=26).min()
         df['ichimoku_kijun_sen'] = (high_26 + low_26) / 2
-        
+
         return df['ichimoku_tenkan_sen'], df['ichimoku_kijun_sen']
     except Exception as e:
         logger.error(f"Error calculating Ichimoku: {str(e)}")
@@ -398,177 +398,138 @@ def add_technical_indicators(df):
     """Adds all technical indicators to the DataFrame."""
     if df.empty or len(df) < 50:
         return df
-    
+
     df['RSI'] = calc_rsi(df['close'], 14)
     df['EMA9'] = calc_ema(df['close'], 9)
     df['EMA21'] = calc_ema(df['close'], 21)
     df['ATR'] = calc_atr(df, 14)
     df['MACD'], df['MACD_Signal'], df['MACD_Hist'] = calc_macd(df['close'])
-    
+
     # Stochastic Oscillator
     df['stoch_k'] = 100 * ((df['close'] - df['low'].rolling(14).min()) / (df['high'].rolling(14).max() - df['low'].rolling(14).min()))
     df['stoch_d'] = df['stoch_k'].rolling(3).mean()
-    
+
     # Bollinger Bands
     df['bollinger_high'] = df['close'].rolling(20).mean() + 2 * df['close'].rolling(20).std()
     df['bollinger_low'] = df['close'].rolling(20).mean() - 2 * df['close'].rolling(20).std()
-    
+
     # Ichimoku Cloud
     df['ichimoku_tenkan_sen'], df['ichimoku_kijun_sen'] = calc_ichimoku(df)
-    
+
     # ADX
     df['ADX'] = calc_adx(df)
-    
+
     return df
 
 # ========== NEW SIGNAL FUNCTIONS ==========
-# Sửa đổi: Hàm này nhận thêm đối số indicator_weights
-def get_weighted_signal(df, indicator_weights):
-    """Calculates a trading signal based on a weighted sum of indicator signals."""
+def get_raw_indicator_signals(df):
+    """Calculates raw signals (+1/-1/0) for each indicator."""
+    current_signals = {}
     
-    current_indicators = {}
-    total_score = 0
-    
-    # RSI: Tín hiệu mua khi quá bán (< 30), bán khi quá mua (> 70)
-    if df['RSI'].iloc[-1] < 20 or 80 > df['RSI'].iloc[-1] > 60:
-        current_indicators["RSI"] = 1
-        total_score += indicator_weights["RSI"]
-    if 40 > df['RSI'].iloc[-1] > 20 or df['RSI'].iloc[-1] > 80:
-        current_indicators["RSI"] = -1
-        total_score -= indicator_weights["RSI"]
+    # RSI: Tín hiệu mua khi quá bán (< 30), tín hiệu bán khi quá mua (> 70)
+    rsi_value = df['RSI'].iloc[-1]
+    if rsi_value < 20 or 60 < rsi_value < 80:
+        current_signals["RSI"] = 1
+    elif rsi_value > 70 or 20 < rsi_value < 40:
+        current_signals["RSI"] = -1
     else:
-        current_indicators["RSI"] = 0 # Trung lập
-    
+        current_signals["RSI"] = 0
+
     # MACD: MACD line > signal line là tăng
     if df['MACD'].iloc[-1] > df['MACD_Signal'].iloc[-1]:
-        current_indicators["MACD"] = 1
-        total_score += indicator_weights["MACD"]
+        current_signals["MACD"] = 1
     else:
-        current_indicators["MACD"] = -1
-        total_score -= indicator_weights["MACD"]
-    
-    # EMA Crossover: EMA9 > EMA21 và giá > cả hai là tăng
-    if df['close'].iloc[-1] > df['EMA9'].iloc[-1] and df['EMA9'].iloc[-1] > df['EMA21'].iloc[-1]:
-        current_indicators["EMA9"] = 1
-        current_indicators["EMA21"] = 1
-        total_score += indicator_weights["EMA9"] + indicator_weights["EMA21"]
-    else:
-        current_indicators["EMA9"] = -1
-        current_indicators["EMA21"] = -1
-        total_score -= indicator_weights["EMA9"] + indicator_weights["EMA21"]
+        current_signals["MACD"] = -1
 
-    # ATR: Tín hiệu tăng khi nến dài hơn ATR và đóng cửa ở nửa trên, giảm khi ngược lại
-    if df['close'].iloc[-1] > df['open'].iloc[-1] and df['high'].iloc[-1] - df['low'].iloc[-1] > df['ATR'].iloc[-1] * 1.5:
-        current_indicators["ATR"] = 1
-        total_score += indicator_weights["ATR"]
-    elif df['close'].iloc[-1] < df['open'].iloc[-1] and df['high'].iloc[-1] - df['low'].iloc[-1] > df['ATR'].iloc[-1] * 1.5:
-        current_indicators["ATR"] = -1
-        total_score -= indicator_weights["ATR"]
+    # EMA Crossover: EMA9 > EMA21 là tăng
+    if df['EMA9'].iloc[-1] > df['EMA21'].iloc[-1]:
+        current_signals["EMA_Crossover"] = 1
     else:
-        current_indicators["ATR"] = 0
-    
-    # Volume: High volume (> 1.5x avg) signals strength
-    if df['volume'].iloc[-1] > df['volume'].rolling(window=20).mean().iloc[-1] * 1.5:
-        current_indicators["volume"] = 1
-        total_score += indicator_weights["volume"]
+        current_signals["EMA_Crossover"] = -1
+
+    # ATR & Volume: Nến dài hơn ATR và đóng cửa ở nửa trên + volume cao là tăng
+    if df['close'].iloc[-1] > df['open'].iloc[-1] and df['volume'].iloc[-1] > df['volume'].rolling(window=20).mean().iloc[-1] * 1.5:
+        current_signals["Volume_Confirmation"] = 1
+    elif df['close'].iloc[-1] < df['open'].iloc[-1] and df['volume'].iloc[-1] > df['volume'].rolling(window=20).mean().iloc[-1] * 1.5:
+        current_signals["Volume_Confirmation"] = -1
     else:
-        current_indicators["volume"] = -1
-        total_score -= indicator_weights["volume"]
-        
+        current_signals["Volume_Confirmation"] = 0
+
     # Stochastic Oscillator: K line > D line và cả hai đều dưới 80 là tăng
     stoch_k_value = df['stoch_k'].iloc[-1]
     stoch_d_value = df['stoch_d'].iloc[-1]
     if stoch_k_value > stoch_d_value and stoch_k_value < 80:
-        current_indicators["Stochastic"] = 1
-        total_score += indicator_weights["Stochastic"]
+        current_signals["Stochastic"] = 1
     else:
-        current_indicators["Stochastic"] = -1
-        total_score -= indicator_weights["Stochastic"]
+        current_signals["Stochastic"] = -1
 
     # Bollinger Bands: Giá dưới dải băng dưới là tăng, trên dải băng trên là giảm
     close_price = df['close'].iloc[-1]
     if close_price < df['bollinger_low'].iloc[-1]:
-        current_indicators["BollingerBands"] = 1
-        total_score += indicator_weights["BollingerBands"]
+        current_signals["BollingerBands"] = 1
     elif close_price > df['bollinger_high'].iloc[-1]:
-        current_indicators["BollingerBands"] = -1
-        total_score -= indicator_weights["BollingerBands"]
+        current_signals["BollingerBands"] = -1
     else:
-        current_indicators["BollingerBands"] = 0
-    
+        current_signals["BollingerBands"] = 0
+
     # Ichimoku: Tenkan Sen > Kijun Sen là tín hiệu tăng
     if df['ichimoku_tenkan_sen'].iloc[-1] > df['ichimoku_kijun_sen'].iloc[-1]:
-        current_indicators["Ichimoku"] = 1
-        total_score += indicator_weights["Ichimoku"]
+        current_signals["Ichimoku"] = 1
     else:
-        current_indicators["Ichimoku"] = -1
-        total_score -= indicator_weights["Ichimoku"]
-        
+        current_signals["Ichimoku"] = -1
+
     # ADX: ADX > 25 và (+DI > -DI) là tín hiệu tăng mạnh
     adx_value = df['ADX'].iloc[-1]
     if adx_value > 25 and df['plus_di'].iloc[-1] > df['minus_di'].iloc[-1]:
-        current_indicators["ADX"] = 1
-        total_score += indicator_weights["ADX"]
+        current_signals["ADX"] = 1
     elif adx_value > 25 and df['minus_di'].iloc[-1] > df['plus_di'].iloc[-1]:
-        current_indicators["ADX"] = -1
-        total_score -= indicator_weights["ADX"]
+        current_signals["ADX"] = -1
     else:
-        current_indicators["ADX"] = 0
-    
-    signal = 0
-    if total_score > 20:
-        signal = 1
-    elif total_score < -30:
-        signal = -1
+        current_signals["ADX"] = 0
         
-    return signal, current_indicators
+    return current_signals
 
-# Sửa đổi: Hàm này nhận thêm đối số indicator_weights và indicator_stats
-def update_weights_and_stats(signal, current_indicators, price_change_percent, indicator_weights, indicator_stats):
-    """Dynamically adjusts indicator weights based on their performance."""
+def update_weights_and_stats(current_signals, price_change_percent, indicator_weights, indicator_stats, is_initial_training):
+    """
+    Dynamically adjusts indicator weights based on their performance on a single candle.
+    This function is used for both initial training and real-time learning.
+    """
     
-    # Tốc độ điều chỉnh (ví dụ: 5%)
-    adjustment_rate = 0.05
-
-    is_correct_signal = (signal == 1 and price_change_percent > 0) or \
-                        (signal == -1 and price_change_percent < 0) or \
-                        (signal == 0 and abs(price_change_percent) < 0.1)
-
-    for indicator, status in current_indicators.items():
-        if status == 0: continue # Skip neutral indicators
-
-        # Tăng/giảm trọng số dựa trên sự chính xác của chỉ báo
-        if is_correct_signal:
-            if status == signal: # Chỉ báo đúng hướng với tín hiệu tổng hợp và kết quả thực tế
-                indicator_weights[indicator] *= (1 + adjustment_rate)
-                indicator_stats[indicator]["correct"] += 1
-            else: # Chỉ báo sai hướng với tín hiệu tổng hợp nhưng kết quả lại đúng (trường hợp này hiếm nhưng vẫn xảy ra)
-                indicator_weights[indicator] *= (1 - adjustment_rate)
-                indicator_stats[indicator]["incorrect"] += 1
-        else:
-            if status == signal: # Chỉ báo đúng hướng với tín hiệu tổng hợp nhưng kết quả thực tế lại sai
-                indicator_weights[indicator] *= (1 - adjustment_rate)
-                indicator_stats[indicator]["incorrect"] += 1
-            else: # Chỉ báo sai hướng với tín hiệu tổng hợp nhưng kết quả lại sai, vậy chỉ báo này lại đang "đúng"
-                indicator_weights[indicator] *= (1 + adjustment_rate)
-                indicator_stats[indicator]["correct"] += 1
+    is_price_up = price_change_percent > 0
+    is_price_down = price_change_percent < 0
     
-    # Chuẩn hóa lại các trọng số để tổng bằng 100
-    total_weight = sum(indicator_weights.values())
-    if total_weight <= 0:
-        total_weight = 100
-        for indicator in indicator_weights:
-            indicator_weights[indicator] = 100 / len(indicator_weights)
+    # Giai đoạn huấn luyện ban đầu (điểm số)
+    if is_initial_training:
+        for indicator, signal in current_signals.items():
+            if (signal == 1 and is_price_up) or (signal == -1 and is_price_down):
+                indicator_stats[indicator] += 1
+            elif (signal == 1 and is_price_down) or (signal == -1 and is_price_up):
+                indicator_stats[indicator] -= 1
+    
+    # Giai đoạn hoạt động thực tế (tỷ lệ phần trăm)
     else:
-        for indicator in indicator_weights:
-            indicator_weights[indicator] = (indicator_weights[indicator] / total_weight) * 100
-            
+        adjustment_rate = 0.05
+        for indicator, signal in current_signals.items():
+            if (signal == 1 and is_price_up) or (signal == -1 and is_price_down):
+                indicator_weights[indicator] *= (1 + adjustment_rate)
+            elif (signal == 1 and is_price_down) or (signal == -1 and is_price_up):
+                indicator_weights[indicator] *= (1 - adjustment_rate)
+
+        # Chuẩn hóa lại các trọng số
+        total_weight = sum(indicator_weights.values())
+        if total_weight > 0:
+            for indicator in indicator_weights:
+                indicator_weights[indicator] = (indicator_weights[indicator] / total_weight) * 100
+    
     logging.info("--- New weights and stats ---")
-    for indicator, stats in indicator_stats.items():
-        total_trades = stats["correct"] + stats["incorrect"]
-        if total_trades > 0:
-            accuracy = (stats["correct"] / total_trades) * 100
-            logging.info(f"📊 {indicator}: Correct {stats['correct']}, Incorrect {stats['incorrect']}. Accuracy: {accuracy:.2f}%, Weight: {indicator_weights[indicator]:.2f}")
+    if is_initial_training:
+        for indicator, score in indicator_stats.items():
+            logging.info(f"📊 {indicator}: Score {score}")
+    else:
+        for indicator, weight in indicator_weights.items():
+            logging.info(f"📊 {indicator}: Weight {weight:.2f}%")
+        
+    return indicator_weights, indicator_stats
 
 # ========== WEBSOCKET MANAGER ==========
 class WebSocketManager:
@@ -577,20 +538,20 @@ class WebSocketManager:
         self.executor = ThreadPoolExecutor(max_workers=10)
         self._lock = threading.Lock()
         self._stop_event = threading.Event()
-        
+
     def add_symbol(self, symbol, callback):
         symbol = symbol.upper()
         with self._lock:
             if symbol not in self.connections:
                 self._create_connection(symbol, callback)
-                
+
     def _create_connection(self, symbol, callback):
         if self._stop_event.is_set():
             return
-            
+
         stream = f"{symbol.lower()}@trade"
         url = f"wss://fstream.binance.com/ws/{stream}"
-        
+
         def on_message(ws, message):
             try:
                 data = json.loads(message)
@@ -599,41 +560,41 @@ class WebSocketManager:
                     self.executor.submit(callback, price)
             except Exception as e:
                 logger.error(f"WebSocket message processing error {symbol}: {str(e)}")
-                
+
         def on_error(ws, error):
             logger.error(f"WebSocket error {symbol}: {str(error)}")
             if not self._stop_event.is_set():
                 time.sleep(300)
                 self._reconnect(symbol, callback)
-            
+
         def on_close(ws, close_status_code, close_msg):
-                logger.info(f"WebSocket closed {symbol}: {close_status_code} - {close_msg}")
-                if not self._stop_event.is_set() and symbol in self.connections:
-                    time.sleep(300)
-                    self._reconnect(symbol, callback)
-                
+            logger.info(f"WebSocket closed {symbol}: {close_status_code} - {close_msg}")
+            if not self._stop_event.is_set() and symbol in self.connections:
+                time.sleep(300)
+                self._reconnect(symbol, callback)
+
         ws = websocket.WebSocketApp(
             url,
             on_message=on_message,
             on_error=on_error,
             on_close=on_close
         )
-        
+
         thread = threading.Thread(target=ws.run_forever, daemon=True)
         thread.start()
-        
+
         self.connections[symbol] = {
             'ws': ws,
             'thread': thread,
             'callback': callback
         }
         logger.info(f"WebSocket started for {symbol}")
-        
+
     def _reconnect(self, symbol, callback):
         logger.info(f"Reconnecting WebSocket for {symbol}")
         self.remove_symbol(symbol)
         self._create_connection(symbol, callback)
-        
+
     def remove_symbol(self, symbol):
         symbol = symbol.upper()
         with self._lock:
@@ -644,7 +605,7 @@ class WebSocketManager:
                     logger.error(f"Error closing WebSocket {symbol}: {str(e)}")
                 del self.connections[symbol]
                 logger.info(f"WebSocket removed for {symbol}")
-                
+
     def stop(self):
         self._stop_event.set()
         for symbol in list(self.connections.keys()):
@@ -665,28 +626,24 @@ class IndicatorBot:
             self.indicator_weights = initial_weights
         else:
             self.indicator_weights = {
-                "RSI": 10.0, "MACD": 10.0, "EMA9": 10.0, "EMA21": 10.0, "ATR": 10.0,
-                "volume": 10.0, "Stochastic": 10.0, "BollingerBands": 10.0, "Ichimoku": 10.0, "ADX": 10.0,
+                "RSI": 10.0, "MACD": 10.0, "EMA_Crossover": 10.0, "ATR": 10.0,
+                "Volume_Confirmation": 10.0, "Stochastic": 10.0, "BollingerBands": 10.0, "Ichimoku": 10.0, "ADX": 10.0,
             }
-        
         self.indicator_stats = {
-            "RSI": {"correct": 0, "incorrect": 0}, "MACD": {"correct": 0, "incorrect": 0},
-            "EMA9": {"correct": 0, "incorrect": 0}, "EMA21": {"correct": 0, "incorrect": 0},
-            "ATR": {"correct": 0, "incorrect": 0}, "volume": {"correct": 0, "incorrect": 0},
-            "Stochastic": {"correct": 0, "incorrect": 0}, "BollingerBands": {"correct": 0, "incorrect": 0},
-            "Ichimoku": {"correct": 0, "incorrect": 0}, "ADX": {"correct": 0, "incorrect": 0},
-        }
+                "RSI": 0, "MACD": 0, "EMA_Crossover": 0, "ATR": 0,
+                "Volume_Confirmation": 0, "Stochastic": 0, "BollingerBands": 0, "Ichimoku": 0, "ADX": 0,
+            }
         # ========================================================
-        
+
         self.check_position_status()
         self.status = "waiting"
         self.side = ""
         self.qty = 0
         self.entry = 0
         self.prices = []
-        
+
         self._stop = False
-        self.signal_threshold = 40.0
+        self.reversal_threshold = 50 # Ngưỡng đảo chiều
         self.position_open = False
         self.last_trade_time = 0
         self.position_check_interval = 60
@@ -696,7 +653,7 @@ class IndicatorBot:
         self.cooldown_period = 3
         self.max_position_attempts = 3
         self.position_attempt_count = 0
-        
+
         self.ws_manager.add_symbol(self.symbol, self._handle_price_update)
         self.thread = threading.Thread(target=self._run, daemon=True)
         self.thread.start()
@@ -705,7 +662,7 @@ class IndicatorBot:
     def log(self, message):
         logger.info(f"[{self.symbol}] {message}")
         send_telegram(f"<b>{self.symbol}</b>: {message}")
-    
+
     def _handle_price_update(self, price):
         if self._stop:
             return
@@ -713,80 +670,85 @@ class IndicatorBot:
         if len(self.prices) > 100:
             self.prices = self.prices[-100:]
 
-    def get_signal(self):
+    def get_signal(self, df):
         try:
-            df = get_klines(self.symbol, "1m", 300)
-            if df.empty or len(df) < 50:
-                self.log("Not enough data to generate signal.")
-                return None, None
+            current_signals = get_raw_indicator_signals(df)
+            total_score = sum(current_signals.get(k, 0) * self.indicator_weights.get(k, 0) for k in current_signals)
             
-            df = add_technical_indicators(df)
-            
-            # Check for NaN values in the last row after adding indicators
-            if df.iloc[-1].isnull().any():
-                self.log("Data for indicators is incomplete.")
-                return None, None
-            
-            # Sửa đổi để gọi hàm get_weighted_signal với trọng số của bot
-            signal, current_indicators = get_weighted_signal(df, self.indicator_weights)
-            
-            # Convert signal from 1/-1 to "BUY"/"SELL"
-            if signal == 1:
-                return "BUY", current_indicators
-            elif signal == -1:
-                return "SELL", current_indicators
-            return None, None
+            if total_score > self.reversal_threshold: # Ngưỡng mở lệnh
+                return "BUY", current_signals, total_score
+            elif total_score < -self.reversal_threshold:
+                return "SELL", current_signals, total_score
+            return None, current_signals, total_score
         except Exception as e:
             self.log(f"get_signal error: {str(e)}")
-            return None, None
-
+            return None, None, None
+            
     def _run(self):
+        last_candle_close_time = 0
         while not self._stop:
             try:
                 current_time = time.time()
+                
+                # Cập nhật vị thế mỗi 60s
                 if current_time - self.last_position_check > self.position_check_interval:
                     self.check_position_status()
                     self.last_position_check = current_time
+                    
+                df = get_klines(self.symbol, "1m", 300)
+                if df.empty or len(df) < 50:
+                    time.sleep(1)
+                    continue
+
+                df = add_technical_indicators(df)
                 
-                signal, current_indicators = self.get_signal()
+                # Check for NaN values in the last row after adding indicators
+                if df.iloc[-1].isnull().any():
+                    time.sleep(1)
+                    continue
+                    
+                # Cập nhật trọng số sau mỗi nến đóng
+                if df['close_time'].iloc[-1] != last_candle_close_time:
+                    last_candle_close_time = df['close_time'].iloc[-1]
+                    
+                    price_change_percent = ((df['close'].iloc[-1] - df['open'].iloc[-1]) / df['open'].iloc[-1]) * 100
+                    current_signals = get_raw_indicator_signals(df)
+                    
+                    self.indicator_weights, _ = update_weights_and_stats(
+                        current_signals, price_change_percent, self.indicator_weights, self.indicator_stats, False
+                    )
+                    
+                signal, current_signals, total_score = self.get_signal(df)
                 
-                if current_time - self.last_trade_time > 3 and signal is not None:
-                    # Logic để mở lệnh
-                    if not self.position_open and self.status == "waiting":
-                        if current_time - self.last_close_time < self.cooldown_period:
-                            time.sleep(1)
-                            continue
-                        self.open_position(signal, current_indicators)
+                # Logic đảo chiều
+                if self.position_open and self.side == "BUY" and total_score < -self.reversal_threshold:
+                    self.close_position(f"🔄 Đảo chiều: Tổng điểm {total_score:.2f} < -{self.reversal_threshold}")
+                    self.open_position("SELL", current_signals)
+                    
+                elif self.position_open and self.side == "SELL" and total_score > self.reversal_threshold:
+                    self.close_position(f"🔄 Đảo chiều: Tổng điểm {total_score:.2f} > {self.reversal_threshold}")
+                    self.open_position("BUY", current_signals)
+                
+                # Mở lệnh mới
+                elif not self.position_open and self.status == "waiting":
+                    if current_time - self.last_close_time < self.cooldown_period:
+                        time.sleep(1)
+                        continue
+                    if signal and current_time - self.last_trade_time > 3:
+                        self.open_position(signal, current_signals)
                         self.last_trade_time = current_time
                         
+                # Kiểm tra TP/SL
                 if self.position_open and self.status == "open":
                     self.check_tp_sl()
-                    if signal:
-                        if (self.side == "BUY" and signal == "SELL") or (self.side == "SELL" and signal == "BUY"):
-                            current_price = self.prices[-1] if self.prices else get_current_price(self.symbol)
-                            if self.entry > 0 and current_price > 0:
-                                profit = (current_price - self.entry) * self.qty if self.side == "BUY" else (self.entry - current_price) * abs(self.qty)
-                                invested = self.entry * abs(self.qty) / self.lev
-                                roi = (profit / invested) * 100 if invested != 0 else 0
-                                if abs(roi) > 0:
-                                    self.close_position(f"🔄 ROI {roi:.2f}% exceeded threshold, reversing to {signal}")
                 
-                # Sửa lỗi: Thêm kiểm tra 'current_indicators is not None'
-                if current_time - self.last_trade_time > 300 and current_indicators is not None:
-                    df = get_klines(self.symbol, "1m", 300)
-                    if not df.empty and len(df) >= 2:
-                        df = add_technical_indicators(df)
-                        current_close = df['close'].iloc[-2]
-                        next_close = df['close'].iloc[-1]
-                        price_change_percent = ((next_close - current_close) / current_close) * 100
-                        update_weights_and_stats(signal, current_indicators, price_change_percent, self.indicator_weights, self.indicator_stats)
-
                 time.sleep(1)
             except Exception as e:
                 if time.time() - self.last_error_log_time > 10:
                     self.log(f"System error: {str(e)}")
                     self.last_error_log_time = time.time()
                 time.sleep(1)
+
     def stop(self):
         self._stop = True
         self.ws_manager.remove_symbol(self.symbol)
@@ -901,9 +863,7 @@ class IndicatorBot:
             self.status = "open"
             self.position_open = True
             self.position_attempt_count = 0
-            
-            # Lấy thông tin chỉ báo và trọng số
-            # Lấy thông tin chỉ báo và trọng số
+
             indicator_info = "Không đủ dữ liệu chỉ báo."
             if current_indicators is not None:
                 indicator_info = "Phân tích tín hiệu:\n"
@@ -933,7 +893,7 @@ class IndicatorBot:
                 step = get_step_size(self.symbol)
                 if step > 0:
                     steps = close_qty / step
-                    close_qty = round(steps) * step
+                    close_qty = math.floor(steps) * step
                 close_qty = max(close_qty, 0)
                 close_qty = round(close_qty, 8)
                 res = place_order(self.symbol, close_side, close_qty)
@@ -969,30 +929,6 @@ class BotManager:
         self.telegram_thread.start()
         if self.admin_chat_id:
             self.send_main_menu(self.admin_chat_id)
-        
-        # Start a thread to update weights
-        self.weight_update_thread = threading.Thread(target=self._weight_updater, daemon=True)
-        self.weight_update_thread.start()
-        
-    def _weight_updater(self):
-        """Periodically updates indicator weights based on performance."""
-        while self.running:
-            for symbol, bot in self.bots.items():
-                try:
-                    df = get_klines(symbol, '1m', 300)
-                    if not df.empty and len(df) >= 2:
-                        df = add_technical_indicators(df)
-                        signal, current_indicators = get_weighted_signal(df, bot.indicator_weights)
-                        
-                        # Get price change between the last two closed candles
-                        current_close = df['close'].iloc[-2]
-                        next_close = df['close'].iloc[-1]
-                        price_change_percent = ((next_close - current_close) / current_close) * 100
-                        
-                        update_weights_and_stats(signal, current_indicators, price_change_percent, bot.indicator_weights, bot.indicator_stats)
-                except Exception as e:
-                    logger.error(f"Error in weight update thread for {symbol}: {str(e)}")
-            time.sleep(3600) # Update every hour
 
     def log(self, message):
         logger.info(f"[SYSTEM] {message}")
@@ -1236,56 +1172,54 @@ def perform_initial_training(manager, bot_configs):
         return
 
     manager.log("⏳ Starting initial training on historical data...")
-    
+
     for config in bot_configs:
         try:
-            symbol, _, _, _, _, _ = config
-            
+            symbol, _, _, _, _, *initial_weights_list = config
+
             # Khởi tạo mô hình trọng số và thống kê riêng cho từng bot
             indicator_weights = {
-                "RSI": 10.0, "MACD": 10.0, "EMA9": 10.0, "EMA21": 10.0, "ATR": 10.0,
-                "volume": 10.0, "Stochastic": 10.0, "BollingerBands": 10.0, "Ichimoku": 10.0, "ADX": 10.0,
+                "RSI": 10.0, "MACD": 10.0, "EMA_Crossover": 10.0, "ATR": 10.0,
+                "Volume_Confirmation": 10.0, "Stochastic": 10.0, "BollingerBands": 10.0, "Ichimoku": 10.0, "ADX": 10.0,
             }
             indicator_stats = {
-                "RSI": {"correct": 0, "incorrect": 0}, "MACD": {"correct": 0, "incorrect": 0},
-                "EMA9": {"correct": 0, "incorrect": 0}, "EMA21": {"correct": 0, "incorrect": 0},
-                "ATR": {"correct": 0, "incorrect": 0}, "volume": {"correct": 0, "incorrect": 0},
-                "Stochastic": {"correct": 0, "incorrect": 0}, "BollingerBands": {"correct": 0, "incorrect": 0},
-                "Ichimoku": {"correct": 0, "incorrect": 0}, "ADX": {"correct": 0, "incorrect": 0},
+                "RSI": 0, "MACD": 0, "EMA_Crossover": 0, "ATR": 0,
+                "Volume_Confirmation": 0, "Stochastic": 0, "BollingerBands": 0, "Ichimoku": 0, "ADX": 0,
             }
 
             # Retrieve a large number of historical klines for training
-            df_history = get_klines(symbol, '1m', 300)
-            
+            df_history = get_klines(symbol, '1m', 200)
+
             if not df_history.empty and len(df_history) >= 50:
-                manager.log(f"🚀 Starting initial training for {symbol} with 200 15m candles...")
-                
+                manager.log(f"🚀 Starting initial training for {symbol} with 200 1m candles...")
+
                 # Iterate through historical data to simulate signal generation and weight updates
                 for i in range(50, len(df_history) - 1): # Start from candle 50 to ensure enough data for indicators
                     # Create a slice of data to simulate real-time analysis
                     df_slice = df_history.iloc[i-50:i+1].copy()
                     df_slice = add_technical_indicators(df_slice)
-                    
+
                     if not df_slice.iloc[-1].isnull().any():
-                        signal, current_indicators = get_weighted_signal(df_slice, indicator_weights)
-                        
-                        # Calculate price change of the next candle to evaluate the signal
-                        price_change_percent = ((df_history['close'].iloc[i+1] - df_history['close'].iloc[i]) / df_history['close'].iloc[i]) * 100
-                        
-                        if signal:
-                            update_weights_and_stats(signal, current_indicators, price_change_percent, indicator_weights, indicator_stats)
-                
+                        price_change_percent = ((df_slice['close'].iloc[-1] - df_slice['open'].iloc[-1]) / df_slice['open'].iloc[-1]) * 100
+                        current_signals = get_raw_indicator_signals(df_slice)
+
+                        indicator_weights, indicator_stats = update_weights_and_stats(
+                            current_signals, price_change_percent, indicator_weights, indicator_stats, True
+                        )
+
+                # Convert scores to weights
+                total_score = sum(abs(score) for score in indicator_stats.values())
+                if total_score > 0:
+                    for indicator, score in indicator_stats.items():
+                        indicator_weights[indicator] = (abs(score) / total_score) * 100
+
                 manager.log(f"✅ Initial training for {symbol} completed. Final weights updated.")
-                
+
                 # Cập nhật trọng số đã train vào cấu hình bot ban đầu
-                # Đây là bước quan trọng để các bot khởi tạo với mô hình đã được đào tạo
-                for conf in BOT_CONFIGS:
-                    if conf[0] == symbol:
-                        conf.append(indicator_weights) # Thêm trọng số đã train vào cấu hình
-                        break
+                config.append(indicator_weights)
             else:
                 manager.log(f"❌ Not enough historical data to train the bot for {symbol}.")
-        
+
         except Exception as e:
             manager.log(f"❌ Error during initial training for {symbol}: {str(e)}")
 
@@ -1293,7 +1227,7 @@ def perform_initial_training(manager, bot_configs):
 # ========== MAIN FUNCTION ==========
 def main():
     manager = BotManager()
-    
+
     # Perform initial training once before starting the live bots
     perform_initial_training(manager, BOT_CONFIGS)
 
@@ -1304,13 +1238,13 @@ def main():
             manager.add_bot(symbol, lev, percent, tp, sl, initial_weights)
     else:
         manager.log("⚠️ No bot configurations found!")
-        
+
     try:
         balance = get_balance()
         manager.log(f"💰 INITIAL BALANCE: {balance:.2f} USDT")
     except Exception as e:
         manager.log(f"⚠️ Error getting initial balance: {str(e)}")
-        
+
     try:
         while manager.running:
             time.sleep(1)
@@ -1323,5 +1257,3 @@ def main():
 
 if __name__ == "__main__":
     main()
-
-
