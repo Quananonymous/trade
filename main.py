@@ -547,9 +547,9 @@ def get_weighted_signal(df):
         current_indicators["ADX"] = 0
     
     signal = 0
-    if total_score > 0:
+    if total_score > 50:
         signal = 1
-    elif total_score < 0:
+    elif total_score < -50:
         signal = -1
         
     return signal, current_indicators
@@ -700,6 +700,7 @@ class IndicatorBot:
         self.prices = []
         
         self._stop = False
+        self.signal_threshold = 40.0
         self.position_open = False
         self.last_trade_time = 0
         self.position_check_interval = 60
@@ -728,7 +729,7 @@ class IndicatorBot:
 
     def get_signal(self):
         try:
-            df = get_klines(self.symbol, "15m", 200)
+            df = get_klines(self.symbol, "1m", 1000)
             if df.empty or len(df) < 50:
                 self.log("Not enough data to generate signal.")
                 return None, None
@@ -978,7 +979,7 @@ class BotManager:
         while self.running:
             for symbol, bot in self.bots.items():
                 try:
-                    df = get_klines(symbol, '5m', 100)
+                    df = get_klines(symbol, '1m', 1000)
                     if not df.empty and len(df) >= 2:
                         df = add_technical_indicators(df)
                         signal, current_indicators = get_weighted_signal(df)
@@ -1301,5 +1302,6 @@ def main():
 
 if __name__ == "__main__":
     main()
+
 
 
