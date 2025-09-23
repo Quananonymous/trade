@@ -440,6 +440,7 @@ def get_raw_indicator_signals(df):
         current_signals["MACD"] = 1
     else:
         current_signals["MACD"] = -1
+
     # MACD: MACD line > signal line là tăng
     if df['MACD'].iloc[-1] > df['MACD_Signal'].iloc[-1]:
         current_signals["MACD"] = 1
@@ -954,14 +955,13 @@ class BotManager:
                 self.log(f"⚠️ Open position found for {symbol}")
             
             # --- PHẦN ĐÃ SỬA ---
-            # Thêm logic để kiểm tra initial_weights trước khi khởi tạo bot
-            if not initial_weights:
-                self.log(f"❌ Bot could not be started for {symbol} due to missing weights.")
+            if not initial_weights or not isinstance(initial_weights, dict) or sum(initial_weights.values()) <= 0:
+                self.log(f"❌ Bot for {symbol} cannot be started due to invalid or missing weights.")
                 return False
+            # --- HẾT PHẦN ĐÃ SỬA ---
 
             bot = IndicatorBot(symbol, lev, percent, tp, sl, self.ws_manager, initial_weights)
             
-            # Kiểm tra nếu bot bị dừng ngay sau khi khởi tạo (do lỗi trọng số)
             if hasattr(bot, '_stop') and bot._stop:
                 return False
 
