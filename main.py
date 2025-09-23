@@ -707,7 +707,7 @@ class IndicatorBot:
         self.last_position_check = 0
         self.last_error_log_time = 0
         self.last_close_time = 0
-        self.cooldown_period = 900
+        self.cooldown_period = 3
         self.max_position_attempts = 3
         self.position_attempt_count = 0
         
@@ -765,7 +765,7 @@ class IndicatorBot:
                     if current_time - self.last_close_time < self.cooldown_period:
                         time.sleep(1)
                         continue
-                    if signal and current_time - self.last_trade_time > 60:
+                    if signal and current_time - self.last_trade_time > 3:
                         self.open_position(signal, current_indicators)
                         self.last_trade_time = current_time
                 if self.position_open and self.status == "open":
@@ -777,7 +777,7 @@ class IndicatorBot:
                                 profit = (current_price - self.entry) * self.qty if self.side == "BUY" else (self.entry - current_price) * abs(self.qty)
                                 invested = self.entry * abs(self.qty) / self.lev
                                 roi = (profit / invested) * 100 if invested != 0 else 0
-                                if roi >= 20:
+                                if roi != 0:
                                     self.close_position(f"🔄 ROI {roi:.2f}% exceeded threshold, reversing to {signal}")
                 time.sleep(1)
             except Exception as e:
@@ -1302,6 +1302,7 @@ def main():
 
 if __name__ == "__main__":
     main()
+
 
 
 
