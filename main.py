@@ -516,9 +516,9 @@ def get_weighted_signal(df, indicator_weights):
         current_indicators["ADX"] = 0
     
     signal = 0
-    if total_score > 70:
+    if total_score > 20:
         signal = 1
-    elif total_score < -70:
+    elif total_score < -30:
         signal = -1
         
     return signal, current_indicators
@@ -1323,4 +1323,5 @@ def main():
 
 if __name__ == "__main__":
     main()
+
 
