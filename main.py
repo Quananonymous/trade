@@ -689,12 +689,15 @@ class IndicatorBot:
         if initial_weights and isinstance(initial_weights, dict) and self._are_weights_valid(initial_weights):
             self.indicator_weights = initial_weights
             weights_info = " | ".join([f"{k}:{v:.1f}%" for k, v in initial_weights.items()])
-            self.log(f"✅ Sử dụng weights từ training 200 nến: {weights_info}")
+            if all(w < 0 for w in initial_weights.values()):
+                self.log(f"⚠️ Tất cả weights âm từ training 200 nến: {weights_info}")
+            else:
+                self.log(f"✅ Sử dụng weights từ training 200 nến: {weights_info}")
         else:
             self.indicator_weights = self._create_default_weights()
             default_weights_info = " | ".join([f"{k}:{v:.1f}%" for k, v in self.indicator_weights.items()])
             self.log(f"⚠️ Dùng weights mặc định: {default_weights_info}")
-            
+
         self.indicator_stats = {k: 0 for k in self.indicator_weights.keys()}
 
         self.check_position_status()
@@ -724,13 +727,13 @@ class IndicatorBot:
         self.log(f"🟢 Bot started for {self.symbol} | Lev: {lev}x | %: {percent} | TP/SL: {tp}%/{sl}%")
 
     def _are_weights_valid(self, weights):
-        """Kiểm tra tính hợp lệ của trọng số"""
         if not isinstance(weights, dict):
             return False
         if len(weights) == 0:
             return False
-        has_positive_weight = any(weight > 0 for weight in weights.values())
-        return has_positive_weight
+        # ✅ Chỉ cần có ít nhất 1 trọng số khác 0 (có thể âm hoặc dương)
+        return any(weight != 0 for weight in weights.values())
+
 
     def _create_default_weights(self):
         """Tạo trọng số mặc định"""
@@ -1475,4 +1478,5 @@ def main():
 
 if __name__ == "__main__":
     main()
+
 
