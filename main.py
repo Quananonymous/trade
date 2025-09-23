@@ -516,9 +516,9 @@ def get_weighted_signal(df, indicator_weights):
         current_indicators["ADX"] = 0
     
     signal = 0
-    if total_score > 25:
+    if total_score > 60:
         signal = 1
-    elif total_score < -25:
+    elif total_score < -60:
         signal = -1
         
     return signal, current_indicators
@@ -528,7 +528,7 @@ def update_weights_and_stats(signal, current_indicators, price_change_percent, i
     """Dynamically adjusts indicator weights based on their performance."""
     
     # Tốc độ điều chỉnh (ví dụ: 5%)
-    adjustment_rate = 0.05
+    adjustment_rate = 0.1
 
     is_correct_signal = (signal == 1 and price_change_percent > 0) or \
                         (signal == -1 and price_change_percent < 0) or \
@@ -1322,4 +1322,5 @@ def main():
 
 if __name__ == "__main__":
     main()
+
 
