@@ -816,7 +816,7 @@ class IndicatorBot:
                                 profit = (current_price - self.entry) * self.qty if self.side == "BUY" else (self.entry - current_price) * abs(self.qty)
                                 invested = self.entry * abs(self.qty) / self.lev
                                 roi = (profit / invested) * 100 if invested != 0 else 0
-                                if abs(roi) > 0.5:
+                                if abs(roi) > != 0:
                                     self.close_position(f"🔄 ROI {roi:.2f}% exceeded threshold, reversing to {signal}")
                 time.sleep(1)
             except Exception as e:
@@ -1361,3 +1361,4 @@ def main():
 
 if __name__ == "__main__":
     main()
+
