@@ -440,7 +440,6 @@ def get_raw_indicator_signals(df):
         current_signals["MACD"] = 1
     else:
         current_signals["MACD"] = -1
-
     # MACD: MACD line > signal line là tăng
     if df['MACD'].iloc[-1] > df['MACD_Signal'].iloc[-1]:
         current_signals["MACD"] = 1
@@ -628,10 +627,10 @@ class IndicatorBot:
         self.ws_manager = ws_manager
         
         # ========== KHỞI TẠO TRỌNG SỐ TỪ HUẤN LUYỆN BAN ĐẦU HOẶC THOÁT NẾU KHÔNG CÓ ==========
-        if initial_weights:
+        if initial_weights and isinstance(initial_weights, dict) and sum(initial_weights.values()) > 0:
             self.indicator_weights = initial_weights
         else:
-            self.log("❌ Không tìm thấy trọng số huấn luyện. Bot không thể khởi chạy.")
+            self.log("❌ Không tìm thấy trọng số huấn luyện hoặc trọng số không hợp lệ. Bot không thể khởi chạy.")
             self._stop = True
             return
             
@@ -1184,22 +1183,20 @@ def perform_initial_training(manager, bot_configs):
 
     for config in bot_configs:
         try:
-            symbol, _, _, _, _, *initial_weights_list = config
-
+            symbol = config[0]
+            
             # Khởi tạo mô hình thống kê điểm
             indicator_stats = {
                 "RSI": 0, "MACD": 0, "EMA_Crossover": 0, "Volume_Confirmation": 0,
                 "Stochastic": 0, "BollingerBands": 0, "Ichimoku": 0, "ADX": 0,
             }
             indicator_weights = {}
-
-            # Retrieve a large number of historical klines for training
+            
             df_history = get_klines(symbol, '1m', 200)
 
             if not df_history.empty and len(df_history) >= 50:
                 manager.log(f"🚀 Starting initial training for {symbol} with 200 1m candles...")
 
-                # Iterate through historical data to simulate signal generation and weight updates
                 for i in range(50, len(df_history) - 1):
                     df_slice = df_history.iloc[i-50:i+1].copy()
                     df_slice = add_technical_indicators(df_slice)
@@ -1212,7 +1209,6 @@ def perform_initial_training(manager, bot_configs):
                             current_signals, price_change_percent, indicator_weights, indicator_stats, True
                         )
 
-                # Convert scores to weights
                 total_score = sum(abs(score) for score in indicator_stats.values())
                 if total_score > 0:
                     for indicator, score in indicator_stats.items():
@@ -1224,13 +1220,21 @@ def perform_initial_training(manager, bot_configs):
                 
                 manager.log(f"✅ Initial training for {symbol} completed. Final weights updated.")
 
-                # Cập nhật trọng số đã train vào cấu hình bot ban đầu
+                # Thêm trọng số đã huấn luyện vào cấu hình
+                while len(config) < 6:
+                    config.append(None)
                 config.append(indicator_weights)
             else:
-                manager.log(f"❌ Not enough historical data to train the bot for {symbol}.")
+                manager.log(f"❌ Not enough historical data to train the bot for {symbol}. Training failed.")
+                while len(config) < 6:
+                    config.append(None)
+                config.append(None)
 
         except Exception as e:
             manager.log(f"❌ Error during initial training for {symbol}: {str(e)}")
+            while len(config) < 6:
+                config.append(None)
+            config.append(None)
 
 
 # ========== MAIN FUNCTION ==========
@@ -1238,14 +1242,18 @@ def main():
     manager = BotManager()
 
     perform_initial_training(manager, BOT_CONFIGS)
-
+    
     if BOT_CONFIGS:
         for config in BOT_CONFIGS:
-            symbol, lev, percent, tp, sl, *initial_weights_list = config
-            initial_weights = initial_weights_list[0] if initial_weights_list else None
-            manager.add_bot(symbol, lev, percent, tp, sl, initial_weights)
+            if len(config) > 6 and config[6] is not None:
+                symbol, lev, percent, tp, sl = config[0], config[1], config[2], config[3], config[4]
+                initial_weights = config[6]
+                manager.add_bot(symbol, lev, percent, tp, sl, initial_weights)
+            else:
+                symbol = config[0]
+                manager.log(f"⚠️ Bot for {symbol} cannot be started due to failed training.")
     else:
-        manager.log("⚠️ No bot configurations found!")
+        manager.log("⚠️ No bot configurations found! Please set the BOT_CONFIGS environment variable.")
 
     try:
         balance = get_balance()
