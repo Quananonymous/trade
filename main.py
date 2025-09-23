@@ -729,7 +729,7 @@ class IndicatorBot:
 
     def get_signal(self):
         try:
-            df = get_klines(self.symbol, "1m", 1000)
+            df = get_klines(self.symbol, "1m", 300)
             if df.empty or len(df) < 50:
                 self.log("Not enough data to generate signal.")
                 return None, None
@@ -979,7 +979,7 @@ class BotManager:
         while self.running:
             for symbol, bot in self.bots.items():
                 try:
-                    df = get_klines(symbol, '1m', 1000)
+                    df = get_klines(symbol, '1m', 300)
                     if not df.empty and len(df) >= 2:
                         df = add_technical_indicators(df)
                         signal, current_indicators = get_weighted_signal(df)
@@ -1302,6 +1302,7 @@ def main():
 
 if __name__ == "__main__":
     main()
+
 
 
 
