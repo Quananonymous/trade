@@ -1250,7 +1250,7 @@ def perform_initial_training(manager, bot_configs):
                 # Iterate through historical data to simulate signal generation and weight updates
                 for i in range(50, len(df_history) - 1): # Start from candle 50 to ensure enough data for indicators
                     # Create a slice of data to simulate real-time analysis
-                    df_slice = df_history.iloc[i-50:i+1]
+                    df_slice = df_history.iloc[i-50:i+1].copy()
                     df_slice = add_technical_indicators(df_slice)
                     
                     if not df_slice.iloc[-1].isnull().any():
@@ -1302,6 +1302,7 @@ def main():
 
 if __name__ == "__main__":
     main()
+
 
 
 
