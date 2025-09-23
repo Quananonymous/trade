@@ -621,13 +621,13 @@ class IndicatorBot:
         self.sl = sl
         self.ws_manager = ws_manager
         
-        # ========== KHỞI TẠO TRỌNG SỐ TỪ HUẤN LUYỆN BAN ĐẦU HOẶC THOÁT NẾU KHÔNG CÓ ==========
+        # ========== CẢI THIỆN: KIỂM TRA TRỌNG SỐ HỢP LỆ ==========
         if initial_weights and isinstance(initial_weights, dict) and self._are_weights_valid(initial_weights):
             self.indicator_weights = initial_weights
         else:
-            self.log("❌ Không tìm thấy trọng số huấn luyện hoặc trọng số không hợp lệ. Bot không thể khởi chạy.")
-            self._stop = True
-            return
+            # Nếu không có trọng số, tạo trọng số mặc định
+            self.indicator_weights = self._create_default_weights()
+            self.log("⚠️ Sử dụng trọng số mặc định do không có trọng số huấn luyện")
             
         self.indicator_stats = {k: 0 for k in self.indicator_weights.keys()}
         # ========================================================
@@ -665,6 +665,22 @@ class IndicatorBot:
         # Kiểm tra xem có ít nhất một trọng số dương
         has_positive_weight = any(weight > 0 for weight in weights.values())
         return has_positive_weight
+
+    def _create_default_weights(self):
+        """Tạo trọng số mặc định nếu huấn luyện thất bại"""
+        default_weights = {
+            "RSI": 15.0,
+            "MACD": 15.0,
+            "EMA_Crossover": 15.0,
+            "Volume_Confirmation": 10.0,
+            "Stochastic": 15.0,
+            "BollingerBands": 15.0,
+            "Ichimoku": 10.0,
+            "ADX": 5.0
+        }
+        # Chuẩn hóa về tổng 100%
+        total = sum(default_weights.values())
+        return {k: (v / total) * 100 for k, v in default_weights.items()}
 
     def log(self, message):
         logger.info(f"[{self.symbol}] {message}")
@@ -805,439 +821,477 @@ class IndicatorBot:
             roi = (profit / invested) * 100
             if roi >= self.tp:
                 self.close_position(f"✅ TP hit at {self.tp}% (ROI: {roi:.2f}%)")
-            elif self.sl > 0 and roi <= -self.sl:
-                self.close_position(f"❌ SL hit at -{self.sl}% (ROI: {roi:.2f}%)")
+            elif self.sl is not None and roi <= -self.sl:
+                self.close_position(f"❌ SL hit at {self.sl}% (ROI: {roi:.2f}%)")
         except Exception as e:
             if time.time() - self.last_error_log_time > 10:
                 self.log(f"TP/SL check error: {str(e)}")
                 self.last_error_log_time = time.time()
 
-    def open_position(self, side, current_signals):
+    def open_position(self, side, current_indicators=None):
+        self.check_position_status()
         try:
-            if self.position_open:
-                self.log(f"⚠️ Position already open. Cannot open new position.")
-                return
-            if self.position_attempt_count >= self.max_position_attempts:
-                self.log(f"⚠️ Max position attempts reached. Cooling down.")
-                time.sleep(60)
-                self.position_attempt_count = 0
-                return
+            cancel_all_orders(self.symbol)
             if not set_leverage(self.symbol, self.lev):
-                self.log(f"⚠️ Failed to set leverage.")
+                self.log(f"Could not set leverage to {self.lev}")
                 return
             balance = get_balance()
             if balance <= 0:
-                self.log(f"⚠️ Insufficient balance.")
+                self.log(f"Insufficient USDT balance")
                 return
-            current_price = self.prices[-1] if self.prices else get_current_price(self.symbol)
-            if current_price <= 0:
-                self.log(f"⚠️ Invalid price.")
+            if self.percent > 100:
+                self.percent = 100
+            elif self.percent < 1:
+                self.percent = 1
+            usdt_amount = balance * (self.percent / 100)
+            price = get_current_price(self.symbol)
+            if price <= 0:
+                self.log(f"Error getting price")
                 return
-            step_size = get_step_size(self.symbol)
-            if step_size <= 0:
-                step_size = 0.001
-            qty = (balance * self.percent / 100) * self.lev / current_price
-            qty = math.floor(qty / step_size) * step_size
-            if qty <= 0:
-                self.log(f"⚠️ Invalid quantity.")
+            step = get_step_size(self.symbol)
+            if step <= 0:
+                step = 0.001
+            qty = (usdt_amount * self.lev) / price
+            if step > 0:
+                steps = qty / step
+                qty = round(steps) * step
+            qty = max(qty, 0)
+            qty = round(qty, 8)
+            min_qty = step
+            if qty < min_qty:
+                self.log(f"⚠️ Quantity is too small ({qty}), not placing order")
                 return
-            order = place_order(self.symbol, side, qty)
-            if order and 'orderId' in order:
-                self.position_open = True
-                self.status = "open"
-                self.side = side
-                self.qty = qty if side == "BUY" else -qty
-                self.entry = current_price
-                self.position_attempt_count = 0
-                self.log(f"🟢 {side} position opened at {current_price} (Qty: {qty})")
-                signal_info = " | ".join([f"{k}: {v}" for k, v in current_signals.items()])
-                send_telegram(f"📊 <b>{self.symbol}</b> {side} Signals: {signal_info}")
-            else:
-                self.position_attempt_count += 1
-                self.log(f"⚠️ Failed to open {side} position (Attempt {self.position_attempt_count}/{self.max_position_attempts})")
-        except Exception as e:
             self.position_attempt_count += 1
-            self.log(f"❌ Error opening {side} position: {str(e)}")
-
-    def close_position(self, reason):
-        try:
-            if not self.position_open or not self.side or not self.qty:
-                self.log(f"⚠️ No position to close.")
+            if self.position_attempt_count > self.max_position_attempts:
+                self.log(f"⚠️ Reached max position attempt limit ({self.max_position_attempts})")
+                self.position_attempt_count = 0
                 return
-            side = "SELL" if self.side == "BUY" else "BUY"
-            qty = abs(self.qty)
-            order = place_order(self.symbol, side, qty)
-            if order and 'orderId' in order:
-                self.position_open = False
-                self.status = "waiting"
-                self.side = ""
-                self.qty = 0
-                self.entry = 0
-                self.last_close_time = time.time()
-                self.log(f"🔴 Position closed: {reason}")
-            else:
-                self.log(f"⚠️ Failed to close position.")
+            res = place_order(self.symbol, side, qty)
+            if not res:
+                self.log(f"Error placing order")
+                return
+            executed_qty = float(res.get('executedQty', 0))
+            if executed_qty < 0:
+                self.log(f"Order not filled, executed quantity: {executed_qty}")
+                return
+            self.entry = float(res.get('avgPrice', price))
+            self.side = side
+            self.qty = executed_qty if side == "BUY" else -executed_qty
+            self.status = "open"
+            self.position_open = True
+            self.position_attempt_count = 0
+
+            indicator_info = "Không đủ dữ liệu chỉ báo."
+            if current_indicators is not None:
+                indicator_info = "Phân tích tín hiệu:\n"
+                for indicator, status in current_indicators.items():
+                    weight = self.indicator_weights.get(indicator, 0)
+                    sign_text = "🟢 Tăng" if status == 1 else "🔴 Giảm" if status == -1 else "⚪ Trung lập"
+                    indicator_info += f"- {indicator}: {weight:.2f}% ({sign_text})\n"
+            message = (f"✅ <b>POSITION OPENED {self.symbol}</b>\n"
+                       f"📌 Direction: {side}\n"
+                       f"🏷️ Entry Price: {self.entry:.4f}\n"
+                       f"📊 Quantity: {executed_qty}\n"
+                       f"💵 Value: {executed_qty * self.entry:.2f} USDT\n"
+                       f" Leverage: {self.lev}x\n"
+                       f"🎯 TP: {self.tp}% | 🛡️ SL: {self.sl}%\n\n"
+                       f"{indicator_info}")
+            self.log(message)
+        except Exception as e:
+            self.position_open = False
+            self.log(f"❌ Error entering position: {str(e)}")
+
+    def close_position(self, reason=""):
+        try:
+            cancel_all_orders(self.symbol)
+            if abs(self.qty) > 0:
+                close_side = "SELL" if self.side == "BUY" else "BUY"
+                close_qty = abs(self.qty)
+                step = get_step_size(self.symbol)
+                if step > 0:
+                    steps = close_qty / step
+                    close_qty = math.floor(steps) * step
+                close_qty = max(close_qty, 0)
+                close_qty = round(close_qty, 8)
+                res = place_order(self.symbol, close_side, close_qty)
+                if res:
+                    price = float(res.get('avgPrice', 0))
+                    message = (f"⛔ <b>POSITION CLOSED {self.symbol}</b>\n" f"📌 Reason: {reason}\n" f"🏷️ Exit Price: {price:.4f}\n" f"📊 Quantity: {close_qty}\n" f"💵 Value: {close_qty * price:.2f} USDT")
+                    self.log(message)
+                    self.status = "waiting"
+                    self.side = ""
+                    self.qty = 0
+                    self.entry = 0
+                    self.position_open = False
+                    self.last_trade_time = time.time()
+                    self.last_close_time = time.time()
+                else:
+                    self.log(f"Error closing position")
         except Exception as e:
             self.log(f"❌ Error closing position: {str(e)}")
 
 # ========== BOT MANAGER ==========
 class BotManager:
     def __init__(self):
-        self.bots = {}
         self.ws_manager = WebSocketManager()
-        self.executor = ThreadPoolExecutor(max_workers=5)
-        self._lock = threading.Lock()
+        self.bots = {}
+        self.running = True
+        self.start_time = time.time()
+        self.user_states = {}
+        self.admin_chat_id = TELEGRAM_CHAT_ID
+        self.log("🟢 BOT SYSTEM STARTED")
+        self.status_thread = threading.Thread(target=self._status_monitor, daemon=True)
+        self.status_thread.start()
+        self.telegram_thread = threading.Thread(target=self._telegram_listener, daemon=True)
+        self.telegram_thread.start()
+        if self.admin_chat_id:
+            self.send_main_menu(self.admin_chat_id)
 
-    def start_bot(self, symbol, lev, percent, tp, sl, initial_weights=None):
+    def log(self, message):
+        logger.info(f"[SYSTEM] {message}")
+        send_telegram(f"<b>SYSTEM</b>: {message}")
+
+    def send_main_menu(self, chat_id):
+        welcome = ("🤖 <b>BINANCE FUTURES TRADING BOT</b>\n\nChoose an option below:")
+        send_telegram(welcome, chat_id, create_menu_keyboard())
+
+    def add_bot(self, symbol, lev, percent, tp, sl, initial_weights=None):
+        if sl == 0:
+            sl = None
         symbol = symbol.upper()
-        with self._lock:
-            if symbol in self.bots:
-                send_telegram(f"⚠️ Bot for {symbol} is already running.")
-                return False
-
-            # Kiểm tra trọng số trước khi khởi tạo bot
-            if not initial_weights or not self._are_weights_valid(initial_weights):
-                send_telegram(f"❌ Bot for {symbol} cannot be started due to invalid or missing weights.")
-                return False
-
-            try:
-                bot = IndicatorBot(symbol, lev, percent, tp, sl, self.ws_manager, initial_weights)
-                self.bots[symbol] = bot
-                send_telegram(f"🟢 Bot started for {symbol} with leverage {lev}x, {percent}% balance, TP {tp}%, SL {sl}%")
-                return True
-            except Exception as e:
-                send_telegram(f"❌ Error starting bot for {symbol}: {str(e)}")
-                return False
-
-    def _are_weights_valid(self, weights):
-        """Kiểm tra tính hợp lệ của trọng số"""
-        if not isinstance(weights, dict):
+        if symbol in self.bots:
+            self.log(f"⚠️ Bot already exists for {symbol}")
             return False
-        if len(weights) == 0:
+        if not API_KEY or not API_SECRET:
+            self.log("❌ API Key and Secret Key not configured!")
             return False
-        # Kiểm tra xem có ít nhất một trọng số dương
-        has_positive_weight = any(weight > 0 for weight in weights.values())
-        return has_positive_weight
+        try:
+            price = get_current_price(symbol)
+            if price <= 0:
+                self.log(f"❌ Cannot get price for {symbol}")
+                return False
+            positions = get_positions(symbol)
+            if positions and any(float(pos.get('positionAmt', 0)) != 0 for pos in positions):
+                self.log(f"⚠️ Open position found for {symbol}")
+            
+            # ========== CẢI THIỆN: LUÔN CHO PHÉP TẠO BOT ==========
+            # Ngay cả khi không có trọng số, bot sẽ tự tạo trọng số mặc định
+            bot = IndicatorBot(symbol, lev, percent, tp, sl, self.ws_manager, initial_weights)
+            
+            # Kiểm tra nếu bot đã bị dừng do lỗi nghiêm trọng
+            if hasattr(bot, '_stop') and bot._stop:
+                self.log(f"❌ Bot for {symbol} failed to initialize")
+                return False
+
+            self.bots[symbol] = bot
+            self.log(f"✅ Bot added: {symbol} | Lev: {lev}x | %: {percent} | TP/SL: {tp}%/{sl}%")
+            return True
+        except Exception as e:
+            self.log(f"❌ Error creating bot {symbol}: {str(e)}")
+            return False
 
     def stop_bot(self, symbol):
         symbol = symbol.upper()
-        with self._lock:
-            if symbol in self.bots:
-                self.bots[symbol].stop()
-                del self.bots[symbol]
-                send_telegram(f"🔴 Bot stopped for {symbol}")
-                return True
+        bot = self.bots.get(symbol)
+        if bot:
+            bot.stop()
+            if bot.status == "open":
+                bot.close_position("⛔ Manual bot stop")
+            self.log(f"⛔ Bot stopped for {symbol}")
+            del self.bots[symbol]
+            return True
+        return False
+
+    def stop_all(self):
+        self.log("⛔ Stopping all bots...")
+        for symbol in list(self.bots.keys()):
+            self.stop_bot(symbol)
+        self.ws_manager.stop()
+        self.running = False
+        self.log("🔴 System stopped")
+
+    def _status_monitor(self):
+        while self.running:
+            try:
+                uptime = time.time() - self.start_time
+                hours, rem = divmod(uptime, 3600)
+                minutes, seconds = divmod(rem, 60)
+                uptime_str = f"{int(hours)}h {int(minutes)}m {int(seconds)}s"
+                active_bots = [s for s, b in self.bots.items() if not b._stop]
+                balance = get_balance()
+                status_msg = (f"📊 <b>SYSTEM STATUS</b>\n" f"⏱ Uptime: {uptime_str}\n" f"🤖 Active Bots: {len(active_bots)}\n" f"📈 Active Pairs: {', '.join(active_bots) if active_bots else 'None'}\n" f"💰 Available Balance: {balance:.2f} USDT")
+                send_telegram(status_msg)
+                for symbol, bot in self.bots.items():
+                    if bot.status == "open":
+                        status_msg = (f"🔹 <b>{symbol}</b>\n" f"📌 Direction: {bot.side}\n" f"🏷️ Entry Price: {bot.entry:.4f}\n" f"📊 Quantity: {abs(bot.qty)}\n" f" Leverage: {bot.lev}x\n" f"🎯 TP: {bot.tp}% | 🛡️ SL: {bot.sl}%")
+                        send_telegram(status_msg)
+            except Exception as e:
+                logger.error(f"Status report error: {str(e)}")
+            time.sleep(6 * 3600)
+
+    def _telegram_listener(self):
+        last_update_id = 0
+        while self.running:
+            try:
+                url = f"https://api.telegram.org/bot{TELEGRAM_BOT_TOKEN}/getUpdates?offset={last_update_id+1}&timeout=30"
+                response = requests.get(url, timeout=35)
+                if response.status_code == 200:
+                    data = response.json()
+                    if data.get('ok'):
+                        for update in data['result']:
+                            update_id = update['update_id']
+                            message = update.get('message', {})
+                            chat_id = str(message.get('chat', {}).get('id'))
+                            text = message.get('text', '').strip()
+                            if chat_id != self.admin_chat_id:
+                                continue
+                            if update_id > last_update_id:
+                                last_update_id = update_id
+                            self._handle_telegram_message(chat_id, text)
+                elif response.status_code == 409:
+                    logger.error("Conflict error: Only one bot instance can listen to Telegram")
+                    break
+            except Exception as e:
+                logger.error(f"Telegram listener error: {str(e)}")
+                time.sleep(5)
+
+    def _handle_telegram_message(self, chat_id, text):
+        user_state = self.user_states.get(chat_id, {})
+        current_step = user_state.get('step')
+        if current_step == 'waiting_symbol':
+            if text == '❌ Hủy bỏ':
+                self.user_states[chat_id] = {}
+                send_telegram("❌ Bot addition cancelled", chat_id, create_menu_keyboard())
             else:
-                send_telegram(f"⚠️ No bot found for {symbol}")
-                return False
-
-    def stop_all_bots(self):
-        with self._lock:
-            for symbol in list(self.bots.keys()):
-                self.stop_bot(symbol)
-            send_telegram("🔴 All bots stopped")
-
-    def get_bot_status(self):
-        with self._lock:
+                symbol = text.upper()
+                self.user_states[chat_id] = {'step': 'waiting_leverage', 'symbol': symbol}
+                send_telegram(f"Choose leverage for {symbol}:", chat_id, create_leverage_keyboard())
+        elif current_step == 'waiting_leverage':
+            if text == '❌ Hủy bỏ':
+                self.user_states[chat_id] = {}
+                send_telegram("❌ Bot addition cancelled", chat_id, create_menu_keyboard())
+            elif 'x' in text:
+                leverage = int(text.replace('', '').replace('x', '').strip())
+                user_state['leverage'] = leverage
+                user_state['step'] = 'waiting_percent'
+                send_telegram(f"📌 Pair: {user_state['symbol']}\n Leverage: {leverage}x\n\nEnter % of balance to use (1-100):", chat_id, create_cancel_keyboard())
+        elif current_step == 'waiting_percent':
+            if text == '❌ Hủy bỏ':
+                self.user_states[chat_id] = {}
+                send_telegram("❌ Bot addition cancelled", chat_id, create_menu_keyboard())
+            else:
+                try:
+                    percent = float(text)
+                    if 1 <= percent <= 100:
+                        user_state['percent'] = percent
+                        user_state['step'] = 'waiting_tp'
+                        send_telegram(f"📌 Pair: {user_state['symbol']}\n Lev: {user_state['leverage']}x\n📊 %: {percent}%\n\nEnter % Take Profit (e.g., 10):", chat_id, create_cancel_keyboard())
+                    else:
+                        send_telegram("⚠️ Please enter a % from 1-100", chat_id)
+                except Exception:
+                    send_telegram("⚠️ Invalid value, please enter a number", chat_id)
+        elif current_step == 'waiting_tp':
+            if text == '❌ Hủy bỏ':
+                self.user_states[chat_id] = {}
+                send_telegram("❌ Bot addition cancelled", chat_id, create_menu_keyboard())
+            else:
+                try:
+                    tp = float(text)
+                    if tp > 0:
+                        user_state['tp'] = tp
+                        user_state['step'] = 'waiting_sl'
+                        send_telegram(f"📌 Pair: {user_state['symbol']}\n Lev: {user_state['leverage']}x\n📊 %: {user_state['percent']}%\n🎯 TP: {tp}%\n\nEnter % Stop Loss (e.g., 5):", chat_id, create_cancel_keyboard())
+                    else:
+                        send_telegram("⚠️ TP must be greater than 0", chat_id)
+                except Exception:
+                    send_telegram("⚠️ Invalid value, please enter a number", chat_id)
+        elif current_step == 'waiting_sl':
+            if text == '❌ Hủy bỏ':
+                self.user_states[chat_id] = {}
+                send_telegram("❌ Bot addition cancelled", chat_id, create_menu_keyboard())
+            else:
+                try:
+                    sl = float(text)
+                    if sl >= 0:
+                        symbol = user_state['symbol']
+                        leverage = user_state['leverage']
+                        percent = user_state['percent']
+                        tp = user_state['tp']
+                        # ========== CẢI THIỆN: LUÔN CHO PHÉP THÊM BOT ==========
+                        if self.add_bot(symbol, leverage, percent, tp, sl, None):
+                            send_telegram(f"✅ <b>BOT ADDED SUCCESSFULLY</b>\n\n" f"📌 Pair: {symbol}\n" f" Leverage: {leverage}x\n" f"📊 % Balance: {percent}%\n" f"🎯 TP: {tp}%\n" f"🛡️ SL: {sl}%", chat_id, create_menu_keyboard())
+                        else:
+                            send_telegram("❌ Could not add bot, please check logs", chat_id, create_menu_keyboard())
+                        self.user_states[chat_id] = {}
+                    else:
+                        send_telegram("⚠️ SL must be greater than or equal to 0", chat_id)
+                except Exception:
+                    send_telegram("⚠️ Invalid value, please enter a number", chat_id)
+        elif text == "📊 Danh sách Bot":
             if not self.bots:
-                return "No bots are currently running."
-            status_lines = []
-            for symbol, bot in self.bots.items():
-                status_lines.append(f"• {symbol}: {bot.status} (Leverage: {bot.lev}x, Balance: {bot.percent}%)")
-            return "\n".join(status_lines)
-
-# ========== TRAINING FUNCTIONS ==========
-def perform_initial_training(symbol, training_period_days=30):
-    """
-    Performs initial training for a symbol and returns the trained weights.
-    This function now returns the weights directly instead of modifying global config.
-    """
-    try:
-        send_telegram(f"🧠 Starting initial training for {symbol} ({training_period_days} days)...")
-        
-        # Lấy dữ liệu lịch sử
-        df = get_klines(symbol, "1h", limit=24 * training_period_days)
-        if df.empty or len(df) < 100:
-            send_telegram(f"❌ Not enough historical data for {symbol}")
-            return None
-
-        # Thêm chỉ báo kỹ thuật
-        df = add_technical_indicators(df)
-        df = df.dropna()
-        
-        if df.empty:
-            send_telegram(f"❌ No valid data after adding indicators for {symbol}")
-            return None
-
-        # Khởi tạo trọng số và thống kê
-        indicator_names = ["RSI", "MACD", "EMA_Crossover", "Volume_Confirmation", 
-                          "Stochastic", "BollingerBands", "Ichimoku", "ADX"]
-        initial_weights = {name: 100.0 / len(indicator_names) for name in indicator_names}
-        indicator_stats = {name: 0 for name in indicator_names}
-
-        # Huấn luyện trên dữ liệu lịch sử
-        for i in range(50, len(df)-1):
-            current_data = df.iloc[:i+1].copy()
-            current_signals = get_raw_indicator_signals(current_data)
-            
-            # Tính phần trăm thay đổi giá cho nến tiếp theo
-            price_change_percent = ((df['close'].iloc[i+1] - df['close'].iloc[i]) / df['close'].iloc[i]) * 100
-            
-            # Cập nhật trọng số
-            initial_weights, indicator_stats = update_weights_and_stats(
-                current_signals, price_change_percent, initial_weights, indicator_stats, True
-            )
-
-        # Chuyển điểm số thành trọng số phần trăm
-        total_score = sum(indicator_stats.values())
-        if total_score != 0:
-            trained_weights = {k: (v / total_score) * 100 for k, v in indicator_stats.items()}
-        else:
-            # Nếu tổng điểm bằng 0, sử dụng trọng số đều
-            trained_weights = {k: 100.0 / len(indicator_stats) for k in indicator_stats}
-        
-        send_telegram(f"✅ Training completed for {symbol}")
-        
-        # Log kết quả huấn luyện
-        weight_info = " | ".join([f"{k}: {v:.2f}%" for k, v in trained_weights.items()])
-        send_telegram(f"📊 Trained weights for {symbol}: {weight_info}")
-        
-        return trained_weights
-        
-    except Exception as e:
-        send_telegram(f"❌ Training error for {symbol}: {str(e)}")
-        return None
-
-# ========== GLOBAL VARIABLES ==========
-bot_manager = BotManager()
-user_states = {}
-
-# ========== TELEGRAM BOT HANDLERS ==========
-def handle_telegram_message(update):
-    try:
-        message = update.get('message', {})
-        text = message.get('text', '').strip()
-        chat_id = message.get('chat', {}).get('id')
-        
-        if not text or not chat_id:
-            return
-
-        user_state = user_states.get(chat_id, {})
-
-        # Xử lý trạng thái nhập thủ công
-        if user_state.get('waiting_for_input'):
-            del user_states[chat_id]['waiting_for_input']
-            handle_manual_input(chat_id, text, user_state)
-            return
-
-        # Xử lý lệnh thông thường
-        if text == "📊 Danh sách Bot":
-            status = bot_manager.get_bot_status()
-            send_telegram(f"🤖 <b>Bot Status</b>\n\n{status}", chat_id)
-
+                send_telegram("🤖 No bots are currently running", chat_id)
+            else:
+                message = "🤖 <b>LIST OF RUNNING BOTS</b>\n\n"
+                for symbol, bot in self.bots.items():
+                    status = "🟢 Open" if bot.status == "open" else "🟡 Waiting"
+                    message += f"🔹 {symbol} | {status} | {bot.side}\n"
+                send_telegram(message, chat_id)
         elif text == "➕ Thêm Bot":
-            user_states[chat_id] = {'step': 'select_symbol'}
-            send_telegram("🔤 Please enter the trading pair (e.g., BTCUSDT):", chat_id, create_cancel_keyboard())
-
+            self.user_states[chat_id] = {'step': 'waiting_symbol'}
+            send_telegram("Choose a coin pair:", chat_id, create_symbols_keyboard())
         elif text == "⛔ Dừng Bot":
-            user_states[chat_id] = {'step': 'stop_bot'}
-            send_telegram("🔤 Enter the trading pair to stop:", chat_id, create_cancel_keyboard())
-
+            if not self.bots:
+                send_telegram("🤖 No bots are currently running", chat_id)
+            else:
+                message = "⛔ <b>CHOOSE BOT TO STOP</b>\n\n"
+                keyboard = []
+                row = []
+                for i, symbol in enumerate(self.bots.keys()):
+                    message += f"🔹 {symbol}\n"
+                    row.append({"text": f"⛔ {symbol}"})
+                    if len(row) == 2 or i == len(self.bots) - 1:
+                        keyboard.append(row)
+                        row = []
+                keyboard.append([{"text": "❌ Hủy bỏ"}])
+                send_telegram(message, chat_id, {"keyboard": keyboard, "resize_keyboard": True, "one_time_keyboard": True})
+        elif text.startswith("⛔ "):
+            symbol = text.replace("⛔ ", "").strip().upper()
+            if symbol in self.bots:
+                self.stop_bot(symbol)
+                send_telegram(f"⛔ Stop command sent for bot {symbol}", chat_id, create_menu_keyboard())
+            else:
+                send_telegram(f"⚠️ Bot not found {symbol}", chat_id, create_menu_keyboard())
         elif text == "💰 Số dư tài khoản":
-            balance = get_balance()
-            send_telegram(f"💳 <b>Account Balance</b>\n\nAvailable USDT: {balance:.2f}", chat_id)
-
+            try:
+                balance = get_balance()
+                send_telegram(f"💰 <b>AVAILABLE BALANCE</b>: {balance:.2f} USDT", chat_id)
+            except Exception as e:
+                send_telegram(f"⚠️ Error getting balance: {str(e)}", chat_id)
         elif text == "📈 Vị thế đang mở":
-            positions = get_positions()
-            open_positions = [pos for pos in positions if float(pos.get('positionAmt', 0)) != 0]
-            if open_positions:
-                position_info = []
-                for pos in open_positions:
-                    side = "LONG" if float(pos['positionAmt']) > 0 else "SHORT"
-                    pnl = float(pos.get('unRealizedProfit', 0))
-                    position_info.append(f"• {pos['symbol']} {side} | PnL: {pnl:.2f} USDT")
-                send_telegram("📊 <b>Open Positions</b>\n\n" + "\n".join(position_info), chat_id)
-            else:
-                send_telegram("📊 <b>Open Positions</b>\n\nNo open positions.", chat_id)
+            try:
+                positions = get_positions()
+                if not positions:
+                    send_telegram("📭 No open positions", chat_id)
+                    return
+                message = "📈 <b>OPEN POSITIONS</b>\n\n"
+                for pos in positions:
+                    position_amt = float(pos.get('positionAmt', 0))
+                    if position_amt != 0:
+                        symbol = pos.get('symbol', 'UNKNOWN')
+                        entry = float(pos.get('entryPrice', 0))
+                        side = "LONG" if position_amt > 0 else "SHORT"
+                        pnl = float(pos.get('unRealizedProfit', 0))
+                        message += (f"🔹 {symbol} | {side}\n" f"📊 Quantity: {abs(position_amt):.4f}\n" f"🏷️ Entry Price: {entry:.4f}\n" f"💰 PnL: {pnl:.2f} USDT\n\n")
+                send_telegram(message, chat_id)
+            except Exception as e:
+                send_telegram(f"⚠️ Error getting positions: {str(e)}", chat_id)
+        elif text:
+            self.send_main_menu(chat_id)
 
-        elif text == "❌ Hủy bỏ":
-            if chat_id in user_states:
-                del user_states[chat_id]
-            send_telegram("❌ Operation cancelled.", chat_id, create_menu_keyboard())
+# ========== FUNCTIONS FOR INITIAL TRAINING ==========
+def perform_initial_training(manager, bot_configs):
+    """
+    Performs initial training on historical data for all bot configurations.
+    This function simulates trading on historical klines to pre-train indicator weights.
+    """
+    if not bot_configs:
+        manager.log("⚠️ No bot configurations found for training.")
+        return
 
-        # Xử lý các bước trong quy trình thêm bot
-        elif user_state.get('step') == 'select_symbol':
-            symbol = text.upper().replace(' ', '')
-            if not symbol.endswith('USDT'):
-                symbol += 'USDT'
-            
-            # Thực hiện huấn luyện ban đầu và nhận trọng số
-            send_telegram(f"🧠 Training bot for {symbol}... This may take a few minutes.", chat_id)
-            trained_weights = perform_initial_training(symbol)
-            
-            if not trained_weights:
-                send_telegram(f"❌ Training failed for {symbol}. Bot cannot be started.", chat_id, create_menu_keyboard())
-                del user_states[chat_id]
-                return
-            
-            user_states[chat_id] = {
-                'step': 'select_leverage', 
-                'symbol': symbol,
-                'trained_weights': trained_weights  # Lưu trọng số đã huấn luyện
-            }
-            send_telegram(f"✅ Training completed for {symbol}. Now select leverage:", chat_id, create_leverage_keyboard())
+    manager.log("⏳ Starting initial training on historical data...")
 
-        elif user_state.get('step') == 'select_leverage':
-            if text.replace('x', '').replace(' ', '').isdigit():
-                leverage = int(text.replace('x', '').replace(' ', ''))
-                user_states[chat_id]['leverage'] = leverage
-                user_states[chat_id]['step'] = 'enter_percent'
-                send_telegram("💯 Enter the percentage of balance to use per trade (1-100):", chat_id, create_cancel_keyboard())
-            else:
-                send_telegram("❌ Invalid leverage. Please enter a valid number (e.g., '10' or '10x'):", chat_id, create_leverage_keyboard())
-
-        elif user_state.get('step') == 'enter_percent':
-            if text.replace('%', '').replace(' ', '').replace('.', '').isdigit():
-                percent = float(text.replace('%', '').replace(' ', ''))
-                if 0 < percent <= 100:
-                    user_states[chat_id]['percent'] = percent
-                    user_states[chat_id]['step'] = 'enter_tp'
-                    send_telegram("🎯 Enter Take Profit percentage (e.g., 5 for 5%):", chat_id, create_cancel_keyboard())
-                else:
-                    send_telegram("❌ Percentage must be between 0.1 and 100. Please enter a valid percentage:", chat_id, create_cancel_keyboard())
-            else:
-                send_telegram("❌ Invalid percentage. Please enter a valid number (e.g., '10' or '10%'):", chat_id, create_cancel_keyboard())
-
-        elif user_state.get('step') == 'enter_tp':
-            if text.replace('%', '').replace(' ', '').replace('.', '').isdigit():
-                tp = float(text.replace('%', '').replace(' ', ''))
-                user_states[chat_id]['tp'] = tp
-                user_states[chat_id]['step'] = 'enter_sl'
-                send_telegram("🛑 Enter Stop Loss percentage (e.g., 2 for 2%):", chat_id, create_cancel_keyboard())
-            else:
-                send_telegram("❌ Invalid TP. Please enter a valid number (e.g., '5' for 5%):", chat_id, create_cancel_keyboard())
-
-        elif user_state.get('step') == 'enter_sl':
-            if text.replace('%', '').replace(' ', '').replace('.', '').isdigit():
-                sl = float(text.replace('%', '').replace(' ', ''))
-                symbol = user_states[chat_id]['symbol']
-                leverage = user_states[chat_id]['leverage']
-                percent = user_states[chat_id]['percent']
-                tp = user_states[chat_id]['tp']
-                trained_weights = user_states[chat_id]['trained_weights']  # Lấy trọng số đã huấn luyện
-                
-                # Khởi chạy bot với trọng số đã huấn luyện
-                success = bot_manager.start_bot(symbol, leverage, percent, tp, sl, trained_weights)
-                
-                if success:
-                    send_telegram(f"✅ Bot configuration completed!\n\n"
-                                f"Symbol: {symbol}\n"
-                                f"Leverage: {leverage}x\n"
-                                f"Balance Usage: {percent}%\n"
-                                f"Take Profit: {tp}%\n"
-                                f"Stop Loss: {sl}%", chat_id, create_menu_keyboard())
-                else:
-                    send_telegram(f"❌ Failed to start bot for {symbol}. Please try again.", chat_id, create_menu_keyboard())
-                
-                del user_states[chat_id]
-            else:
-                send_telegram("❌ Invalid SL. Please enter a valid number (e.g., '2' for 2%):", chat_id, create_cancel_keyboard())
-
-        elif user_state.get('step') == 'stop_bot':
-            symbol = text.upper().replace(' ', '')
-            if not symbol.endswith('USDT'):
-                symbol += 'USDT'
-            
-            success = bot_manager.stop_bot(symbol)
-            if success:
-                del user_states[chat_id]
-                send_telegram(f"✅ Bot for {symbol} stopped successfully.", chat_id, create_menu_keyboard())
-            else:
-                send_telegram(f"⚠️ No bot found for {symbol}. Please check the symbol and try again.", chat_id, create_menu_keyboard())
-
-    except Exception as e:
-        logger.error(f"Telegram handler error: {str(e)}")
-        send_telegram("❌ An error occurred. Please try again.", chat_id, create_menu_keyboard())
-        if chat_id in user_states:
-            del user_states[chat_id]
-
-def handle_manual_input(chat_id, text, user_state):
-    """Xử lý nhập liệu thủ công từ người dùng"""
-    try:
-        if user_state.get('expecting') == 'symbol_for_training':
-            symbol = text.upper().replace(' ', '')
-            if not symbol.endswith('USDT'):
-                symbol += 'USDT'
-            
-            send_telegram(f"🧠 Starting training for {symbol}...", chat_id)
-            trained_weights = perform_initial_training(symbol)
-            
-            if trained_weights:
-                # Cập nhật config với trọng số đã huấn luyện
-                config_updated = False
-                for config in BOT_CONFIGS:
-                    if config['symbol'] == symbol:
-                        config['initial_weights'] = trained_weights
-                        config_updated = True
-                        break
-                
-                if config_updated:
-                    send_telegram(f"✅ Training completed and config updated for {symbol}", chat_id)
-                else:
-                    send_telegram(f"✅ Training completed for {symbol}. Add this symbol to config to use the trained weights.", chat_id)
-            else:
-                send_telegram(f"❌ Training failed for {symbol}", chat_id)
-                
-        # Xóa trạng thái người dùng
-        if chat_id in user_states:
-            del user_states[chat_id]
-            
-    except Exception as e:
-        logger.error(f"Manual input handler error: {str(e)}")
-        send_telegram("❌ Error processing input. Please try again.", chat_id)
-
-# ========== MAIN EXECUTION ==========
-def main():
-    """Main function to start the bot system."""
-    send_telegram("🤖 <b>Binance Futures Bot Started</b>", reply_markup=create_menu_keyboard())
-    
-    # Khởi chạy các bot từ config với trọng số đã huấn luyện
-    for config in BOT_CONFIGS:
+    for config in bot_configs:
         try:
-            symbol = config['symbol']
-            lev = config['leverage']
-            percent = config['percent']
-            tp = config['tp']
-            sl = config['sl']
-            initial_weights = config.get('initial_weights')
+            symbol = config[0]
             
-            if initial_weights:
-                success = bot_manager.start_bot(symbol, lev, percent, tp, sl, initial_weights)
-                if success:
-                    logger.info(f"Bot started successfully for {symbol}")
-                else:
-                    logger.error(f"Failed to start bot for {symbol} - invalid weights")
-            else:
-                logger.warning(f"No initial weights found for {symbol}. Skipping...")
-                
-        except Exception as e:
-            logger.error(f"Error starting bot for {config.get('symbol', 'unknown')}: {str(e)}")
+            # Khởi tạo mô hình thống kê điểm
+            indicator_stats = {
+                "RSI": 0, "MACD": 0, "EMA_Crossover": 0, "Volume_Confirmation": 0,
+                "Stochastic": 0, "BollingerBands": 0, "Ichimoku": 0, "ADX": 0,
+            }
+            indicator_weights = {}
+            
+            df_history = get_klines(symbol, '1m', 200)
 
-    # Khởi chạy Telegram polling
-    from telegram.ext import Updater, MessageHandler, Filters
-    updater = Updater(TELEGRAM_BOT_TOKEN, use_context=True)
-    dp = updater.dispatcher
-    dp.add_handler(MessageHandler(Filters.text, lambda update, context: handle_telegram_message(update)))
-    updater.start_polling()
-    logger.info("Telegram bot started polling.")
+            if not df_history.empty and len(df_history) >= 50:
+                manager.log(f"🚀 Starting initial training for {symbol} with 200 1m candles...")
+
+                for i in range(50, len(df_history) - 1):
+                    df_slice = df_history.iloc[i-50:i+1].copy()
+                    df_slice = add_technical_indicators(df_slice)
+
+                    if not df_slice.iloc[-1].isnull().any():
+                        price_change_percent = ((df_slice['close'].iloc[-1] - df_slice['open'].iloc[-1]) / df_slice['open'].iloc[-1]) * 100
+                        current_signals = get_raw_indicator_signals(df_slice)
+
+                        _, indicator_stats = update_weights_and_stats(
+                            current_signals, price_change_percent, indicator_weights, indicator_stats, True
+                        )
+
+                total_score = sum(abs(score) for score in indicator_stats.values())
+                if total_score > 0:
+                    for indicator, score in indicator_stats.items():
+                        indicator_weights[indicator] = (abs(score) / total_score) * 100
+                else:
+                    # Nếu tổng điểm bằng 0, sử dụng trọng số mặc định
+                    num_indicators = len(indicator_stats)
+                    for indicator in indicator_stats:
+                        indicator_weights[indicator] = 100 / num_indicators
+                
+                manager.log(f"✅ Initial training for {symbol} completed. Final weights updated.")
+
+                # Thêm trọng số đã huấn luyện vào cấu hình
+                while len(config) < 6:
+                    config.append(None)
+                config.append(indicator_weights)
+            else:
+                manager.log(f"❌ Not enough historical data to train the bot for {symbol}. Training failed.")
+                while len(config) < 6:
+                    config.append(None)
+                config.append(None)
+
+        except Exception as e:
+            manager.log(f"❌ Error during initial training for {symbol}: {str(e)}")
+            while len(config) < 6:
+                config.append(None)
+            config.append(None)
+
+
+# ========== MAIN FUNCTION ==========
+def main():
+    manager = BotManager()
+
+    # ========== CẢI THIỆN: XỬ LÝ CONFIG LINH HOẠT ==========
+    if BOT_CONFIGS:
+        perform_initial_training(manager, BOT_CONFIGS)
+        
+        for config in BOT_CONFIGS:
+            if len(config) >= 5:  # Đảm bảo config có đủ tham số
+                symbol, lev, percent, tp, sl = config[0], config[1], config[2], config[3], config[4]
+                initial_weights = config[6] if len(config) > 6 and config[6] is not None else None
+                
+                if manager.add_bot(symbol, lev, percent, tp, sl, initial_weights):
+                    manager.log(f"✅ Bot for {symbol} started successfully")
+                else:
+                    manager.log(f"⚠️ Bot for {symbol} failed to start")
+    else:
+        manager.log("⚠️ No bot configurations found! Please set the BOT_CONFIGS environment variable.")
 
     try:
-        while True:
+        balance = get_balance()
+        manager.log(f"💰 INITIAL BALANCE: {balance:.2f} USDT")
+    except Exception as e:
+        manager.log(f"⚠️ Error getting initial balance: {str(e)}")
+
+    try:
+        while manager.running:
             time.sleep(1)
     except KeyboardInterrupt:
-        logger.info("Shutting down...")
-        bot_manager.stop_all_bots()
-        bot_manager.ws_manager.stop()
+        manager.log("👋 Received user stop signal...")
+    except Exception as e:
+        manager.log(f"⚠️ SEVERE SYSTEM ERROR: {str(e)}")
+    finally:
+        manager.stop_all()
 
 if __name__ == "__main__":
     main()
