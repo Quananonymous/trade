@@ -399,32 +399,51 @@ def add_technical_indicators(df):
     if df.empty or len(df) < 50:
         return df
 
+    # Tính Volume SMA trước
+    df['volume_sma'] = df['volume'].rolling(window=20).mean()
+
+    # Các chỉ báo khác
     df['RSI'] = calc_rsi(df['close'], 14)
     df['EMA9'] = calc_ema(df['close'], 9)
     df['EMA21'] = calc_ema(df['close'], 21)
-    df['ATR'] = calc_atr(df, 14)
-    df['MACD'], df['MACD_Signal'], df['MACD_Hist'] = calc_macd(df['close'])
+    
+    # MACD
+    macd, macd_signal, macd_hist = calc_macd(df['close'])
+    df['MACD'] = macd
+    df['MACD_Signal'] = macd_signal
+    df['MACD_Hist'] = macd_hist
 
-    # Stochastic Oscillator
-    df['stoch_k'] = 100 * ((df['close'] - df['low'].rolling(14).min()) / (df['high'].rolling(14).max() - df['low'].rolling(14).min()))
+    # Stochastic
+    df['stoch_k'] = 100 * ((df['close'] - df['low'].rolling(14).min()) / 
+                          (df['high'].rolling(14).max() - df['low'].rolling(14).min()))
     df['stoch_d'] = df['stoch_k'].rolling(3).mean()
 
     # Bollinger Bands
     df['bollinger_high'] = df['close'].rolling(20).mean() + 2 * df['close'].rolling(20).std()
     df['bollinger_low'] = df['close'].rolling(20).mean() - 2 * df['close'].rolling(20).std()
 
-    # Ichimoku Cloud
-    df['ichimoku_tenkan_sen'], df['ichimoku_kijun_sen'] = calc_ichimoku(df)
+    # Ichimoku
+    tenkan, kijun = calc_ichimoku(df)
+    df['ichimoku_tenkan_sen'] = tenkan
+    df['ichimoku_kijun_sen'] = kijun
 
-    # ADX
-    df['ADX'] = calc_adx(df)
+    # ADX và DI
+    df['plus_di'] = df['high'].diff().rolling(14).mean()
+    df['minus_di'] = df['low'].diff().rolling(14).mean()
+    df['ADX'] = (df['plus_di'] + df['minus_di']).abs() / 2
 
     return df
+
 
 # ========== NEW SIGNAL FUNCTIONS ==========
 def get_raw_indicator_signals(df):
     """Calculates raw signals (+1/-1/0) for each indicator."""
+    if len(df) < 2:  # Cần ít nhất 2 nến để so sánh
+        return {}
+        
     current_signals = {}
+    current = df.iloc[-1]
+    previous = df.iloc[-2] if len(df) > 1 else current
     
     # RSI: Tín hiệu mua khi quá bán (< 30), tín hiệu bán khi quá mua (> 70)
     rsi_value = df['RSI'].iloc[-1]
@@ -436,58 +455,77 @@ def get_raw_indicator_signals(df):
         current_signals["RSI"] = 0
 
     # MACD: MACD line > signal line là tăng
-    if df['MACD'].iloc[-1] > df['MACD_Signal'].iloc[-1]:
-        current_signals["MACD"] = 1
+    if 'MACD' in current and 'MACD_Signal' in current:
+        if current['MACD'] > current['MACD_Signal']:
+            current_signals["MACD"] = 1
+        else:
+            current_signals["MACD"] = -1
     else:
-        current_signals["MACD"] = -1
+        current_signals["MACD"] = 0
 
     # EMA Crossover: EMA9 > EMA21 là tăng
-    if df['EMA9'].iloc[-1] > df['EMA21'].iloc[-1]:
-        current_signals["EMA_Crossover"] = 1
+    if 'EMA9' in current and 'EMA21' in current:
+        if current['EMA9'] > current['EMA21']:
+            current_signals["EMA_Crossover"] = 1
+        else:
+            current_signals["EMA_Crossover"] = -1
     else:
-        current_signals["EMA_Crossover"] = -1
+        current_signals["EMA_Crossover"] = 0
 
     # Volume Confirmation: Nến tăng + volume cao là tăng
-    if df['close'].iloc[-1] > df['open'].iloc[-1] and df['volume'].iloc[-1] > df['volume'].rolling(window=20).mean().iloc[-1] * 1.5:
-        current_signals["Volume_Confirmation"] = 1
-    elif df['close'].iloc[-1] < df['open'].iloc[-1] and df['volume'].iloc[-1] > df['volume'].rolling(window=20).mean().iloc[-1] * 1.5:
-        current_signals["Volume_Confirmation"] = -1
+    if 'volume' in current and 'volume_sma' in current:
+        volume_condition = current['volume'] > current['volume_sma'] * 1.5
+        if current['close'] > current['open'] and volume_condition:
+            current_signals["Volume_Confirmation"] = 1
+        elif current['close'] < current['open'] and volume_condition:
+            current_signals["Volume_Confirmation"] = -1
+        else:
+            current_signals["Volume_Confirmation"] = 0
     else:
         current_signals["Volume_Confirmation"] = 0
 
-    # Stochastic Oscillator: K line > D line và cả hai đều dưới 80 là tăng
-    stoch_k_value = df['stoch_k'].iloc[-1]
-    stoch_d_value = df['stoch_d'].iloc[-1]
-    if stoch_k_value > stoch_d_value and stoch_k_value < 80:
-        current_signals["Stochastic"] = 1
+    # Stochastic Oscillator: K line > D line
+    if 'stoch_k' in current and 'stoch_d' in current:
+        if current['stoch_k'] > current['stoch_d']:
+            current_signals["Stochastic"] = 1
+        else:
+            current_signals["Stochastic"] = -1
     else:
-        current_signals["Stochastic"] = -1
+        current_signals["Stochastic"] = 0
 
-    # Bollinger Bands: Giá dưới dải băng dưới là tăng, trên dải băng trên là giảm
-    close_price = df['close'].iloc[-1]
-    if close_price < df['bollinger_low'].iloc[-1]:
-        current_signals["BollingerBands"] = 1
-    elif close_price > df['bollinger_high'].iloc[-1]:
-        current_signals["BollingerBands"] = -1
+    # Bollinger Bands: Giá dưới dải dưới là tăng, trên dải trên là giảm
+    if 'bollinger_low' in current and 'bollinger_high' in current:
+        if current['close'] < current['bollinger_low']:
+            current_signals["BollingerBands"] = 1
+        elif current['close'] > current['bollinger_high']:
+            current_signals["BollingerBands"] = -1
+        else:
+            current_signals["BollingerBands"] = 0
     else:
         current_signals["BollingerBands"] = 0
 
     # Ichimoku: Tenkan Sen > Kijun Sen là tín hiệu tăng
-    if df['ichimoku_tenkan_sen'].iloc[-1] > df['ichimoku_kijun_sen'].iloc[-1]:
-        current_signals["Ichimoku"] = 1
+    if 'ichimoku_tenkan_sen' in current and 'ichimoku_kijun_sen' in current:
+        if current['ichimoku_tenkan_sen'] > current['ichimoku_kijun_sen']:
+            current_signals["Ichimoku"] = 1
+        else:
+            current_signals["Ichimoku"] = -1
     else:
-        current_signals["Ichimoku"] = -1
+        current_signals["Ichimoku"] = 0
 
-    # ADX: ADX > 25 và (+DI > -DI) là tín hiệu tăng mạnh
-    adx_value = df['ADX'].iloc[-1]
-    if adx_value > 25 and df['plus_di'].iloc[-1] > df['minus_di'].iloc[-1]:
-        current_signals["ADX"] = 1
-    elif adx_value > 25 and df['minus_di'].iloc[-1] > df['plus_di'].iloc[-1]:
-        current_signals["ADX"] = -1
+    # ADX: ADX > 25 và (+DI > -DI) là tín hiệu tăng
+    if 'ADX' in current and 'plus_di' in current and 'minus_di' in current:
+        if current['ADX'] > 25 and current['plus_di'] > current['minus_di']:
+            current_signals["ADX"] = 1
+        elif current['ADX'] > 25 and current['minus_di'] > current['plus_di']:
+            current_signals["ADX"] = -1
+        else:
+            current_signals["ADX"] = 0
     else:
         current_signals["ADX"] = 0
         
     return current_signals
+
 
 def update_weights_and_stats(current_signals, price_change_percent, indicator_weights, indicator_stats, is_initial_training):
     """
@@ -1192,7 +1230,7 @@ class BotManager:
 def perform_initial_training(manager, bot_configs):
     """
     Performs initial training on historical data for all bot configurations.
-    This function simulates trading on historical klines to pre-train indicator weights.
+    Mỗi nến lịch sử là 1 điểm: chỉ báo đúng +1, chỉ báo sai -1.
     """
     if not bot_configs:
         manager.log("⚠️ No bot configurations found for training.")
@@ -1204,48 +1242,93 @@ def perform_initial_training(manager, bot_configs):
         try:
             symbol = config[0]
             
-            # Khởi tạo mô hình thống kê điểm
+            # Khởi tạo điểm số cho từng chỉ báo
             indicator_stats = {
                 "RSI": 0, "MACD": 0, "EMA_Crossover": 0, "Volume_Confirmation": 0,
                 "Stochastic": 0, "BollingerBands": 0, "Ichimoku": 0, "ADX": 0,
             }
-            indicator_weights = {}
             
+            # Lấy 200 nến lịch sử để huấn luyện
             df_history = get_klines(symbol, '1m', 200)
 
-            if not df_history.empty and len(df_history) >= 50:
-                manager.log(f"🚀 Starting initial training for {symbol} with 200 1m candles...")
+            if not df_history.empty and len(df_history) >= 100:  # Cần ít nhất 100 nến để huấn luyện
+                manager.log(f"🚀 Starting initial training for {symbol} with {len(df_history)} candles...")
 
+                # Huấn luyện trên từng nến, bắt đầu từ nến thứ 50 (để có đủ dữ liệu tính chỉ báo)
                 for i in range(50, len(df_history) - 1):
-                    df_slice = df_history.iloc[i-50:i+1].copy()
-                    df_slice = add_technical_indicators(df_slice)
-
-                    if not df_slice.iloc[-1].isnull().any():
-                        price_change_percent = ((df_slice['close'].iloc[-1] - df_slice['open'].iloc[-1]) / df_slice['open'].iloc[-1]) * 100
+                    try:
+                        # Lấy dữ liệu từ nến 0 đến nến i (tăng dần theo thời gian)
+                        df_slice = df_history.iloc[:i+1].copy()
+                        
+                        # Thêm chỉ báo kỹ thuật
+                        df_slice = add_technical_indicators(df_slice)
+                        
+                        # Bỏ qua nếu có giá trị NaN
+                        if df_slice.iloc[-1].isnull().any():
+                            continue
+                            
+                        # LẤY TÍN HIỆU TẠI NẾN HIỆN TẠI (i)
                         current_signals = get_raw_indicator_signals(df_slice)
+                        
+                        # TÍNH BIẾN ĐỘNG GIÁ CHO NẾN TIẾP THEO (i+1)
+                        current_close = df_history['close'].iloc[i]
+                        next_open = df_history['open'].iloc[i+1]
+                        price_change_percent = ((next_open - current_close) / current_close) * 100
+                        
+                        is_price_up = price_change_percent > 0
+                        is_price_down = price_change_percent < 0
+                        
+                        # CẬP NHẬT ĐIỂM: ĐÚNG +1, SAI -1
+                        for indicator, signal in current_signals.items():
+                            if indicator in indicator_stats:
+                                if (signal == 1 and is_price_up) or (signal == -1 and is_price_down):
+                                    indicator_stats[indicator] += 1  # ĐÚNG: +1 điểm
+                                elif (signal == 1 and is_price_down) or (signal == -1 and is_price_up):
+                                    indicator_stats[indicator] -= 1  # SAI: -1 điểm
+                                # Trung lập (signal = 0) không thay đổi điểm
+                    
+                    except Exception as e:
+                        manager.log(f"⚠️ Training error at candle {i} for {symbol}: {str(e)}")
+                        continue
 
-                        _, indicator_stats = update_weights_and_stats(
-                            current_signals, price_change_percent, indicator_weights, indicator_stats, True
-                        )
-
-                total_score = sum(abs(score) for score in indicator_stats.values())
-                if total_score > 0:
-                    for indicator, score in indicator_stats.items():
-                        indicator_weights[indicator] = (abs(score) / total_score) * 100
-                else:
-                    # Nếu tổng điểm bằng 0, sử dụng trọng số mặc định
-                    num_indicators = len(indicator_stats)
-                    for indicator in indicator_stats:
-                        indicator_weights[indicator] = 100 / num_indicators
+                # CHUYỂN ĐIỂM SỐ THÀNH TRỌNG SỐ PHẦN TRĂM
+                total_abs_score = sum(abs(score) for score in indicator_stats.values())
                 
-                manager.log(f"✅ Initial training for {symbol} completed. Final weights updated.")
+                if total_abs_score > 0:
+                    # Chuyển điểm số thành phần trăm (0-100%)
+                    indicator_weights = {}
+                    for indicator, score in indicator_stats.items():
+                        # Đảm bảo trọng số không âm
+                        weight = (abs(score) / total_abs_score) * 100
+                        indicator_weights[indicator] = max(weight, 1.0)  # Tối thiểu 1%
+                    
+                    # Chuẩn hóa lại tổng = 100%
+                    total_weight = sum(indicator_weights.values())
+                    indicator_weights = {k: (v / total_weight) * 100 for k, v in indicator_weights.items()}
+                else:
+                    # Nếu tổng điểm bằng 0, dùng phân phối đều
+                    num_indicators = len(indicator_stats)
+                    indicator_weights = {indicator: 100.0 / num_indicators for indicator in indicator_stats.keys()}
+                
+                # LOG KẾT QUẢ HUẤN LUYỆN
+                weight_info = " | ".join([f"{k}: {v:.1f}%" for k, v in indicator_weights.items()])
+                score_info = " | ".join([f"{k}: {v:+d}" for k, v in indicator_stats.items()])
+                
+                manager.log(f"✅ Training completed for {symbol}")
+                manager.log(f"📊 Final scores: {score_info}")
+                manager.log(f"🎯 Final weights: {weight_info}")
 
-                # Thêm trọng số đã huấn luyện vào cấu hình
+                # LƯU TRỌNG SỐ VÀO CONFIG
                 while len(config) < 6:
                     config.append(None)
-                config.append(indicator_weights)
+                if len(config) == 6:
+                    config.append(indicator_weights)  # Vị trí thứ 6
+                else:
+                    config[6] = indicator_weights
+                    
             else:
-                manager.log(f"❌ Not enough historical data to train the bot for {symbol}. Training failed.")
+                manager.log(f"❌ Not enough historical data for {symbol} (need at least 100 candles, got {len(df_history)})")
+                # Vẫn thêm None để config có đúng cấu trúc
                 while len(config) < 6:
                     config.append(None)
                 config.append(None)
@@ -1255,7 +1338,6 @@ def perform_initial_training(manager, bot_configs):
             while len(config) < 6:
                 config.append(None)
             config.append(None)
-
 
 # ========== MAIN FUNCTION ==========
 def main():
@@ -1295,3 +1377,4 @@ def main():
 
 if __name__ == "__main__":
     main()
+
