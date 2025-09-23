@@ -764,17 +764,27 @@ class IndicatorBot:
     def get_signal(self, df):
         try:
             current_signals = get_raw_indicator_signals(df)
-            total_score = sum(current_signals.get(k, 0) * self.indicator_weights.get(k, 0) for k in current_signals)
-            
-            if total_score > self.signal_threshold:
+    
+            # Tính điểm tổng: tín hiệu * trọng số (có thể âm/dương)
+            total_score = 0.0
+            for indicator, signal in current_signals.items():
+                weight = self.indicator_weights.get(indicator, 0.0)
+                total_score += signal * weight
+    
+            # Chuẩn hóa ngưỡng theo tổng trọng số tuyệt đối
+            total_weight_abs = sum(abs(w) for w in self.indicator_weights.values())
+            threshold = self.signal_threshold * (total_weight_abs / 100.0)
+    
+            if total_score > threshold:
                 return "BUY", current_signals, total_score
-            elif total_score < -self.signal_threshold:
+            elif total_score < -threshold:
                 return "SELL", current_signals, total_score
             return None, current_signals, total_score
+    
         except Exception as e:
             self.log(f"get_signal error: {str(e)}")
             return None, None, None
-            
+
     def _run(self):
         """Main loop với xử lý nến 1 phút và học liên tục"""
         self.log("🔍 Starting main loop with 1-minute candle processing...")
@@ -1334,36 +1344,38 @@ def perform_initial_training(manager, bot_configs):
     for config in bot_configs:
         try:
             symbol = config[0]
-            
+
             # Khởi tạo điểm số cho từng chỉ báo
             indicator_stats = {
                 "RSI": 0, "MACD": 0, "EMA_Crossover": 0, "Volume_Confirmation": 0,
                 "Stochastic": 0, "BollingerBands": 0, "Ichimoku": 0, "ADX": 0,
             }
-            
+
             # Lấy 200 nến lịch sử để huấn luyện
             df_history = get_klines(symbol, '1m', 200)
 
             if not df_history.empty and len(df_history) >= 100:
                 manager.log(f"🚀 Training {symbol} with {len(df_history)} candles...")
 
-                # Huấn luyện trên từng nến
+                # ✅ Tính indicators cho toàn bộ 200 nến một lần duy nhất
+                df_history = add_technical_indicators(df_history)
+
+                # Huấn luyện trên từng nến (bắt đầu từ nến 50 cho an toàn)
                 for i in range(50, len(df_history) - 1):
                     try:
-                        df_slice = df_history.iloc[:i+1].copy()
-                        df_slice = add_technical_indicators(df_slice)
-                        
-                        if df_slice.iloc[-1].isnull().any():
+                        if df_history.iloc[i].isnull().any():
                             continue
-                            
+
+                        df_slice = df_history.iloc[:i+1]
                         current_signals = get_raw_indicator_signals(df_slice)
+
                         current_close = df_history['close'].iloc[i]
                         next_open = df_history['open'].iloc[i+1]
                         price_change_percent = ((next_open - current_close) / current_close) * 100
-                        
+
                         is_price_up = price_change_percent > 0
                         is_price_down = price_change_percent < 0
-                        
+
                         # Cập nhật điểm: đúng +1, sai -1
                         for indicator, signal in current_signals.items():
                             if indicator in indicator_stats:
@@ -1371,46 +1383,42 @@ def perform_initial_training(manager, bot_configs):
                                     indicator_stats[indicator] += 1
                                 elif (signal == 1 and is_price_down) or (signal == -1 and is_price_up):
                                     indicator_stats[indicator] -= 1
-                    
-                    except Exception as e:
+
+                    except Exception:
                         continue
 
-                # Chuyển điểm số thành trọng số phần trăm
-                total_abs_score = sum(abs(score) for score in indicator_stats.values())
-                
-                if total_abs_score > 0:
-                    indicator_weights = {}
-                    for indicator, score in indicator_stats.items():
-                        weight = (abs(score) / total_abs_score) * 100
-                        indicator_weights[indicator] = max(weight, 1.0)
-                    
-                    total_weight = sum(indicator_weights.values())
-                    indicator_weights = {k: (v / total_weight) * 100 for k, v in indicator_weights.items()}
+                # ✅ Dùng tổng score có dấu để tạo trọng số
+                total_score = sum(indicator_stats.values())
+
+                if total_score != 0:
+                    indicator_weights = {
+                        ind: (score / total_score) * 100
+                        for ind, score in indicator_stats.items()
+                    }
                 else:
                     num_indicators = len(indicator_stats)
-                    indicator_weights = {indicator: 100.0 / num_indicators for indicator in indicator_stats.keys()}
-                
-                # FIX: Lưu weights vào config đúng vị trí index 5
+                    indicator_weights = {ind: 100.0 / num_indicators for ind in indicator_stats.keys()}
+
+                # Lưu weights vào config
                 if len(config) == 5:
-                    config.append(indicator_weights)  # Thêm vào index 5
+                    config.append(indicator_weights)
                 elif len(config) > 5:
-                    config[5] = indicator_weights  # Ghi đè nếu đã tồn tại
+                    config[5] = indicator_weights
                 else:
                     while len(config) < 5:
                         config.append(None)
                     config.append(indicator_weights)
 
                 # Log kết quả
-                weight_info = " | ".join([f"{k}: {v:.1f}%" for k, v in indicator_weights.items()])
                 score_info = " | ".join([f"{k}: {v:+d}" for k, v in indicator_stats.items()])
-                
+                weight_info = " | ".join([f"{k}: {v:.1f}%" for k, v in indicator_weights.items()])
+
                 manager.log(f"✅ Training completed for {symbol}")
                 manager.log(f"📊 Scores: {score_info}")
                 manager.log(f"🎯 Weights: {weight_info}")
-                    
+
             else:
                 manager.log(f"❌ Not enough data for {symbol} (got {len(df_history)} candles)")
-                # Vẫn thêm None để config có đúng cấu trúc
                 if len(config) == 5:
                     config.append(None)
 
@@ -1467,3 +1475,4 @@ def main():
 
 if __name__ == "__main__":
     main()
+
