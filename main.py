@@ -685,13 +685,15 @@ class IndicatorBot:
         self.sl = sl
         self.ws_manager = ws_manager
         
-        # Khởi tạo trọng số từ huấn luyện 200 nến
+        # FIX: Sửa lỗi weights từ training
         if initial_weights and isinstance(initial_weights, dict) and self._are_weights_valid(initial_weights):
             self.indicator_weights = initial_weights
-            self.log(f"✅ Using trained weights from 200 candles")
+            weights_info = " | ".join([f"{k}:{v:.1f}%" for k, v in initial_weights.items()])
+            self.log(f"✅ Sử dụng weights từ training 200 nến: {weights_info}")
         else:
             self.indicator_weights = self._create_default_weights()
-            self.log("⚠️ Using default weights")
+            default_weights_info = " | ".join([f"{k}:{v:.1f}%" for k, v in self.indicator_weights.items()])
+            self.log(f"⚠️ Dùng weights mặc định: {default_weights_info}")
             
         self.indicator_stats = {k: 0 for k in self.indicator_weights.keys()}
 
@@ -822,14 +824,12 @@ class IndicatorBot:
                     if signal:
                         self.log(f"📊 Signal: {signal}, Score: {total_score:.2f}")
                     
-                    # Xử lý giao dịch
+                    # FIX: Xử lý đảo chiều ĐÚNG CÁCH
                     if self.position_open:
-                        # Đảo chiều nếu có tín hiệu ngược
                         if (self.side == "BUY" and signal == "SELL") or (self.side == "SELL" and signal == "BUY"):
-                            self.close_position(f"🔄 Reverse signal: {signal}")
-                            time.sleep(2)
-                            if not self._stop:
-                                self.open_position(signal, current_signals)
+                            # Đóng lệnh hiện tại trước, KHÔNG mở lệnh mới ngay
+                            self.close_position(f"🔄 Đảo chiều: {self.side} → {signal}")
+                            # Lệnh mới sẽ được mở ở vòng loop tiếp theo sau khi đóng hoàn tất
                         else:
                             self.check_tp_sl()  # Kiểm tra TP/SL
                     else:
@@ -1390,6 +1390,16 @@ def perform_initial_training(manager, bot_configs):
                     num_indicators = len(indicator_stats)
                     indicator_weights = {indicator: 100.0 / num_indicators for indicator in indicator_stats.keys()}
                 
+                # FIX: Lưu weights vào config đúng vị trí index 5
+                if len(config) == 5:
+                    config.append(indicator_weights)  # Thêm vào index 5
+                elif len(config) > 5:
+                    config[5] = indicator_weights  # Ghi đè nếu đã tồn tại
+                else:
+                    while len(config) < 5:
+                        config.append(None)
+                    config.append(indicator_weights)
+
                 # Log kết quả
                 weight_info = " | ".join([f"{k}: {v:.1f}%" for k, v in indicator_weights.items()])
                 score_info = " | ".join([f"{k}: {v:+d}" for k, v in indicator_stats.items()])
@@ -1397,26 +1407,17 @@ def perform_initial_training(manager, bot_configs):
                 manager.log(f"✅ Training completed for {symbol}")
                 manager.log(f"📊 Scores: {score_info}")
                 manager.log(f"🎯 Weights: {weight_info}")
-
-                # Lưu trọng số vào config
-                while len(config) < 6:
-                    config.append(None)
-                if len(config) == 6:
-                    config.append(indicator_weights)
-                else:
-                    config[6] = indicator_weights
                     
             else:
                 manager.log(f"❌ Not enough data for {symbol} (got {len(df_history)} candles)")
-                while len(config) < 6:
+                # Vẫn thêm None để config có đúng cấu trúc
+                if len(config) == 5:
                     config.append(None)
-                config.append(None)
 
         except Exception as e:
             manager.log(f"❌ Training error for {symbol}: {str(e)}")
-            while len(config) < 6:
+            if len(config) == 5:
                 config.append(None)
-            config.append(None)
 
 # ========== MAIN FUNCTION ==========
 def main():
@@ -1426,13 +1427,23 @@ def main():
     if BOT_CONFIGS:
         perform_initial_training(manager, BOT_CONFIGS)
         
+        # DEBUG: Kiểm tra kết quả training
+        manager.log("🔍 KIỂM TRA KẾT QUẢ TRAINING:")
+        for i, config in enumerate(BOT_CONFIGS):
+            if len(config) > 5 and config[5] is not None:
+                manager.log(f"✅ Config {i}: {config[0]} - Có weights từ training")
+            else:
+                manager.log(f"❌ Config {i}: {config[0]} - KHÔNG có weights từ training")
+        
         for config in BOT_CONFIGS:
             if len(config) >= 5:
                 symbol, lev, percent, tp, sl = config[0], config[1], config[2], config[3], config[4]
-                initial_weights = config[6] if len(config) > 6 and config[6] is not None else None
+                
+                # FIX: Lấy weights từ index 5 (sau training)
+                initial_weights = config[5] if len(config) > 5 and config[5] is not None else None
                 
                 if manager.add_bot(symbol, lev, percent, tp, sl, initial_weights):
-                    manager.log(f"✅ Bot for {symbol} started with trained weights")
+                    manager.log(f"✅ Bot for {symbol} started successfully")
                 else:
                     manager.log(f"⚠️ Bot for {symbol} failed to start")
     else:
