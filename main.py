@@ -516,9 +516,9 @@ def get_weighted_signal(df, indicator_weights):
         current_indicators["ADX"] = 0
     
     signal = 0
-    if total_score > 60:
+    if total_score > 70:
         signal = 1
-    elif total_score < -60:
+    elif total_score < -70:
         signal = -1
         
     return signal, current_indicators
@@ -528,7 +528,7 @@ def update_weights_and_stats(signal, current_indicators, price_change_percent, i
     """Dynamically adjusts indicator weights based on their performance."""
     
     # Tốc độ điều chỉnh (ví dụ: 5%)
-    adjustment_rate = 0.1
+    adjustment_rate = 0.05
 
     is_correct_signal = (signal == 1 and price_change_percent > 0) or \
                         (signal == -1 and price_change_percent < 0) or \
@@ -701,7 +701,6 @@ class IndicatorBot:
         self.thread = threading.Thread(target=self._run, daemon=True)
         self.thread.start()
         self.log(f"🟢 Bot started for {self.symbol}")
-
 
     def log(self, message):
         logger.info(f"[{self.symbol}] {message}")
@@ -1019,7 +1018,6 @@ class BotManager:
             positions = get_positions(symbol)
             if positions and any(float(pos.get('positionAmt', 0)) != 0 for pos in positions):
                 self.log(f"⚠️ Open position found for {symbol}")
-            # Lấy đối tượng ws_manager từ BotManager và truyền vào
             bot = IndicatorBot(symbol, lev, percent, tp, sl, self.ws_manager, initial_weights)
             self.bots[symbol] = bot
             self.log(f"✅ Bot added: {symbol} | Lev: {lev}x | %: {percent} | TP/SL: {tp}%/{sl}%")
@@ -1299,7 +1297,8 @@ def main():
 
     if BOT_CONFIGS:
         for config in BOT_CONFIGS:
-            symbol, lev, percent, tp, sl, initial_weights = config
+            symbol, lev, percent, tp, sl, *initial_weights_list = config
+            initial_weights = initial_weights_list[0] if initial_weights_list else None
             manager.add_bot(symbol, lev, percent, tp, sl, initial_weights)
     else:
         manager.log("⚠️ No bot configurations found!")
@@ -1322,5 +1321,3 @@ def main():
 
 if __name__ == "__main__":
     main()
-
-
