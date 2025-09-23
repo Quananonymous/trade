@@ -632,7 +632,7 @@ class IndicatorBot:
             self.indicator_weights = initial_weights
         else:
             self.log("❌ Không tìm thấy trọng số huấn luyện. Bot không thể khởi chạy.")
-            self._stop = True  # Dừng bot ngay lập tức nếu không có trọng số
+            self._stop = True
             return
             
         self.indicator_stats = {k: 0 for k in self.indicator_weights.keys()}
@@ -953,14 +953,22 @@ class BotManager:
             positions = get_positions(symbol)
             if positions and any(float(pos.get('positionAmt', 0)) != 0 for pos in positions):
                 self.log(f"⚠️ Open position found for {symbol}")
-            bot = IndicatorBot(symbol, lev, percent, tp, sl, self.ws_manager, initial_weights)
-            if bot._stop:
+            
+            # --- PHẦN ĐÃ SỬA ---
+            # Thêm logic để kiểm tra initial_weights trước khi khởi tạo bot
+            if not initial_weights:
                 self.log(f"❌ Bot could not be started for {symbol} due to missing weights.")
                 return False
-            else:
-                self.bots[symbol] = bot
-                self.log(f"✅ Bot added: {symbol} | Lev: {lev}x | %: {percent} | TP/SL: {tp}%/{sl}%")
-                return True
+
+            bot = IndicatorBot(symbol, lev, percent, tp, sl, self.ws_manager, initial_weights)
+            
+            # Kiểm tra nếu bot bị dừng ngay sau khi khởi tạo (do lỗi trọng số)
+            if hasattr(bot, '_stop') and bot._stop:
+                return False
+
+            self.bots[symbol] = bot
+            self.log(f"✅ Bot added: {symbol} | Lev: {lev}x | %: {percent} | TP/SL: {tp}%/{sl}%")
+            return True
         except Exception as e:
             self.log(f"❌ Error creating bot {symbol}: {str(e)}")
             return False
