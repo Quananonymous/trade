@@ -900,15 +900,14 @@ class IndicatorBot:
             self.position_attempt_count = 0
             
             # Lấy thông tin chỉ báo và trọng số
-            if current_indicators:
+            # Lấy thông tin chỉ báo và trọng số
+            indicator_info = "Không đủ dữ liệu chỉ báo."
+            if current_indicators is not None:
                 indicator_info = "Phân tích tín hiệu:\n"
                 for indicator, status in current_indicators.items():
                     weight = self.indicator_weights.get(indicator, 0)
                     sign_text = "🟢 Tăng" if status == 1 else "🔴 Giảm" if status == -1 else "⚪ Trung lập"
                     indicator_info += f"- {indicator}: {weight:.2f}% ({sign_text})\n"
-            else:
-                indicator_info = "Không đủ dữ liệu chỉ báo."
-
             message = (f"✅ <b>POSITION OPENED {self.symbol}</b>\n"
                        f"📌 Direction: {side}\n"
                        f"🏷️ Entry Price: {self.entry:.4f}\n"
