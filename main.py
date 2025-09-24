@@ -315,7 +315,7 @@ def get_positions(symbol=None):
         send_telegram(f"⚠️ <b>POSITIONS ERROR:</b> {symbol if symbol else ''} - {str(e)}")
     return []
 
-def get_klines(symbol, interval, limit=100):
+def get_klines(symbol, interval, limit=200):
     """Lấy dữ liệu nến với xử lý lỗi tốt hơn"""
     max_retries = 3
     for attempt in range(max_retries):
@@ -1247,21 +1247,38 @@ class BotManager:
                         leverage = user_state['leverage']
                         percent = user_state['percent']
                         tp = user_state['tp']
-                        
-                        if self.add_bot(symbol, leverage, percent, tp, sl, None):
-                            send_telegram(f"✅ <b>BOT ADDED SUCCESSFULLY</b>\n\n"
-                                         f"📌 Pair: {symbol}\n"
-                                         f" Leverage: {leverage}x\n"
-                                         f"📊 % Balance: {percent}%\n"
-                                         f"🎯 TP: {tp}%\n"
-                                         f"🛡️ SL: {sl}%", chat_id, create_menu_keyboard())
+        
+                        # ✅ Training 200 nến trước khi tạo bot
+                        try:
+                            temp_config = [symbol, leverage, percent, tp, sl]
+                            perform_initial_training(self, [temp_config])  # training cho 1 symbol
+                            initial_weights = temp_config[5]
+                        except Exception as e:
+                            send_telegram(f"❌ Training thất bại cho {symbol}: {str(e)}", chat_id, create_menu_keyboard())
+                            self.user_states[chat_id] = {}
+                            return
+        
+                        # ✅ Chỉ tạo bot nếu training thành công
+                        if initial_weights and self.add_bot(symbol, leverage, percent, tp, sl, initial_weights):
+                            send_telegram(
+                                f"✅ <b>BOT ADDED SUCCESSFULLY</b>\n\n"
+                                f"📌 Pair: {symbol}\n"
+                                f" Leverage: {leverage}x\n"
+                                f"📊 % Balance: {percent}%\n"
+                                f"🎯 TP: {tp}%\n"
+                                f"🛡️ SL: {sl}%",
+                                chat_id,
+                                create_menu_keyboard()
+                            )
                         else:
-                            send_telegram("❌ Could not add bot, please check logs", chat_id, create_menu_keyboard())
+                            send_telegram("❌ Could not add bot (training failed)", chat_id, create_menu_keyboard())
+                        
                         self.user_states[chat_id] = {}
                     else:
                         send_telegram("⚠️ SL must be greater than or equal to 0", chat_id)
                 except Exception:
                     send_telegram("⚠️ Invalid value, please enter a number", chat_id)
+
                     
         elif text == "📊 Danh sách Bot":
             if not self.bots:
@@ -1478,5 +1495,6 @@ def main():
 
 if __name__ == "__main__":
     main()
+
 
 
