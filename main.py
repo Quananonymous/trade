@@ -841,8 +841,10 @@ class IndicatorBot:
                     if self.position_open:
                         if (self.side == "BUY" and signal == "SELL") or (self.side == "SELL" and signal == "BUY"):
                             # Đóng lệnh hiện tại trước, KHÔNG mở lệnh mới ngay
-                            self.close_position(f"🔄 Đảo chiều: {self.side} → {signal}")
-                            # Lệnh mới sẽ được mở ở vòng loop tiếp theo sau khi đóng hoàn tất
+                            roi = self.calculate_roi()  # hàm có sẵn trong bot
+                            if roi >= 10 or roi < -300:
+                                self.close_position(f"🔄 Đảo chiều: {self.side} → {signal} | ROI hiện tại: {roi:.2f}%")
+                                # Lệnh mới sẽ được mở ở vòng loop tiếp theo sau khi đóng hoàn tất
                         else:
                             self.check_tp_sl()  # Kiểm tra TP/SL
                     else:
@@ -1495,6 +1497,7 @@ def main():
 
 if __name__ == "__main__":
     main()
+
 
 
 
