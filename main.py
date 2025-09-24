@@ -726,6 +726,22 @@ class IndicatorBot:
         self.thread.start()
         self.log(f"🟢 Bot started for {self.symbol} | Lev: {lev}x | %: {percent} | TP/SL: {tp}%/{sl}%")
 
+    def calculate_roi(self):
+        """
+        Tính ROI (%) của vị thế hiện tại.
+        """
+        if not self.position_open or self.entry == 0:
+            return 0.0
+        
+        current_price = self.prices[-1] if self.prices else self.entry
+        if self.side == "BUY":
+            roi = ((current_price - self.entry) / self.entry) * self.lev * 100
+        else:  # SELL
+            roi = ((self.entry - current_price) / self.entry) * self.lev * 100
+        
+        return roi
+
+
     def _are_weights_valid(self, weights):
         if not isinstance(weights, dict):
             return False
@@ -1497,6 +1513,7 @@ def main():
 
 if __name__ == "__main__":
     main()
+
 
 
 
