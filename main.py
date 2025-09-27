@@ -629,8 +629,6 @@ class IndicatorBot:
                                f"Closed: {closed_volume:.2f} | Ratio: {current_volume/closed_volume if closed_volume else 0:.2f}x")
                     self.log(log_msg, is_critical=False)
                     
-                    # CÁC BƯỚC HỌC LIÊN TỤC ĐÃ BỊ XÓA (update_weights_and_stats)
-                    
                     # Xử lý lệnh
                     if self.position_open:
                         if (self.side == "BUY" and signal == "SELL"):
@@ -650,7 +648,8 @@ class IndicatorBot:
                     else:
                         # Vào lệnh mới nếu có tín hiệu
                         if signal and current_time - self.last_trade_time > self.cooldown_period:
-                            self.open_position(signal, current_signals)
+                            # SỬA LỖI: Truyền current_volume và closed_volume
+                            self.open_position(signal, current_volume, closed_volume) 
                             self.last_trade_time = current_time
                         
                 time.sleep(5)  # Sleep ngắn để phản ứng nhanh
@@ -660,8 +659,6 @@ class IndicatorBot:
                     self.log(f"❌ Main loop error: {str(e)}", is_critical=False)
                     self.last_error_log_time = time.time()
                 time.sleep(10)
-
-
     def stop(self):
         self._stop = True
         self.ws_manager.remove_symbol(self.symbol)
@@ -1199,3 +1196,4 @@ def main():
 
 if __name__ == "__main__":
     main()
+
