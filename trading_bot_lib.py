@@ -2024,6 +2024,49 @@ class BotManager:
                         self.telegram_bot_token, self.telegram_chat_id
                     )
         
+        elif current_step == 'waiting_strategy':
+            if text == '❌ Hủy bỏ':
+                self.user_states[chat_id] = {}
+                send_telegram("❌ Đã hủy thêm bot", chat_id, create_main_menu(),
+                            self.telegram_bot_token, self.telegram_chat_id)
+            elif text in ["🤖 RSI/EMA Recursive", "📊 EMA Crossover", "🎯 Reverse 24h", 
+                          "📈 Trend Following", "⚡ Scalping", "🛡️ Safe Grid", "🔄 Bot Động Thông Minh"]:
+                
+                # Map tên hiển thị sang tên chiến lược thực tế
+                strategy_map = {
+                    "🤖 RSI/EMA Recursive": "RSI/EMA Recursive",
+                    "📊 EMA Crossover": "EMA Crossover", 
+                    "🎯 Reverse 24h": "Reverse 24h",
+                    "📈 Trend Following": "Trend Following",
+                    "⚡ Scalping": "Scalping",
+                    "🛡️ Safe Grid": "Safe Grid",
+                    "🔄 Bot Động Thông Minh": "Smart Dynamic"
+                }
+                
+                strategy = strategy_map[text]
+                user_state['strategy'] = strategy
+                user_state['step'] = 'waiting_exit_strategy'
+                
+                strategy_descriptions = {
+                    "RSI/EMA Recursive": "Phân tích RSI + EMA đệ quy",
+                    "EMA Crossover": "Giao cắt EMA nhanh/chậm", 
+                    "Reverse 24h": "Đảo chiều biến động 24h",
+                    "Trend Following": "Theo xu hướng giá",
+                    "Scalping": "Giao dịch tốc độ cao",
+                    "Safe Grid": "Grid an toàn",
+                    "Smart Dynamic": "Bot động thông minh đa chiến lược"
+                }
+                
+                description = strategy_descriptions.get(strategy, "")
+                
+                send_telegram(
+                    f"🎯 <b>ĐÃ CHỌN: {strategy}</b>\n\n"
+                    f"{description}\n\n"
+                    f"Chọn chiến lược thoát lệnh:",
+                    chat_id,
+                    create_exit_strategy_keyboard(),
+                    self.telegram_bot_token, self.telegram_chat_id
+                )
         elif current_step == 'waiting_exit_strategy':
             if text == '❌ Hủy bỏ':
                 self.user_states[chat_id] = {}
