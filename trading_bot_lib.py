@@ -1,4 +1,4 @@
-# trading_bot_lib.py - HOÀN CHỈNH TÍCH HỢP TẤT CẢ TÍNH NĂNG
+# trading_bot_lib.py - HOÀN CHỈNH VỚI PHẦN KHỞI CHẠY
 import json
 import hmac
 import hashlib
@@ -2263,7 +2263,7 @@ class BotManager:
                 "• Coin cụ thể do bạn chọn\n\n"
                 
                 "💡 <b>Smart Exit System</b>\n"
-                "• 🔄 Trailing Stop bảo vệ lợi nhuận\n"
+                "• 🔄 Trailing Stop bảo vệ l�ợi nhuận\n"
                 "• ⏰ Time Exit giới hạn rủi ro\n"
                 "• 📊 Volume Exit theo momentum\n"
                 "• 🎯 Support/Resistance Exit"
