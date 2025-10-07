@@ -581,9 +581,11 @@ def get_qualified_symbols(api_key, api_secret, strategy_type, leverage, threshol
             if symbol not in ticker_dict:
                 continue
                 
+            # Loại trừ BTC và ETH để tránh biến động quá cao
             if symbol in ['BTCUSDT', 'ETHUSDT']:
                 continue
             
+            # Kiểm tra coin đã được quản lý bởi config này chưa
             if strategy_key and coin_manager.has_same_config_bot(symbol, strategy_key):
                 continue
             
@@ -601,23 +603,43 @@ def get_qualified_symbols(api_key, api_secret, strategy_type, leverage, threshol
                 else:
                     price_range = 0
                 
+                # ĐIỀU KIỆN CHO TỪNG CHIẾN LƯỢC - LINH HOẠT HƠN
                 if strategy_type == "Reverse 24h":
-                    if abs_price_change >= threshold and volume > 3000000:
+                    if abs_price_change >= (threshold or 15) and volume > 1000000:
                         score = abs_price_change * (volume / 1000000)
                         qualified_symbols.append((symbol, score, price_change))
+                
                 elif strategy_type == "Scalping":
-                    if abs_price_change >= volatility and volume > 5000000 and price_range >= 1.5:
+                    if abs_price_change >= (volatility or 2) and volume > 2000000 and price_range >= 1.0:
                         qualified_symbols.append((symbol, price_range))
+                
                 elif strategy_type == "Safe Grid":
-                    if 1.0 <= abs_price_change <= 5.0 and volume > 1000000 and price_range <= 4.0:
+                    if 0.5 <= abs_price_change <= 8.0 and volume > 500000:
                         qualified_symbols.append((symbol, -abs(price_change - 3.0)))
+                
                 elif strategy_type == "Trend Following":
-                    if 2.0 <= abs_price_change <= 10.0 and volume > 3000000 and price_range >= 1.0:
-                        qualified_symbols.append((symbol, abs_price_change))
+                    # ĐIỀU KIỆN MỞ RỘNG CHO TREND FOLLOWING
+                    if (1.0 <= abs_price_change <= 15.0 and 
+                        volume > 1000000 and 
+                        price_range >= 0.5):
+                        score = volume * abs_price_change  # Ưu tiên volume cao + biến động
+                        qualified_symbols.append((symbol, score))
+                
+                elif strategy_type == "Smart Dynamic":
+                    # ĐIỀU KIỆN THÔNG MINH LINH HOẠT
+                    if (1.0 <= abs_price_change <= 12.0 and
+                        volume > 1500000 and
+                        price_range >= 0.8):
+                        # Tính điểm tổng hợp
+                        volume_score = min(volume / 5000000, 5)
+                        volatility_score = min(abs_price_change / 10, 3)
+                        score = volume_score + volatility_score
+                        qualified_symbols.append((symbol, score))
                         
             except (ValueError, TypeError) as e:
                 continue
         
+        # SẮP XẾP THEO CHIẾN LƯỢC
         if strategy_type == "Reverse 24h":
             qualified_symbols.sort(key=lambda x: x[1], reverse=True)
         elif strategy_type == "Scalping":
@@ -626,6 +648,11 @@ def get_qualified_symbols(api_key, api_secret, strategy_type, leverage, threshol
             qualified_symbols.sort(key=lambda x: x[1], reverse=True)
         elif strategy_type == "Trend Following":
             qualified_symbols.sort(key=lambda x: x[1], reverse=True)
+        elif strategy_type == "Smart Dynamic":
+            qualified_symbols.sort(key=lambda x: x[1], reverse=True)
+        
+        # LOG CHI TIẾT ĐỂ DEBUG
+        logger.info(f"🔍 {strategy_type}: Quét {len(all_symbols)} coin, tìm thấy {len(qualified_symbols)} phù hợp")
         
         final_symbols = []
         for item in qualified_symbols[:max_candidates]:
@@ -644,23 +671,84 @@ def get_qualified_symbols(api_key, api_secret, strategy_type, leverage, threshol
                 if leverage_success and step_size > 0:
                     final_symbols.append(symbol)
                     if strategy_type == "Reverse 24h":
-                        logger.info(f"✅ {symbol}: phù hợp {strategy_type} (Biến động: {original_change:.2f}%, Điểm: {score:.2f}, Config: {strategy_key})")
+                        logger.info(f"✅ {symbol}: phù hợp {strategy_type} (Biến động: {original_change:.2f}%, Điểm: {score:.2f})")
                     else:
-                        logger.info(f"✅ {symbol}: phù hợp {strategy_type} (Score: {score:.2f}, Config: {strategy_key})")
+                        logger.info(f"✅ {symbol}: phù hợp {strategy_type} (Score: {score:.2f})")
                 time.sleep(0.1)
             except Exception as e:
                 logger.error(f"❌ Lỗi kiểm tra {symbol}: {str(e)}")
                 continue
         
+        # BACKUP SYSTEM: Nếu không tìm thấy coin phù hợp, lấy coin có volume cao nhất
         if not final_symbols:
-            logger.warning(f"⚠️ {strategy_type}: không tìm thấy coin phù hợp cho config {strategy_key}")
+            logger.warning(f"⚠️ {strategy_type}: không tìm thấy coin phù hợp, sử dụng backup method")
+            backup_symbols = []
+            
+            for symbol in all_symbols:
+                if symbol not in ticker_dict:
+                    continue
+                    
+                # Kiểm tra coin đã được quản lý bởi config này chưa
+                if strategy_key and coin_manager.has_same_config_bot(symbol, strategy_key):
+                    continue
+                    
+                ticker = ticker_dict[symbol]
+                try:
+                    volume = float(ticker.get('quoteVolume', 0))
+                    price_change = float(ticker.get('priceChangePercent', 0))
+                    abs_price_change = abs(price_change)
+                    
+                    # Điều kiện backup: volume cao, biến động vừa phải, không quá mạnh
+                    if (volume > 3000000 and 
+                        0.5 <= abs_price_change <= 10.0 and
+                        symbol not in ['BTCUSDT', 'ETHUSDT']):
+                        backup_symbols.append((symbol, volume, abs_price_change))
+                except:
+                    continue
+            
+            # Sắp xếp theo volume giảm dần
+            backup_symbols.sort(key=lambda x: x[1], reverse=True)
+            
+            for symbol, volume, price_change in backup_symbols[:final_limit]:
+                try:
+                    leverage_success = set_leverage(symbol, leverage, api_key, api_secret)
+                    step_size = get_step_size(symbol, api_key, api_secret)
+                    
+                    if leverage_success and step_size > 0:
+                        final_symbols.append(symbol)
+                        logger.info(f"🔄 {symbol}: backup coin (Volume: {volume:.0f}, Biến động: {price_change:.2f}%)")
+                        if len(final_symbols) >= final_limit:
+                            break
+                    time.sleep(0.1)
+                except Exception as e:
+                    continue
         
+        # FINAL CHECK: Nếu vẫn không có coin, thử các coin phổ biến
+        if not final_symbols:
+            logger.error(f"❌ {strategy_type}: không thể tìm thấy coin nào phù hợp sau backup")
+            popular_symbols = ["BNBUSDT", "ADAUSDT", "XRPUSDT", "DOTUSDT", "LINKUSDT", "LTCUSDT", "BCHUSDT", "EOSUSDT"]
+            
+            for symbol in popular_symbols:
+                if len(final_symbols) >= final_limit:
+                    break
+                    
+                try:
+                    if symbol in ticker_dict:
+                        leverage_success = set_leverage(symbol, leverage, api_key, api_secret)
+                        step_size = get_step_size(symbol, api_key, api_secret)
+                        
+                        if leverage_success and step_size > 0:
+                            final_symbols.append(symbol)
+                            logger.info(f"🚨 {symbol}: sử dụng coin phổ biến (backup cuối)")
+                except:
+                    continue
+        
+        logger.info(f"🎯 {strategy_type}: Kết quả cuối - {len(final_symbols)} coin: {final_symbols}")
         return final_symbols[:final_limit]
         
     except Exception as e:
         logger.error(f"❌ Lỗi tìm coin {strategy_type}: {str(e)}")
         return []
-
 def get_step_size(symbol, api_key, api_secret):
     url = "https://fapi.binance.com/fapi/v1/exchangeInfo"
     try:
