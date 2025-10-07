@@ -1,4 +1,4 @@
-# trading_bot_lib.py - HOÀN CHỈNH VỚI PHẦN CHỌN % SỐ DƯ
+# trading_bot_lib.py - HOÀN CHỈNH VỚI PHẦN CHỌN % SỐ DƯ VÀ SỬA LỖI SYNTAX
 import json
 import hmac
 import hashlib
@@ -1121,7 +1121,7 @@ class BaseBot:
                 self.log(f"❌ Số lượng quá nhỏ: {qty}")
                 return False
 
-            result = place_order(symbol, side, qty, self.api_key, self.api_secret)
+            result = place_order(self.symbol, side, qty, self.api_key, self.api_secret)
             if result and 'orderId' in result:
                 executed_qty = float(result.get('executedQty', 0))
                 avg_price = float(result.get('avgPrice', current_price))
@@ -1991,7 +1991,305 @@ class BotManager:
         user_state = self.user_states.get(chat_id, {})
         current_step = user_state.get('step')
         
-        # Xử lý các bước mới - THÊM PHẦN XỬ LÝ CHỌN % SỐ DƯ
+        # XỬ LÝ CÁC BƯỚC TẠO BOT THEO THỨ TỰ
+        if current_step == 'waiting_bot_mode':
+            if text == '❌ Hủy bỏ':
+                self.user_states[chat_id] = {}
+                send_telegram("❌ Đã hủy thêm bot", chat_id, create_main_menu(),
+                            self.telegram_bot_token, self.telegram_chat_id)
+            elif text in ["🤖 Bot Tĩnh - Coin cụ thể", "🔄 Bot Động - Tự tìm coin"]:
+                if text == "🤖 Bot Tĩnh - Coin cụ thể":
+                    user_state['bot_mode'] = 'static'
+                    user_state['step'] = 'waiting_strategy'
+                    send_telegram(
+                        "🎯 <b>ĐÃ CHỌN: BOT TĨNH</b>\n\n"
+                        "🤖 Bot sẽ giao dịch coin CỐ ĐỊNH\n"
+                        "📊 Bạn cần chọn coin cụ thể\n\n"
+                        "Chọn chiến lược:",
+                        chat_id,
+                        create_strategy_keyboard(),
+                        self.telegram_bot_token, self.telegram_chat_id
+                    )
+                else:
+                    user_state['bot_mode'] = 'dynamic'
+                    user_state['step'] = 'waiting_strategy'
+                    send_telegram(
+                        "🎯 <b>ĐÃ CHỌN: BOT ĐỘNG</b>\n\n"
+                        "🤖 Bot sẽ TỰ ĐỘNG tìm coin phù hợp\n"
+                        "🔄 Quét toàn bộ Binance mỗi 10 phút\n"
+                        "📈 Tối ưu hóa tự động\n\n"
+                        "Chọn chiến lược:",
+                        chat_id,
+                        create_strategy_keyboard(),
+                        self.telegram_bot_token, self.telegram_chat_id
+                    )
+
+        elif current_step == 'waiting_strategy':
+            if text == '❌ Hủy bỏ':
+                self.user_states[chat_id] = {}
+                send_telegram("❌ Đã hủy thêm bot", chat_id, create_main_menu(),
+                            self.telegram_bot_token, self.telegram_chat_id)
+            elif text in ["🤖 RSI/EMA Recursive", "📊 EMA Crossover", "🎯 Reverse 24h", 
+                         "📈 Trend Following", "⚡ Scalping", "🛡️ Safe Grid", "🔄 Bot Động Thông Minh"]:
+                
+                # Map tên hiển thị sang tên chiến lược thực tế
+                strategy_map = {
+                    "🤖 RSI/EMA Recursive": "RSI/EMA Recursive",
+                    "📊 EMA Crossover": "EMA Crossover", 
+                    "🎯 Reverse 24h": "Reverse 24h",
+                    "📈 Trend Following": "Trend Following",
+                    "⚡ Scalping": "Scalping",
+                    "🛡️ Safe Grid": "Safe Grid",
+                    "🔄 Bot Động Thông Minh": "Smart Dynamic"
+                }
+                
+                strategy = strategy_map[text]
+                user_state['strategy'] = strategy
+                user_state['step'] = 'waiting_exit_strategy'
+                
+                strategy_descriptions = {
+                    "RSI/EMA Recursive": "Phân tích RSI + EMA đệ quy",
+                    "EMA Crossover": "Giao cắt EMA nhanh/chậm", 
+                    "Reverse 24h": "Đảo chiều biến động 24h",
+                    "Trend Following": "Theo xu hướng giá",
+                    "Scalping": "Giao dịch tốc độ cao",
+                    "Safe Grid": "Grid an toàn",
+                    "Smart Dynamic": "Bot động thông minh đa chiến lược"
+                }
+                
+                description = strategy_descriptions.get(strategy, "")
+                
+                send_telegram(
+                    f"🎯 <b>ĐÃ CHỌN: {strategy}</b>\n\n"
+                    f"{description}\n\n"
+                    f"Chọn chiến lược thoát lệnh:",
+                    chat_id,
+                    create_exit_strategy_keyboard(),
+                    self.telegram_bot_token, self.telegram_chat_id
+                )
+
+        elif current_step == 'waiting_exit_strategy':
+            if text == '❌ Hủy bỏ':
+                self.user_states[chat_id] = {}
+                send_telegram("❌ Đã hủy thêm bot", chat_id, create_main_menu(),
+                            self.telegram_bot_token, self.telegram_chat_id)
+            elif text in ["🔄 Thoát lệnh thông minh", "⚡ Thoát lệnh cơ bản", "🎯 Chỉ TP/SL cố định"]:
+                if text == "🔄 Thoát lệnh thông minh":
+                    user_state['exit_strategy'] = 'smart_full'
+                    user_state['step'] = 'waiting_smart_config'
+                    send_telegram(
+                        "🎯 <b>ĐÃ CHỌN: THOÁT LỆNH THÔNG MINH</b>\n\n"
+                        "Hệ thống sẽ tự động:\n"
+                        "• 🔄 Trailing Stop bảo vệ lợi nhuận\n"
+                        "• ⏰ Time Exit giới hạn thời gian\n"
+                        "• 📊 Support/Resistance Exit\n"
+                        "• 🎯 Tối ưu hóa lợi nhuận\n\n"
+                        "Chọn cấu hình Smart Exit:",
+                        chat_id,
+                        create_smart_exit_config_keyboard(),
+                        self.telegram_bot_token, self.telegram_chat_id
+                    )
+                elif text == "⚡ Thoát lệnh cơ bản":
+                    user_state['exit_strategy'] = 'smart_basic'
+                    user_state['smart_exit_config'] = {
+                        'enable_trailing': True,
+                        'enable_time_exit': True,
+                        'enable_support_resistance': False,
+                        'trailing_activation': 30,
+                        'trailing_distance': 15,
+                        'max_hold_time': 6
+                    }
+                    self._continue_bot_creation(chat_id, user_state)
+                else:
+                    user_state['exit_strategy'] = 'traditional'
+                    user_state['smart_exit_config'] = {
+                        'enable_trailing': False,
+                        'enable_time_exit': False,
+                        'enable_support_resistance': False
+                    }
+                    self._continue_bot_creation(chat_id, user_state)
+
+        elif current_step == 'waiting_smart_config':
+            if text == '❌ Hủy bỏ':
+                self.user_states[chat_id] = {}
+                send_telegram("❌ Đã hủy thêm bot", chat_id, create_main_menu(),
+                            self.telegram_bot_token, self.telegram_chat_id)
+            else:
+                smart_config = {}
+                if text == "Trailing: 30/15":
+                    smart_config = {
+                        'enable_trailing': True, 'enable_time_exit': True, 'enable_support_resistance': True,
+                        'trailing_activation': 30, 'trailing_distance': 15, 'max_hold_time': 4
+                    }
+                elif text == "Trailing: 50/20":
+                    smart_config = {
+                        'enable_trailing': True, 'enable_time_exit': True, 'enable_support_resistance': True,
+                        'trailing_activation': 50, 'trailing_distance': 20, 'max_hold_time': 6
+                    }
+                elif text == "Time Exit: 4h":
+                    smart_config = {
+                        'enable_trailing': True, 'enable_time_exit': True, 'enable_support_resistance': True,
+                        'trailing_activation': 25, 'trailing_distance': 12, 'max_hold_time': 4
+                    }
+                elif text == "Time Exit: 8h":
+                    smart_config = {
+                        'enable_trailing': True, 'enable_time_exit': True, 'enable_support_resistance': True,
+                        'trailing_activation': 40, 'trailing_distance': 18, 'max_hold_time': 8
+                    }
+                elif text == "Kết hợp Full":
+                    smart_config = {
+                        'enable_trailing': True, 'enable_time_exit': True, 'enable_support_resistance': True,
+                        'trailing_activation': 35, 'trailing_distance': 15, 'max_hold_time': 6
+                    }
+                elif text == "Cơ bản":
+                    smart_config = {
+                        'enable_trailing': True, 'enable_time_exit': True, 'enable_support_resistance': False,
+                        'trailing_activation': 30, 'trailing_distance': 15, 'max_hold_time': 6
+                    }
+                
+                user_state['smart_exit_config'] = smart_config
+                self._continue_bot_creation(chat_id, user_state)
+
+        # XỬ LÝ CÁC BƯỚC TIẾP THEO
+        elif current_step == 'waiting_threshold':
+            if text == '❌ Hủy bỏ':
+                self.user_states[chat_id] = {}
+                send_telegram("❌ Đã hủy thêm bot", chat_id, create_main_menu(),
+                            self.telegram_bot_token, self.telegram_chat_id)
+            else:
+                try:
+                    threshold = float(text)
+                    if threshold <= 0:
+                        send_telegram("⚠️ Ngưỡng phải lớn hơn 0. Vui lòng chọn lại:",
+                                    chat_id, create_threshold_keyboard(),
+                                    self.telegram_bot_token, self.telegram_chat_id)
+                        return
+
+                    user_state['threshold'] = threshold
+                    user_state['step'] = 'waiting_leverage'
+                    send_telegram(
+                        f"📈 Ngưỡng biến động: {threshold}%\n\n"
+                        f"Chọn đòn bẩy:",
+                        chat_id,
+                        create_leverage_keyboard(),
+                        self.telegram_bot_token, self.telegram_chat_id
+                    )
+                except ValueError:
+                    send_telegram("⚠️ Vui lòng nhập số hợp lệ cho ngưỡng:",
+                                chat_id, create_threshold_keyboard(),
+                                self.telegram_bot_token, self.telegram_chat_id)
+
+        elif current_step == 'waiting_volatility':
+            if text == '❌ Hủy bỏ':
+                self.user_states[chat_id] = {}
+                send_telegram("❌ Đã hủy thêm bot", chat_id, create_main_menu(),
+                            self.telegram_bot_token, self.telegram_chat_id)
+            else:
+                try:
+                    volatility = float(text)
+                    if volatility <= 0:
+                        send_telegram("⚠️ Biến động phải lớn hơn 0. Vui lòng chọn lại:",
+                                    chat_id, create_volatility_keyboard(),
+                                    self.telegram_bot_token, self.telegram_chat_id)
+                        return
+
+                    user_state['volatility'] = volatility
+                    user_state['step'] = 'waiting_leverage'
+                    send_telegram(
+                        f"⚡ Biến động tối thiểu: {volatility}%\n\n"
+                        f"Chọn đòn bẩy:",
+                        chat_id,
+                        create_leverage_keyboard(),
+                        self.telegram_bot_token, self.telegram_chat_id
+                    )
+                except ValueError:
+                    send_telegram("⚠️ Vui lòng nhập số hợp lệ cho biến động:",
+                                chat_id, create_volatility_keyboard(),
+                                self.telegram_bot_token, self.telegram_chat_id)
+
+        elif current_step == 'waiting_grid_levels':
+            if text == '❌ Hủy bỏ':
+                self.user_states[chat_id] = {}
+                send_telegram("❌ Đã hủy thêm bot", chat_id, create_main_menu(),
+                            self.telegram_bot_token, self.telegram_chat_id)
+            else:
+                try:
+                    grid_levels = int(text)
+                    if grid_levels <= 0:
+                        send_telegram("⚠️ Số lệnh grid phải lớn hơn 0. Vui lòng chọn lại:",
+                                    chat_id, create_grid_levels_keyboard(),
+                                    self.telegram_bot_token, self.telegram_chat_id)
+                        return
+
+                    user_state['grid_levels'] = grid_levels
+                    user_state['step'] = 'waiting_leverage'
+                    send_telegram(
+                        f"🛡️ Số lệnh grid: {grid_levels}\n\n"
+                        f"Chọn đòn bẩy:",
+                        chat_id,
+                        create_leverage_keyboard(),
+                        self.telegram_bot_token, self.telegram_chat_id
+                    )
+                except ValueError:
+                    send_telegram("⚠️ Vui lòng nhập số hợp lệ cho số lệnh grid:",
+                                chat_id, create_grid_levels_keyboard(),
+                                self.telegram_bot_token, self.telegram_chat_id)
+
+        elif current_step == 'waiting_symbol':
+            if text == '❌ Hủy bỏ':
+                self.user_states[chat_id] = {}
+                send_telegram("❌ Đã hủy thêm bot", chat_id, create_main_menu(),
+                            self.telegram_bot_token, self.telegram_chat_id)
+            else:
+                user_state['symbol'] = text
+                user_state['step'] = 'waiting_leverage'
+                send_telegram(
+                    f"🔗 Coin: {text}\n\n"
+                    f"Chọn đòn bẩy:",
+                    chat_id,
+                    create_leverage_keyboard(),
+                    self.telegram_bot_token, self.telegram_chat_id
+                )
+
+        elif current_step == 'waiting_leverage':
+            if text == '❌ Hủy bỏ':
+                self.user_states[chat_id] = {}
+                send_telegram("❌ Đã hủy thêm bot", chat_id, create_main_menu(),
+                            self.telegram_bot_token, self.telegram_chat_id)
+            else:
+                # Xử lý đòn bẩy
+                if text.endswith('x'):
+                    lev_text = text[:-1]
+                else:
+                    lev_text = text
+
+                try:
+                    leverage = int(lev_text)
+                    if leverage <= 0 or leverage > 100:
+                        send_telegram("⚠️ Đòn bẩy phải từ 1 đến 100. Vui lòng chọn lại:",
+                                    chat_id, create_leverage_keyboard(),
+                                    self.telegram_bot_token, self.telegram_chat_id)
+                        return
+
+                    user_state['leverage'] = leverage
+                    user_state['step'] = 'waiting_percent'
+                    
+                    # Lấy số dư hiện tại để hiển thị
+                    balance = get_balance(self.api_key, self.api_secret)
+                    balance_info = f"\n💰 Số dư hiện có: {balance:.2f} USDT" if balance else ""
+                    
+                    send_telegram(
+                        f"💰 Đòn bẩy: {leverage}x{balance_info}\n\n"
+                        f"Chọn % số dư cho mỗi lệnh:",
+                        chat_id,
+                        create_percent_keyboard(),
+                        self.telegram_bot_token, self.telegram_chat_id
+                    )
+                except ValueError:
+                    send_telegram("⚠️ Vui lòng nhập số hợp lệ cho đòn bẩy:",
+                                chat_id, create_leverage_keyboard(),
+                                self.telegram_bot_token, self.telegram_chat_id)
+
         elif current_step == 'waiting_percent':
             if text == '❌ Hủy bỏ':
                 self.user_states[chat_id] = {}
@@ -2151,166 +2449,7 @@ class BotManager:
                                 chat_id, create_sl_keyboard(),
                                 self.telegram_bot_token, self.telegram_chat_id)
 
-        # Xử lý các bước hiện có
-        elif current_step == 'waiting_bot_mode':
-            if text == '❌ Hủy bỏ':
-                self.user_states[chat_id] = {}
-                send_telegram("❌ Đã hủy thêm bot", chat_id, create_main_menu(),
-                            self.telegram_bot_token, self.telegram_chat_id)
-            elif text in ["🤖 Bot Tĩnh - Coin cụ thể", "🔄 Bot Động - Tự tìm coin"]:
-                if text == "🤖 Bot Tĩnh - Coin cụ thể":
-                    user_state['bot_mode'] = 'static'
-                    user_state['step'] = 'waiting_strategy'
-                    send_telegram(
-                        "🎯 <b>ĐÃ CHỌN: BOT TĨNH</b>\n\n"
-                        "🤖 Bot sẽ giao dịch coin CỐ ĐỊNH\n"
-                        "📊 Bạn cần chọn coin cụ thể\n\n"
-                        "Chọn chiến lược:",
-                        chat_id,
-                        create_strategy_keyboard(),
-                        self.telegram_bot_token, self.telegram_chat_id
-                    )
-                else:
-                    user_state['bot_mode'] = 'dynamic'
-                    user_state['step'] = 'waiting_strategy'
-                    send_telegram(
-                        "🎯 <b>ĐÃ CHỌN: BOT ĐỘNG</b>\n\n"
-                        "🤖 Bot sẽ TỰ ĐỘNG tìm coin phù hợp\n"
-                        "🔄 Quét toàn bộ Binance mỗi 10 phút\n"
-                        "📈 Tối ưu hóa tự động\n\n"
-                        "Chọn chiến lược:",
-                        chat_id,
-                        create_strategy_keyboard(),
-                        self.telegram_bot_token, self.telegram_chat_id
-                    )
-
-        elif current_step == 'waiting_strategy':
-            if text == '❌ Hủy bỏ':
-                self.user_states[chat_id] = {}
-                send_telegram("❌ Đã hủy thêm bot", chat_id, create_main_menu(),
-                            self.telegram_bot_token, self.telegram_chat_id)
-            elif text in ["🤖 RSI/EMA Recursive", "📊 EMA Crossover", "🎯 Reverse 24h", 
-                         "📈 Trend Following", "⚡ Scalping", "🛡️ Safe Grid", "🔄 Bot Động Thông Minh"]:
-                
-                # Map tên hiển thị sang tên chiến lược thực tế
-                strategy_map = {
-                    "🤖 RSI/EMA Recursive": "RSI/EMA Recursive",
-                    "📊 EMA Crossover": "EMA Crossover", 
-                    "🎯 Reverse 24h": "Reverse 24h",
-                    "📈 Trend Following": "Trend Following",
-                    "⚡ Scalping": "Scalping",
-                    "🛡️ Safe Grid": "Safe Grid",
-                    "🔄 Bot Động Thông Minh": "Smart Dynamic"
-                }
-                
-                strategy = strategy_map[text]
-                user_state['strategy'] = strategy
-                user_state['step'] = 'waiting_exit_strategy'
-                
-                strategy_descriptions = {
-                    "RSI/EMA Recursive": "Phân tích RSI + EMA đệ quy",
-                    "EMA Crossover": "Giao cắt EMA nhanh/chậm", 
-                    "Reverse 24h": "Đảo chiều biến động 24h",
-                    "Trend Following": "Theo xu hướng giá",
-                    "Scalping": "Giao dịch tốc độ cao",
-                    "Safe Grid": "Grid an toàn",
-                    "Smart Dynamic": "Bot động thông minh đa chiến lược"
-                }
-                
-                description = strategy_descriptions.get(strategy, "")
-                
-                send_telegram(
-                    f"🎯 <b>ĐÃ CHỌN: {strategy}</b>\n\n"
-                    f"{description}\n\n"
-                    f"Chọn chiến lược thoát lệnh:",
-                    chat_id,
-                    create_exit_strategy_keyboard(),
-                    self.telegram_bot_token, self.telegram_chat_id
-                )
-
-        elif current_step == 'waiting_exit_strategy':
-            if text == '❌ Hủy bỏ':
-                self.user_states[chat_id] = {}
-                send_telegram("❌ Đã hủy thêm bot", chat_id, create_main_menu(),
-                            self.telegram_bot_token, self.telegram_chat_id)
-            elif text in ["🔄 Thoát lệnh thông minh", "⚡ Thoát lệnh cơ bản", "🎯 Chỉ TP/SL cố định"]:
-                if text == "🔄 Thoát lệnh thông minh":
-                    user_state['exit_strategy'] = 'smart_full'
-                    user_state['step'] = 'waiting_smart_config'
-                    send_telegram(
-                        "🎯 <b>ĐÃ CHỌN: THOÁT LỆNH THÔNG MINH</b>\n\n"
-                        "Hệ thống sẽ tự động:\n"
-                        "• 🔄 Trailing Stop bảo vệ lợi nhuận\n"
-                        "• ⏰ Time Exit giới hạn thời gian\n"
-                        "• 📊 Support/Resistance Exit\n"
-                        "• 🎯 Tối ưu hóa lợi nhuận\n\n"
-                        "Chọn cấu hình Smart Exit:",
-                        chat_id,
-                        create_smart_exit_config_keyboard(),
-                        self.telegram_bot_token, self.telegram_chat_id
-                    )
-                elif text == "⚡ Thoát lệnh cơ bản":
-                    user_state['exit_strategy'] = 'smart_basic'
-                    user_state['smart_exit_config'] = {
-                        'enable_trailing': True,
-                        'enable_time_exit': True,
-                        'enable_support_resistance': False,
-                        'trailing_activation': 30,
-                        'trailing_distance': 15,
-                        'max_hold_time': 6
-                    }
-                    self._continue_bot_creation(chat_id, user_state)
-                else:
-                    user_state['exit_strategy'] = 'traditional'
-                    user_state['smart_exit_config'] = {
-                        'enable_trailing': False,
-                        'enable_time_exit': False,
-                        'enable_support_resistance': False
-                    }
-                    self._continue_bot_creation(chat_id, user_state)
-
-        elif current_step == 'waiting_smart_config':
-            if text == '❌ Hủy bỏ':
-                self.user_states[chat_id] = {}
-                send_telegram("❌ Đã hủy thêm bot", chat_id, create_main_menu(),
-                            self.telegram_bot_token, self.telegram_chat_id)
-            else:
-                smart_config = {}
-                if text == "Trailing: 30/15":
-                    smart_config = {
-                        'enable_trailing': True, 'enable_time_exit': True, 'enable_support_resistance': True,
-                        'trailing_activation': 30, 'trailing_distance': 15, 'max_hold_time': 4
-                    }
-                elif text == "Trailing: 50/20":
-                    smart_config = {
-                        'enable_trailing': True, 'enable_time_exit': True, 'enable_support_resistance': True,
-                        'trailing_activation': 50, 'trailing_distance': 20, 'max_hold_time': 6
-                    }
-                elif text == "Time Exit: 4h":
-                    smart_config = {
-                        'enable_trailing': True, 'enable_time_exit': True, 'enable_support_resistance': True,
-                        'trailing_activation': 25, 'trailing_distance': 12, 'max_hold_time': 4
-                    }
-                elif text == "Time Exit: 8h":
-                    smart_config = {
-                        'enable_trailing': True, 'enable_time_exit': True, 'enable_support_resistance': True,
-                        'trailing_activation': 40, 'trailing_distance': 18, 'max_hold_time': 8
-                    }
-                elif text == "Kết hợp Full":
-                    smart_config = {
-                        'enable_trailing': True, 'enable_time_exit': True, 'enable_support_resistance': True,
-                        'trailing_activation': 35, 'trailing_distance': 15, 'max_hold_time': 6
-                    }
-                elif text == "Cơ bản":
-                    smart_config = {
-                        'enable_trailing': True, 'enable_time_exit': True, 'enable_support_resistance': False,
-                        'trailing_activation': 30, 'trailing_distance': 15, 'max_hold_time': 6
-                    }
-                
-                user_state['smart_exit_config'] = smart_config
-                self._continue_bot_creation(chat_id, user_state)
-
-        # Xử lý các lệnh chính
+        # XỬ LÝ CÁC LỆNH CHÍNH
         elif text == "➕ Thêm Bot":
             self.user_states[chat_id] = {'step': 'waiting_bot_mode'}
             balance = get_balance(self.api_key, self.api_secret)
@@ -2556,150 +2695,6 @@ class BotManager:
                     f"Chọn đòn bẩy:",
                     chat_id,
                     create_leverage_keyboard(strategy),
-                    self.telegram_bot_token, self.telegram_chat_id
-                )
-
-    # THÊM CÁC PHẦN XỬ LÝ CHO CÁC BƯỚC BỔ SUNG
-    def _handle_additional_steps(self, chat_id, text, user_state):
-        """Xử lý các bước bổ sung như threshold, volatility, grid_levels"""
-        current_step = user_state.get('step')
-        
-        if current_step == 'waiting_threshold':
-            if text == '❌ Hủy bỏ':
-                self.user_states[chat_id] = {}
-                send_telegram("❌ Đã hủy thêm bot", chat_id, create_main_menu(),
-                            self.telegram_bot_token, self.telegram_chat_id)
-            else:
-                try:
-                    threshold = float(text)
-                    if threshold <= 0:
-                        send_telegram("⚠️ Ngưỡng phải lớn hơn 0. Vui lòng chọn lại:",
-                                    chat_id, create_threshold_keyboard(),
-                                    self.telegram_bot_token, self.telegram_chat_id)
-                        return
-
-                    user_state['threshold'] = threshold
-                    user_state['step'] = 'waiting_leverage'
-                    send_telegram(
-                        f"📈 Ngưỡng biến động: {threshold}%\n\n"
-                        f"Chọn đòn bẩy:",
-                        chat_id,
-                        create_leverage_keyboard(),
-                        self.telegram_bot_token, self.telegram_chat_id
-                    )
-                except ValueError:
-                    send_telegram("⚠️ Vui lòng nhập số hợp lệ cho ngưỡng:",
-                                chat_id, create_threshold_keyboard(),
-                                self.telegram_bot_token, self.telegram_chat_id)
-
-        elif current_step == 'waiting_volatility':
-            if text == '❌ Hủy bỏ':
-                self.user_states[chat_id] = {}
-                send_telegram("❌ Đã hủy thêm bot", chat_id, create_main_menu(),
-                            self.telegram_bot_token, self.telegram_chat_id)
-            else:
-                try:
-                    volatility = float(text)
-                    if volatility <= 0:
-                        send_telegram("⚠️ Biến động phải lớn hơn 0. Vui lòng chọn lại:",
-                                    chat_id, create_volatility_keyboard(),
-                                    self.telegram_bot_token, self.telegram_chat_id)
-                        return
-
-                    user_state['volatility'] = volatility
-                    user_state['step'] = 'waiting_leverage'
-                    send_telegram(
-                        f"⚡ Biến động tối thiểu: {volatility}%\n\n"
-                        f"Chọn đòn bẩy:",
-                        chat_id,
-                        create_leverage_keyboard(),
-                        self.telegram_bot_token, self.telegram_chat_id
-                    )
-                except ValueError:
-                    send_telegram("⚠️ Vui lòng nhập số hợp lệ cho biến động:",
-                                chat_id, create_volatility_keyboard(),
-                                self.telegram_bot_token, self.telegram_chat_id)
-
-        elif current_step == 'waiting_grid_levels':
-            if text == '❌ Hủy bỏ':
-                self.user_states[chat_id] = {}
-                send_telegram("❌ Đã hủy thêm bot", chat_id, create_main_menu(),
-                            self.telegram_bot_token, self.telegram_chat_id)
-            else:
-                try:
-                    grid_levels = int(text)
-                    if grid_levels <= 0:
-                        send_telegram("⚠️ Số lệnh grid phải lớn hơn 0. Vui lòng chọn lại:",
-                                    chat_id, create_grid_levels_keyboard(),
-                                    self.telegram_bot_token, self.telegram_chat_id)
-                        return
-
-                    user_state['grid_levels'] = grid_levels
-                    user_state['step'] = 'waiting_leverage'
-                    send_telegram(
-                        f"🛡️ Số lệnh grid: {grid_levels}\n\n"
-                        f"Chọn đòn bẩy:",
-                        chat_id,
-                        create_leverage_keyboard(),
-                        self.telegram_bot_token, self.telegram_chat_id
-                    )
-                except ValueError:
-                    send_telegram("⚠️ Vui lòng nhập số hợp lệ cho số lệnh grid:",
-                                chat_id, create_grid_levels_keyboard(),
-                                self.telegram_bot_token, self.telegram_chat_id)
-
-        elif current_step == 'waiting_leverage':
-            if text == '❌ Hủy bỏ':
-                self.user_states[chat_id] = {}
-                send_telegram("❌ Đã hủy thêm bot", chat_id, create_main_menu(),
-                            self.telegram_bot_token, self.telegram_chat_id)
-            else:
-                # Xử lý đòn bẩy
-                if text.endswith('x'):
-                    lev_text = text[:-1]
-                else:
-                    lev_text = text
-
-                try:
-                    leverage = int(lev_text)
-                    if leverage <= 0 or leverage > 100:
-                        send_telegram("⚠️ Đòn bẩy phải từ 1 đến 100. Vui lòng chọn lại:",
-                                    chat_id, create_leverage_keyboard(),
-                                    self.telegram_bot_token, self.telegram_chat_id)
-                        return
-
-                    user_state['leverage'] = leverage
-                    user_state['step'] = 'waiting_percent'
-                    
-                    # Lấy số dư hiện tại để hiển thị
-                    balance = get_balance(self.api_key, self.api_secret)
-                    balance_info = f"\n💰 Số dư hiện có: {balance:.2f} USDT" if balance else ""
-                    
-                    send_telegram(
-                        f"💰 Đòn bẩy: {leverage}x{balance_info}\n\n"
-                        f"Chọn % số dư cho mỗi lệnh:",
-                        chat_id,
-                        create_percent_keyboard(),
-                        self.telegram_bot_token, self.telegram_chat_id
-                    )
-                except ValueError:
-                    send_telegram("⚠️ Vui lòng nhập số hợp lệ cho đòn bẩy:",
-                                chat_id, create_leverage_keyboard(),
-                                self.telegram_bot_token, self.telegram_chat_id)
-
-        elif current_step == 'waiting_symbol':
-            if text == '❌ Hủy bỏ':
-                self.user_states[chat_id] = {}
-                send_telegram("❌ Đã hủy thêm bot", chat_id, create_main_menu(),
-                            self.telegram_bot_token, self.telegram_chat_id)
-            else:
-                user_state['symbol'] = text
-                user_state['step'] = 'waiting_leverage'
-                send_telegram(
-                    f"🔗 Coin: {text}\n\n"
-                    f"Chọn đòn bẩy:",
-                    chat_id,
-                    create_leverage_keyboard(),
                     self.telegram_bot_token, self.telegram_chat_id
                 )
 
