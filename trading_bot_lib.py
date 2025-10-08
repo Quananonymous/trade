@@ -29,6 +29,188 @@ def setup_logging():
     return logging.getLogger()
 
 logger = setup_logging()
+def create_main_menu():
+    return {
+        "keyboard": [
+            [{"text": "📊 Danh sách Bot"}],
+            [{"text": "➕ Thêm Bot"}, {"text": "⛔ Dừng Bot"}],
+            [{"text": "💰 Số dư"}, {"text": "📈 Vị thế"}],
+            [{"text": "⚙️ Cấu hình"}, {"text": "🎯 Chiến lược"}]
+        ],
+        "resize_keyboard": True,
+        "one_time_keyboard": False
+    }
+
+def create_cancel_keyboard():
+    return {
+        "keyboard": [[{"text": "❌ Hủy bỏ"}]],
+        "resize_keyboard": True,
+        "one_time_keyboard": True
+    }
+
+def create_strategy_keyboard():
+    return {
+        "keyboard": [
+            [{"text": "🤖 RSI/EMA Recursive"}, {"text": "📊 EMA Crossover"}],
+            [{"text": "🎯 Reverse 24h"}, {"text": "📈 Trend Following"}],
+            [{"text": "⚡ Scalping"}, {"text": "🛡️ Safe Grid"}],
+            [{"text": "🔄 Bot Động Thông Minh"}, {"text": "❌ Hủy bỏ"}]
+        ],
+        "resize_keyboard": True,
+        "one_time_keyboard": True
+    }
+
+def create_exit_strategy_keyboard():
+    """Bàn phím chọn chiến lược thoát lệnh"""
+    return {
+        "keyboard": [
+            [{"text": "🔄 Thoát lệnh thông minh"}, {"text": "⚡ Thoát lệnh cơ bản"}],
+            [{"text": "🎯 Chỉ TP/SL cố định"}, {"text": "❌ Hủy bỏ"}]
+        ],
+        "resize_keyboard": True,
+        "one_time_keyboard": True
+    }
+
+def create_smart_exit_config_keyboard():
+    """Bàn phím cấu hình Smart Exit"""
+    return {
+        "keyboard": [
+            [{"text": "Trailing: 30/15"}, {"text": "Trailing: 50/20"}],
+            [{"text": "Time Exit: 4h"}, {"text": "Time Exit: 8h"}],
+            [{"text": "Kết hợp Full"}, {"text": "Cơ bản"}],
+            [{"text": "❌ Hủy bỏ"}]
+        ],
+        "resize_keyboard": True,
+        "one_time_keyboard": True
+    }
+
+def create_bot_mode_keyboard():
+    """Bàn phím chọn chế độ bot"""
+    return {
+        "keyboard": [
+            [{"text": "🤖 Bot Tĩnh - Coin cụ thể"}, {"text": "🔄 Bot Động - Tự tìm coin"}],
+            [{"text": "❌ Hủy bỏ"}]
+        ],
+        "resize_keyboard": True,
+        "one_time_keyboard": True
+    }
+
+def create_symbols_keyboard(strategy=None):
+    """Bàn phím chọn coin"""
+    try:
+        symbols = get_all_usdt_pairs(limit=12)
+        if not symbols:
+            symbols = ["BTCUSDT", "ETHUSDT", "BNBUSDT", "ADAUSDT", "DOGEUSDT", "XRPUSDT", "DOTUSDT", "LINKUSDT"]
+    except:
+        symbols = ["BTCUSDT", "ETHUSDT", "BNBUSDT", "ADAUSDT", "DOGEUSDT", "XRPUSDT", "DOTUSDT", "LINKUSDT"]
+    
+    keyboard = []
+    row = []
+    for symbol in symbols:
+        row.append({"text": symbol})
+        if len(row) == 3:
+            keyboard.append(row)
+            row = []
+    if row:
+        keyboard.append(row)
+    keyboard.append([{"text": "❌ Hủy bỏ"}])
+    
+    return {
+        "keyboard": keyboard,
+        "resize_keyboard": True,
+        "one_time_keyboard": True
+    }
+
+def create_leverage_keyboard(strategy=None):
+    """Bàn phím chọn đòn bẩy"""
+    leverages = ["3", "5", "10", "15", "20", "25", "50", "75", "100"]
+    
+    keyboard = []
+    row = []
+    for lev in leverages:
+        row.append({"text": f"{lev}x"})
+        if len(row) == 3:
+            keyboard.append(row)
+            row = []
+    if row:
+        keyboard.append(row)
+    keyboard.append([{"text": "❌ Hủy bỏ"}])
+    
+    return {
+        "keyboard": keyboard,
+        "resize_keyboard": True,
+        "one_time_keyboard": True
+    }
+
+def create_percent_keyboard():
+    """Bàn phím chọn % số dư"""
+    return {
+        "keyboard": [
+            [{"text": "1"}, {"text": "3"}, {"text": "5"}, {"text": "10"}],
+            [{"text": "15"}, {"text": "20"}, {"text": "25"}, {"text": "50"}],
+            [{"text": "❌ Hủy bỏ"}]
+        ],
+        "resize_keyboard": True,
+        "one_time_keyboard": True
+    }
+
+def create_tp_keyboard():
+    """Bàn phím chọn Take Profit"""
+    return {
+        "keyboard": [
+            [{"text": "50"}, {"text": "100"}, {"text": "200"}],
+            [{"text": "300"}, {"text": "500"}, {"text": "1000"}],
+            [{"text": "❌ Hủy bỏ"}]
+        ],
+        "resize_keyboard": True,
+        "one_time_keyboard": True
+    }
+
+def create_sl_keyboard():
+    """Bàn phím chọn Stop Loss"""
+    return {
+        "keyboard": [
+            [{"text": "0"}, {"text": "50"}, {"text": "100"}],
+            [{"text": "150"}, {"text": "200"}, {"text": "500"}],
+            [{"text": "❌ Hủy bỏ"}]
+        ],
+        "resize_keyboard": True,
+        "one_time_keyboard": True
+    }
+
+def create_threshold_keyboard():
+    return {
+        "keyboard": [
+            [{"text": "30"}, {"text": "50"}, {"text": "70"}],
+            [{"text": "100"}, {"text": "150"}, {"text": "200"}],
+            [{"text": "❌ Hủy bỏ"}]
+        ],
+        "resize_keyboard": True,
+        "one_time_keyboard": True
+    }
+
+def create_volatility_keyboard():
+    return {
+        "keyboard": [
+            [{"text": "2"}, {"text": "3"}, {"text": "5"}],
+            [{"text": "7"}, {"text": "10"}, {"text": "15"}],
+            [{"text": "❌ Hủy bỏ"}]
+        ],
+        "resize_keyboard": True,
+        "one_time_keyboard": True
+    }
+
+def create_grid_levels_keyboard():
+    return {
+        "keyboard": [
+            [{"text": "3"}, {"text": "5"}, {"text": "7"}],
+            [{"text": "10"}, {"text": "15"}, {"text": "20"}],
+            [{"text": "❌ Hủy bỏ"}]
+        ],
+        "resize_keyboard": True,
+        "one_time_keyboard": True
+    }
+
 
 
 def send_telegram(message: str, chat_id: Optional[str] = None, reply_markup=None,
