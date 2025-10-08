@@ -1,22 +1,3 @@
-# ==============================================================
-# trading_bot_lib_v2_full.py — FULL VERSION (LINES 1..1000)
-# ==============================================================
-# Giữ nguyên cấu trúc bot gốc, và gộp toàn bộ nâng cấp đã thảo luận:
-# 1) Hạ tầng: logging, Telegram, Binance REST helpers (ký/signed)
-# 2) Chỉ báo nâng cao: RSI (Wilder), EMA, ATR%, ADX, Bollinger, MFI, OBV, Regime
-# 3) CoinManager: quản lý coin theo bot + COOLDOWN per-coin
-# 4) WebSocketManager: mô phỏng bằng REST polling (giữ API add/remove)
-# 5) SmartExit 2.0: trailing adaptive theo ATR%, breakeven, TP ladder (partial close)
-# 6) BaseBot: giữ API cũ, thêm partial_close, scanner chuyển coin sau khi đóng lệnh
-# 7) Scanner: chọn 2 coin/chiến lược, bỏ coin đang cooldown, tôn trọng leverage/step
-# 8) Chiến lược: RSI/EMA, EMA Crossover, Reverse 24h, Trend Following, Scalping, Smart Dynamic
-# 9) BotManager: giữ API cũ (start_bot/stop), gắn WS và CoinManager
-# --------------------------------------------------------------
-# Cách dùng nhanh:
-#   - Điền API vào cuối file (ví dụ trong phần __main__) hoặc module riêng.
-#   - Khởi tạo BotManager và ít nhất 1 bot (Smart_Dynamic_Bot ...), start_bot.
-# ==============================================================
-
 # =============================== IMPORTS ===============================
 import json
 import hmac
@@ -1265,7 +1246,7 @@ class BotManager:
         if balance is None:
             self.log("❌ LỖI: Không thể kết nối Binance API.")
         else:
-            self.log(f"✅ Kết nối Binance thành công! Số dư: {balance:.2f} USDT")
+            return None
 
     def log(self, message):
         logger.info(f"[SYSTEM] {message}")
