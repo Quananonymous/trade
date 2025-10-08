@@ -1950,31 +1950,81 @@ class BotManager:
             return False
 
     def add_bot(self, symbol, lev, percent, tp, sl, strategy_type, **kwargs):
-        if sl == 0:
-            sl = None
-            
-        if not self.api_key or not self.api_secret:
-            self.log("❌ Chưa thiết lập API Key trong BotManager")
-            return False
+        """
+        THÊM BOT MỚI - PHIÊN BẢN TỐI ƯU
         
-        test_balance = get_balance(self.api_key, self.api_secret)
-        if test_balance is None:
-            self.log("❌ LỖI: Không thể kết nối Binance")
-            return False
-        
-        # LẤY CẤU HÌNH SMART EXIT
-        smart_exit_config = kwargs.get('smart_exit_config', {})
-        bot_mode = kwargs.get('bot_mode', 'static')  # static or dynamic
-        
-        # BOT ĐỘNG THÔNG MINH - CHỈ KHI CHỌN ĐÚNG CHIẾN LƯỢC SMART DYNAMIC
-        if strategy_type == "Smart Dynamic":
-            strategy_key = f"SmartDynamic_{lev}_{percent}_{tp}_{sl}"
-            
-            # KIỂM TRA COOLDOWN TRƯỚC KHI THÊM
-            if self._is_in_cooldown("Smart Dynamic", strategy_key):
-                self.log(f"⏰ Smart Dynamic (Config: {strategy_key}): đang trong cooldown, không thể thêm mới")
+        Args:
+            symbol: Mã coin (None cho bot động)
+            lev: Đòn bẩy
+            percent: % số dư
+            tp: Take Profit (%)
+            sl: Stop Loss (%)
+            strategy_type: Loại chiến lược
+            **kwargs: Các tham số bổ sung
+        """
+        try:
+            # 1. KIỂM TRA ĐIỀU KIỆN ĐẦU VÀO
+            if sl == 0:
+                sl = None
+                
+            if not self.api_key or not self.api_secret:
+                self.log("❌ Chưa thiết lập API Key trong BotManager")
                 return False
             
+            # 2. KIỂM TRA KẾT NỐI BINANCE
+            test_balance = get_balance(self.api_key, self.api_secret)
+            if test_balance is None:
+                self.log("❌ LỖI: Không thể kết nối Binance")
+                return False
+            
+            # 3. LẤY CẤU HÌNH
+            smart_exit_config = kwargs.get('smart_exit_config', {})
+            dynamic_mode = kwargs.get('dynamic_mode', False)
+            threshold = kwargs.get('threshold')
+            volatility = kwargs.get('volatility')
+            grid_levels = kwargs.get('grid_levels')
+            
+            # 4. XỬ LÝ THEO TỪNG LOẠI BOT
+            bot_created = False
+            
+            # 🔄 BOT ĐỘNG THÔNG MINH (Smart Dynamic)
+            if strategy_type == "Smart Dynamic":
+                bot_created = self._create_smart_dynamic_bot(
+                    lev, percent, tp, sl, smart_exit_config, dynamic_mode
+                )
+            
+            # 🔄 BOT ĐỘNG CHO CÁC CHIẾN LƯỢC KHÁC
+            elif dynamic_mode and strategy_type in ["Reverse 24h", "Scalping", "Safe Grid", "Trend Following"]:
+                bot_created = self._create_dynamic_bot(
+                    strategy_type, lev, percent, tp, sl, 
+                    smart_exit_config, threshold, volatility, grid_levels
+                )
+            
+            # 🤖 BOT TĨNH TRUYỀN THỐNG
+            else:
+                bot_created = self._create_static_bot(
+                    symbol, strategy_type, lev, percent, tp, sl, smart_exit_config
+                )
+            
+            return bot_created
+            
+        except Exception as e:
+            self.log(f"❌ Lỗi nghiêm trọng trong add_bot: {str(e)}")
+            import traceback
+            self.log(f"🔍 Chi tiết lỗi: {traceback.format_exc()}")
+            return False
+    
+    def _create_smart_dynamic_bot(self, lev, percent, tp, sl, smart_exit_config, dynamic_mode):
+        """TẠO BOT ĐỘNG THÔNG MINH"""
+        try:
+            strategy_key = f"SmartDynamic_{lev}_{percent}_{tp}_{sl}"
+            
+            # Kiểm tra cooldown
+            if self._is_in_cooldown("Smart Dynamic", strategy_key):
+                self.log(f"⏰ Smart Dynamic (Config: {strategy_key}): đang trong cooldown")
+                return False
+            
+            # Lưu cấu hình auto strategy
             self.auto_strategies[strategy_key] = {
                 'strategy_type': "Smart Dynamic",
                 'leverage': lev,
@@ -1982,11 +2032,14 @@ class BotManager:
                 'tp': tp,
                 'sl': sl,
                 'strategy_key': strategy_key,
-                'smart_exit_config': smart_exit_config
+                'smart_exit_config': smart_exit_config,
+                'dynamic_mode': True
             }
             
-            qualified_symbols = self._find_qualified_symbols("Smart Dynamic", lev, 
-                                                           self.auto_strategies[strategy_key], strategy_key)
+            # Tìm coin phù hợp
+            qualified_symbols = self._find_qualified_symbols(
+                "Smart Dynamic", lev, self.auto_strategies[strategy_key], strategy_key
+            )
             
             success_count = 0
             for symbol in qualified_symbols:
@@ -1995,6 +2048,7 @@ class BotManager:
                     success = self._create_auto_bot(symbol, "Smart Dynamic", self.auto_strategies[strategy_key])
                     if success:
                         success_count += 1
+                        time.sleep(0.5)  # Tránh rate limit
             
             if success_count > 0:
                 success_msg = (
@@ -2005,37 +2059,38 @@ class BotManager:
                     f"🎯 TP: {tp}%\n"
                     f"🛡️ SL: {sl}%\n"
                     f"🤖 Coin: {', '.join(qualified_symbols[:success_count])}\n\n"
-                    f"🔑 <b>Config Key:</b> {strategy_key}\n"
-                    f"🔄 <i>Hệ thống sẽ tự động tìm coin mới sau khi đóng lệnh</i>\n"
-                    f"⏰ <i>Cooldown: {self.cooldown_period//60} phút sau khi đóng lệnh</i>"
+                    f"🔑 <b>Config Key:</b> {strategy_key}"
                 )
                 self.log(success_msg)
                 return True
             else:
-                self.log("⚠️ Smart Dynamic: chưa tìm thấy coin phù hợp, sẽ thử lại sau")
-                return True
-        
-        # CÁC CHIẾN LƯỢC ĐỘNG KHÁC - KHI CHỌN BOT ĐỘNG VỚI CHIẾN LƯỢC CỤ THỂ
-        elif bot_mode == 'dynamic' and strategy_type in ["Reverse 24h", "Scalping", "Safe Grid", "Trend Following"]:
+                self.log("⚠️ Smart Dynamic: chưa tìm thấy coin phù hợp")
+                return False
+                
+        except Exception as e:
+            self.log(f"❌ Lỗi tạo Smart Dynamic bot: {str(e)}")
+            return False
+    
+    def _create_dynamic_bot(self, strategy_type, lev, percent, tp, sl, smart_exit_config, threshold, volatility, grid_levels):
+        """TẠO BOT ĐỘNG CHO CÁC CHIẾN LƯỢC"""
+        try:
+            # Tạo strategy key duy nhất
             strategy_key = f"{strategy_type}_{lev}_{percent}_{tp}_{sl}"
             
-            # Thêm tham số đặc biệt
             if strategy_type == "Reverse 24h":
-                threshold = kwargs.get('threshold', 30)
-                strategy_key += f"_th{threshold}"
+                strategy_key += f"_th{threshold or 30}"
             elif strategy_type == "Scalping":
-                volatility = kwargs.get('volatility', 3)
-                strategy_key += f"_vol{volatility}"
+                strategy_key += f"_vol{volatility or 3}"
             elif strategy_type == "Safe Grid":
-                grid_levels = kwargs.get('grid_levels', 5)
-                strategy_key += f"_grid{grid_levels}"
+                strategy_key += f"_grid{grid_levels or 5}"
             
-            # KIỂM TRA COOLDOWN TRƯỚC KHI THÊM
+            # Kiểm tra cooldown
             if self._is_in_cooldown(strategy_type, strategy_key):
-                self.log(f"⏰ {strategy_type} (Config: {strategy_key}): đang trong cooldown, không thể thêm mới")
+                self.log(f"⏰ {strategy_type} (Config: {strategy_key}): đang trong cooldown")
                 return False
             
-            self.auto_strategies[strategy_key] = {
+            # Lưu cấu hình
+            config = {
                 'strategy_type': strategy_type,
                 'leverage': lev,
                 'percent': percent,
@@ -2043,78 +2098,114 @@ class BotManager:
                 'sl': sl,
                 'strategy_key': strategy_key,
                 'smart_exit_config': smart_exit_config,
-                **kwargs
+                'dynamic_mode': True
             }
             
-            qualified_symbols = self._find_qualified_symbols(strategy_type, lev, 
-                                                           self.auto_strategies[strategy_key], strategy_key)
+            # Thêm tham số đặc biệt
+            if threshold: config['threshold'] = threshold
+            if volatility: config['volatility'] = volatility
+            if grid_levels: config['grid_levels'] = grid_levels
+            
+            self.auto_strategies[strategy_key] = config
+            
+            # Tìm coin phù hợp
+            qualified_symbols = self._find_qualified_symbols(
+                strategy_type, lev, config, strategy_key
+            )
             
             success_count = 0
             for symbol in qualified_symbols:
                 bot_id = f"{symbol}_{strategy_key}"
                 if bot_id not in self.bots:
-                    success = self._create_auto_bot(symbol, strategy_type, self.auto_strategies[strategy_key])
+                    success = self._create_auto_bot(symbol, strategy_type, config)
                     if success:
                         success_count += 1
+                        time.sleep(0.5)
             
             if success_count > 0:
-                success_msg = (
-                    f"✅ <b>ĐÃ TẠO {success_count} BOT {strategy_type}</b>\n\n"
-                    f"🎯 Chiến lược: {strategy_type}\n"
-                    f"💰 Đòn bẩy: {lev}x\n"
-                    f"📊 % Số dư: {percent}%\n"
-                    f"🎯 TP: {tp}%\n"
-                    f"🛡️ SL: {sl}%\n"
-                )
-                if strategy_type == "Reverse 24h":
-                    success_msg += f"📈 Ngưỡng: {threshold}%\n"
-                elif strategy_type == "Scalping":
-                    success_msg += f"⚡ Biến động: {volatility}%\n"
-                elif strategy_type == "Safe Grid":
-                    success_msg += f"🛡️ Số lệnh: {grid_levels}\n"
-                    
-                success_msg += f"🤖 Coin: {', '.join(qualified_symbols[:success_count])}\n\n"
-                success_msg += f"🔑 <b>Config Key:</b> {strategy_key}\n"
-                success_msg += f"🔄 <i>Bot sẽ tự động tìm coin mới sau khi đóng lệnh</i>\n"
-                success_msg += f"⏰ <i>Cooldown: {self.cooldown_period//60} phút sau khi đóng lệnh</i>"
-                
+                success_msg = self._format_success_message(strategy_type, lev, percent, tp, sl, 
+                                                         qualified_symbols[:success_count], strategy_key,
+                                                         threshold, volatility, grid_levels)
                 self.log(success_msg)
                 return True
             else:
-                self.log(f"⚠️ {strategy_type}: chưa tìm thấy coin phù hợp, sẽ thử lại sau")
-                return True
-        
-        # CHIẾN LƯỢC THỦ CÔNG
-        else:
-            symbol = symbol.upper()
+                self.log(f"⚠️ {strategy_type}: chưa tìm thấy coin phù hợp")
+                return False
+                
+        except Exception as e:
+            self.log(f"❌ Lỗi tạo {strategy_type} bot: {str(e)}")
+            return False
+    
+    def _create_static_bot(self, symbol, strategy_type, lev, percent, tp, sl, smart_exit_config):
+        """TẠO BOT TĨNH TRUYỀN THỐNG"""
+        try:
+            symbol = symbol.upper() if symbol else "BTCUSDT"
             bot_id = f"{symbol}_{strategy_type}"
             
             if bot_id in self.bots:
                 self.log(f"⚠️ Đã có bot {strategy_type} cho {symbol}")
                 return False
-                
-            try:
-                bot_class = {
-                    "RSI/EMA Recursive": RSI_EMA_Bot,
-                    "EMA Crossover": EMA_Crossover_Bot
-                }.get(strategy_type)
-                
-                if not bot_class:
-                    self.log(f"❌ Chiến lược {strategy_type} không được hỗ trợ")
-                    return False
-                
-                bot = bot_class(symbol, lev, percent, tp, sl, self.ws_manager,
-                              self.api_key, self.api_secret, self.telegram_bot_token, 
-                              self.telegram_chat_id, smart_exit_config)
-                
-                self.bots[bot_id] = bot
-                self.log(f"✅ Đã thêm bot {strategy_type}: {symbol} | ĐB: {lev}x | Vốn: {percent}% | TP/SL: {tp}%/{sl}%")
-                return True
-                
-            except Exception as e:
-                error_msg = f"❌ Lỗi tạo bot {symbol}: {str(e)}"
-                self.log(error_msg)
+            
+            # Kiểm tra chiến lược được hỗ trợ
+            bot_class = {
+                "RSI/EMA Recursive": RSI_EMA_Bot,
+                "EMA Crossover": EMA_Crossover_Bot,
+                "Reverse 24h": Reverse_24h_Bot,
+                "Trend Following": Trend_Following_Bot,
+                "Scalping": Scalping_Bot,
+                "Safe Grid": Safe_Grid_Bot
+            }.get(strategy_type)
+            
+            if not bot_class:
+                self.log(f"❌ Chiến lược {strategy_type} không được hỗ trợ")
                 return False
+            
+            # Tạo bot với tham số phù hợp
+            if strategy_type == "Reverse 24h":
+                bot = bot_class(symbol, lev, percent, tp, sl, self.ws_manager,
+                              self.api_key, self.api_secret, self.telegram_bot_token,
+                              self.telegram_chat_id, threshold=30, smart_exit_config=smart_exit_config)
+            elif strategy_type == "Safe Grid":
+                bot = bot_class(symbol, lev, percent, tp, sl, self.ws_manager,
+                              self.api_key, self.api_secret, self.telegram_bot_token,
+                              self.telegram_chat_id, grid_levels=5, smart_exit_config=smart_exit_config)
+            else:
+                bot = bot_class(symbol, lev, percent, tp, sl, self.ws_manager,
+                              self.api_key, self.api_secret, self.telegram_bot_token,
+                              self.telegram_chat_id, smart_exit_config=smart_exit_config)
+            
+            self.bots[bot_id] = bot
+            self.log(f"✅ Đã thêm bot {strategy_type}: {symbol} | ĐB: {lev}x | Vốn: {percent}% | TP/SL: {tp}%/{sl}%")
+            return True
+            
+        except Exception as e:
+            self.log(f"❌ Lỗi tạo bot tĩnh {symbol}: {str(e)}")
+            return False
+    
+    def _format_success_message(self, strategy_type, lev, percent, tp, sl, symbols, strategy_key, threshold, volatility, grid_levels):
+        """ĐỊNH DẠNG THÔNG BÁO THÀNH CÔNG"""
+        message = (
+            f"✅ <b>ĐÃ TẠO {len(symbols)} BOT {strategy_type}</b>\n\n"
+            f"🎯 Chiến lược: {strategy_type}\n"
+            f"💰 Đòn bẩy: {lev}x\n"
+            f"📊 % Số dư: {percent}%\n"
+            f"🎯 TP: {tp}%\n"
+            f"🛡️ SL: {sl}%\n"
+        )
+        
+        # Thêm tham số đặc biệt
+        if threshold:
+            message += f"📈 Ngưỡng: {threshold}%\n"
+        if volatility:
+            message += f"⚡ Biến động: {volatility}%\n"
+        if grid_levels:
+            message += f"🛡️ Số lệnh: {grid_levels}\n"
+        
+        message += f"🤖 Coin: {', '.join(symbols)}\n\n"
+        message += f"🔑 <b>Config Key:</b> {strategy_key}\n"
+        message += f"🔄 <i>Bot sẽ tự động tìm coin mới sau khi đóng lệnh</i>"
+        
+        return message
 
     def stop_bot(self, bot_id):
         bot = self.bots.get(bot_id)
