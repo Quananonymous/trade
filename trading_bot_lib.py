@@ -72,107 +72,67 @@ class SmartExitManager:
             'trailing_activation': 30,
             'trailing_distance': 15,
             'max_hold_time': 6,
-            'min_profit_for_exit': 10
+            'min_profit_for_exit': 10,
+            'breakeven_at': 12,
+            'trail_adaptive': True,
+            'tp_ladder': [
+                {'roi': 15, 'pct': 0.30},
+                {'roi': 25, 'pct': 0.30},
+                {'roi': 40, 'pct': 0.40},
+            ]
         }
         
         self.trailing_active = False
         self.peak_price = 0
         self.position_open_time = 0
         self.volume_history = []
-        
-        # Thêm các cấu hình nâng cấp từ v2_part_2 (được tích hợp trong _check_trailing_stop)
-        self.config.update({
-            'breakeven_at': 12, # Được dùng trong BaseBot check_tp_sl của v2_part2, nhưng sẽ dùng lại logic trong v16.py
-            'trail_adaptive': True, # Cần chỉ báo ATR để dùng
-            'tp_ladder': [ # Cần logic partial_close
-                {'roi': 15, 'pct': 0.30},
-                {'roi': 25, 'pct': 0.30},
-                {'roi': 40, 'pct': 0.40},
-            ]
-        })
         self._breakeven_active = False
         self._tp_hit = set()
         
     def update_config(self, **kwargs):
-        """Cập nhật cấu hình từ người dùng"""
-        changed = {}
         for key, value in kwargs.items():
             if key in self.config:
                 self.config[key] = value
-                changed[key] = value
-        if changed:
-            self.bot.log(f"⚙️ Cập nhật Smart Exit: {changed}")
+        self.bot.log(f"⚙️ Cập nhật Smart Exit: {self.config}")
     
     def _calculate_roi(self, current_price):
-        """Tính ROI hiện tại"""
         if not self.bot.position_open or self.bot.entry <= 0 or abs(self.bot.qty) <= 0:
             return 0.0
         if self.bot.side == "BUY":
-            # Tính PnL dựa trên giá hiện tại và giá vào
             profit = (current_price - self.bot.entry) * abs(self.bot.qty)
         else:
             profit = (self.bot.entry - current_price) * abs(self.bot.qty)
-            
-        # Tính vốn đầu tư thực tế (dùng cho ROI)
         invested = self.bot.entry * abs(self.bot.qty) / self.bot.lev
         if invested <= 0: return 0.0
-        
         return (profit / invested) * 100.0
-
     
     def check_all_exit_conditions(self, current_price, current_volume=None):
-        """KIỂM TRA TẤT CẢ ĐIỀU KIỆN ĐÓNG LỆNH"""
         if not self.bot.position_open:
             return None
-            
         exit_reasons = []
         current_roi = self._calculate_roi(current_price)
 
-        # 1. BREAKEVEEN + TP LADDER (Logic nâng cấp từ v2_part2)
         if (not self._breakeven_active) and (current_roi >= self.config.get('breakeven_at', 12)):
             self._breakeven_active = True
-            # Đảm bảo min_profit_for_exit không giảm dưới 0 khi breakeven
             self.config['min_profit_for_exit'] = max(self.config.get('min_profit_for_exit', 10), 0)
             self.bot.log(f"🟩 Kích hoạt Breakeven tại ROI {current_roi:.1f}%")
-
-        # Logic TP Ladder (cần hàm partial_close được tích hợp vào BaseBot)
-        # Bỏ qua vì partial_close không có trong phiên bản v16.py gốc mà BaseBot kế thừa
-        # for step in self.config.get('tp_ladder', []):
-        #     roi_lv = step.get('roi', 0); pct = step.get('pct', 0)
-        #     key = f"tp_{roi_lv}"
-        #     if current_roi >= roi_lv and key not in self._tp_hit:
-        #         # Thao tác partial_close bị thiếu trong BaseBot của v16.py
-        #         # ok = self.bot.partial_close(pct, reason=f"TP ladder {roi_lv}%")
-        #         # if ok:
-        #         #     self._tp_hit.add(key)
-        #         pass 
         
-        # 2. TRAILING STOP EXIT
         if self.config['enable_trailing']:
             reason = self._check_trailing_stop(current_price)
-            if reason:
-                exit_reasons.append(reason)
+            if reason: exit_reasons.append(reason)
         
-        # 3. TIME-BASED EXIT
         if self.config['enable_time_exit']:
             reason = self._check_time_exit()
-            if reason:
-                exit_reasons.append(reason)
+            if reason: exit_reasons.append(reason)
         
-        # 4. VOLUME-BASED EXIT  
         if self.config['enable_volume_exit'] and current_volume:
             reason = self._check_volume_exit(current_volume)
-            if reason:
-                exit_reasons.append(reason)
+            if reason: exit_reasons.append(reason)
         
-        # 5. SUPPORT/RESISTANCE EXIT
         if self.config['enable_support_resistance']:
             reason = self._check_support_resistance(current_price)
-            if reason:
-                exit_reasons.append(reason)
+            if reason: exit_reasons.append(reason)
         
-        # Chỉ đóng lệnh nếu đang có lãi đạt ngưỡng tối thiểu HOẶC Breakeven đã kích hoạt
-        # Nếu Breakeven active, ngưỡng lãi tối thiểu có thể là 0
         min_profit = self.config['min_profit_for_exit'] if not self._breakeven_active else 0
         
         if exit_reasons:
@@ -182,29 +142,21 @@ class SmartExitManager:
         return None
     
     def _check_trailing_stop(self, current_price):
-        """Trailing Stop - Bảo vệ lợi nhuận"""
         current_roi = self._calculate_roi(current_price)
         distance = self.config['trailing_distance']
         
-        # Kích hoạt trailing khi đạt ngưỡng
         if current_roi >= self.config['trailing_activation'] and not self.trailing_active:
             self.trailing_active = True
             self.peak_price = current_price
             self.bot.log(f"🟢 Kích hoạt Trailing Stop | Lãi {current_roi:.1f}%")
         
-        # Cập nhật đỉnh mới
         if self.trailing_active:
-            # Logic adaptive trailing bị thiếu do cần chỉ báo ATR từ v2_part1
-            # if self.config.get('trail_adaptive'):
-            #     ...
-            
-            # Cập nhật peak price
             if self.bot.side == "BUY":
                 self.peak_price = max(self.peak_price, current_price)
                 trigger_price = self.peak_price * (1 - distance / 100.0)
                 if current_price <= trigger_price:
                     return f"🔻 Trailing hit ({distance:.1f}%)"
-            else: # SELL side
+            else:
                 self.peak_price = min(self.peak_price, current_price)
                 trigger_price = self.peak_price * (1 + distance / 100.0)
                 if current_price >= trigger_price:
@@ -213,56 +165,38 @@ class SmartExitManager:
         return None
     
     def _check_time_exit(self):
-        """Time-based Exit - Giới hạn thời gian giữ lệnh"""
-        if self.position_open_time == 0:
-            return None
-            
+        if self.position_open_time == 0: return None
         holding_hours = (time.time() - self.position_open_time) / 3600
-        
         if holding_hours >= self.config['max_hold_time']:
             return f"Time({holding_hours:.1f}h)"
-        
         return None
     
     def _check_volume_exit(self, current_volume):
-        """Volume-based Exit - Theo dấu hiệu volume"""
         if len(self.volume_history) < 5:
             self.volume_history.append(current_volume)
             return None
-        
-        # Logic đơn giản từ v16.py:
         avg_volume = sum(self.volume_history[-5:]) / 5
-        
         if current_volume < avg_volume * 0.4:
             return "Volume(giảm 60%)"
-        
         self.volume_history.append(current_volume)
-        if len(self.volume_history) > 10:
-            self.volume_history.pop(0)
-            
+        if len(self.volume_history) > 10: self.volume_history.pop(0)
         return None
     
     def _check_support_resistance(self, current_price):
-        """Support/Resistance Exit - Theo key levels"""
-        # Logic đơn giản từ v16.py:
         if self.bot.side == "BUY":
             target_profit = 5.0
             target_price = self.bot.entry * (1 + target_profit/100)
-            
             if current_price >= target_price:
                 return f"Resistance(+{target_profit}%)"
-        
         return None
     
     def on_position_opened(self):
-        """Khi mở position mới"""
         self.trailing_active = False
         self.peak_price = self.bot.entry
         self.position_open_time = time.time()
         self.volume_history = []
         self._breakeven_active = False
         self._tp_hit.clear()
-
 # ========== MENU TELEGRAM HOÀN CHỈNH ==========
 def create_main_menu():
     return {
@@ -1165,40 +1099,37 @@ class BaseBot:
         self.config_key = config_key
         self.dynamic_mode = dynamic_mode
         
+        # === CƠ CHẾ ĐẾM LẦN THĂNG CẤP (RANK-UP) ===
+        self.rank_up_count = 0 
+        
         self.status = "waiting"
         self.side = ""
         self.qty = 0
         self.entry = 0
-        self.prices = [] # Dùng cho chỉ báo
+        self.prices = []
         self.position_open = False
         self._stop = False
-        
         self.last_trade_time = 0
         self.last_close_time = 0
         self.last_position_check = 0
         self.last_error_log_time = 0
-        
         self.cooldown_period = 300
         self.position_check_interval = 30
-        
         self._close_attempted = False
         self._last_close_attempt = 0
-        self.should_be_removed = False # Cờ để BotManager xóa bot
+        self.should_be_removed = False
         
         self.coin_manager = CoinManager()
         
-        # HỆ THỐNG SMART EXIT
         self.smart_exit = SmartExitManager(self)
         if smart_exit_config:
             self.smart_exit.update_config(**smart_exit_config)
         
-        # Đăng ký coin ban đầu
         if symbol:
             success = self.coin_manager.register_coin(self.symbol, f"{strategy_name}_{id(self)}", strategy_name, config_key)
             if not success:
                 self.log(f"⚠️ Cảnh báo: {self.symbol} đã được quản lý bởi bot khác hoặc đang cooldown")
         
-        # Khởi tạo và chạy thread
         self.check_position_status()
         self.ws_manager.add_symbol(self.symbol, self._handle_price_update)
         self.thread = threading.Thread(target=self._run, daemon=True)
@@ -1215,21 +1146,17 @@ class BaseBot:
                          default_chat_id=self.telegram_chat_id)
 
     def _handle_price_update(self, price):
-        if self._stop or not price or price <= 0:
-            return
+        if self._stop or not price or price <= 0: return
         try:
             self.prices.append(float(price))
-            if len(self.prices) > 1000: # Tăng buffer để đủ cho các chỉ báo
-                self.prices = self.prices[-1000:]
+            if len(self.prices) > 1000: self.prices = self.prices[-1000:]
         except Exception as e:
             self.log(f"❌ Lỗi xử lý giá: {str(e)}")
 
     def get_signal(self):
-        # Đây là phương thức trừu tượng, sẽ được triển khai trong lớp con
-        return None
+        raise NotImplementedError("Phương thức get_signal cần được triển khai")
 
     def check_position_status(self):
-        # ... (Nội dung giữ nguyên từ v16.py)
         try:
             positions = get_positions(self.symbol, self.api_key, self.api_secret)
             if not positions:
@@ -1253,14 +1180,12 @@ class BaseBot:
                         self._reset_position()
                         break
             
-            if not position_found:
-                self._reset_position()
+            if not position_found: self._reset_position()
                 
         except Exception as e:
             if time.time() - self.last_error_log_time > 10:
                 self.log(f"❌ Lỗi kiểm tra vị thế: {str(e)}")
                 self.last_error_log_time = time.time()
-
 
     def _reset_position(self):
         self.position_open = False
@@ -1270,12 +1195,11 @@ class BaseBot:
         self.entry = 0
         self._close_attempted = False
         self._last_close_attempt = 0
-        self.smart_exit.trailing_active = False # Reset smart exit state
+        self.smart_exit.trailing_active = False
         self.smart_exit._breakeven_active = False
         self.smart_exit._tp_hit.clear()
 
     def _run(self):
-        # ... (Nội dung giữ nguyên từ v16.py)
         while not self._stop:
             try:
                 current_time = time.time()
@@ -1322,7 +1246,6 @@ class BaseBot:
         self.log(f"🔴 Bot dừng cho {self.symbol}")
 
     def open_position(self, side):
-        # ... (Nội dung giữ nguyên từ v16.py)
         try:
             self.check_position_status()
             if self.position_open:
@@ -1352,12 +1275,10 @@ class BaseBot:
             qty = (usd_amount * self.lev) / current_price
             
             if step_size > 0:
-                # Tính toán lại qty theo step_size
-                qty = math.floor(qty / step_size) * step_size
-                # Đảm bảo precision
                 precision = int(round(-math.log10(step_size))) if step_size < 1 else 0
+                qty = math.floor(qty / step_size) * step_size
                 qty = float(f"{qty:.{precision}f}")
-                
+
             if qty < step_size:
                 self.log(f"❌ Số lượng quá nhỏ: {qty}")
                 return False
@@ -1376,6 +1297,9 @@ class BaseBot:
                     
                     self.smart_exit.on_position_opened()
                     
+                    # Log Rank-up khi mở lệnh
+                    rank_info = f"📊 Rank hiện tại: {self.rank_up_count}"
+
                     message = (
                         f"✅ <b>ĐÃ MỞ VỊ THẾ {self.symbol}</b>\n"
                         f"🤖 Chiến lược: {self.strategy_name}\n"
@@ -1384,7 +1308,8 @@ class BaseBot:
                         f"📊 Khối lượng: {executed_qty:.4f}\n"
                         f"💵 Giá trị: {executed_qty * self.entry:.2f} USDT\n"
                         f"💰 Đòn bẩy: {self.lev}x\n"
-                        f"🎯 TP: {self.tp}% | 🛡️ SL: {self.sl}%"
+                        f"🎯 TP: {self.tp}% | 🛡️ SL: {self.sl}%\n"
+                        f"{rank_info}"
                     )
                     self.log(message)
                     return True
@@ -1401,27 +1326,27 @@ class BaseBot:
             return False
 
     def close_position(self, reason=""):
-        # ... (Nội dung giữ nguyên từ v16.py)
-        if not self.position_open or self._close_attempted:
-            return False
-        
-        current_time = time.time()
-        if self._close_attempted and current_time - self._last_close_attempt < 30:
-            self.log(f"⚠️ Đang thử đóng lệnh lần trước, chờ...")
-            return False
-            
         try:
+            self.check_position_status()
+            
+            if not self.position_open or abs(self.qty) <= 0:
+                self.log(f"⚠️ Không có vị thế để đóng: {reason}")
+                return False
+
+            current_time = time.time()
+            if self._close_attempted and current_time - self._last_close_attempt < 30:
+                self.log(f"⚠️ Đang thử đóng lệnh lần trước, chờ...")
+                return False
+            
             self._close_attempted = True
             self._last_close_attempt = current_time
 
             close_side = "SELL" if self.side == "BUY" else "BUY"
             close_qty = abs(self.qty)
             
-            # Hủy lệnh đang mở và chờ
             cancel_all_orders(self.symbol, self.api_key, self.api_secret)
             time.sleep(0.5)
             
-            # Đóng lệnh Market
             result = place_order(self.symbol, close_side, close_qty, self.api_key, self.api_secret)
             
             if result and 'orderId' in result:
@@ -1433,27 +1358,34 @@ class BaseBot:
                     else:
                         pnl = (self.entry - current_price) * abs(self.qty)
                 
+                # === LOGIC CỘNG RANK-UP ===
+                is_profitable = pnl > 0
+                if is_profitable:
+                    self.rank_up_count += 1
+                    rank_status = f"🏆 Rank: {self.rank_up_count} (THĂNG CẤP)"
+                else:
+                    rank_status = f"📉 Rank: {self.rank_up_count} (Giữ nguyên)"
+                
                 message = (
                     f"⛔ <b>ĐÃ ĐÓNG VỊ THẾ {self.symbol}</b>\n"
                     f"🤖 Chiến lược: {self.strategy_name}\n"
                     f"📌 Lý do: {reason}\n"
                     f"🏷️ Giá ra: {current_price:.4f}\n"
                     f"📊 Khối lượng: {close_qty:.4f}\n"
-                    f"💰 PnL: {pnl:.2f} USDT"
+                    f"💰 PnL: {pnl:.2f} USDT\n"
+                    f"📊 {rank_status}"
                 )
                 self.log(message)
                 
-                # Set cooldown cho coin cũ
                 old_symbol = self.symbol
                 self.coin_manager.set_cooldown(old_symbol)
                 self.log(f"⏳ COOLDOWN {old_symbol} ({self.coin_manager.cooldown_left(old_symbol)}s)")
                 
-                # Bot Động tìm coin mới
                 if self.dynamic_mode:
                     self.log("🔄 Bot động: Đang tìm coin mới...")
                     threading.Thread(target=self._find_new_coin_after_exit, daemon=True).start()
                 else:
-                    self.should_be_removed = True # BotManager sẽ xóa bot tĩnh
+                    self.should_be_removed = True
                 
                 self._reset_position()
                 self.last_close_time = time.time()
@@ -1474,11 +1406,10 @@ class BaseBot:
             return False
 
     def _find_new_coin_after_exit(self):
-        """🔄 TÌM COIN MỚI CHO BOT ĐỘNG SAU KHI ĐÓNG LỆNH"""
+        # ... (Hàm tìm coin mới giữ nguyên)
         try:
             self.log("🔄 Bot động đang tìm coin mới...")
             
-            # Hàm get_qualified_symbols từ v16.py (đã được tích hợp ở trên)
             new_symbols = get_qualified_symbols(
                 self.api_key, 
                 self.api_secret,
@@ -1494,29 +1425,21 @@ class BaseBot:
             
             if new_symbols:
                 new_symbol = new_symbols[0]
-                
-                # Hủy đăng ký coin cũ
                 old_symbol = self.symbol
                 self.coin_manager.unregister_coin(old_symbol)
-                
-                # Cập nhật symbol mới
                 self.symbol = new_symbol
                 
-                # Đăng ký coin mới (sẽ thất bại nếu coin mới đang cooldown)
                 registered = self.coin_manager.register_coin(
                     new_symbol, f"{self.strategy_name}_{id(self)}", self.strategy_name, self.config_key
                 )
                 
                 if registered:
                     self._restart_websocket_for_new_coin()
-                    
                     message = f"🔄 Bot động chuyển từ {old_symbol} → {new_symbol}"
                     self.log(message)
-                    
                     self.should_be_removed = False
                 else:
                     self.log(f"❌ Không thể đăng ký coin mới {new_symbol} (có thể đang cooldown)")
-                    # Quay lại coin cũ nếu không đăng ký được
                     self.symbol = old_symbol
                     self.coin_manager.register_coin(old_symbol, f"{self.strategy_name}_{id(self)}", self.strategy_name, self.config_key)
             else:
@@ -1527,46 +1450,39 @@ class BaseBot:
             traceback.print_exc()
 
     def _restart_websocket_for_new_coin(self):
-        """Khởi động lại WebSocket cho coin mới"""
+        # ... (Hàm khởi động lại WS giữ nguyên)
         try:
             self.ws_manager.remove_symbol(self.symbol)
             time.sleep(2)
             self.ws_manager.add_symbol(self.symbol, self._handle_price_update)
             self.log(f"🔗 Khởi động lại WebSocket cho {self.symbol}")
-            
         except Exception as e:
             self.log(f"❌ Lỗi khởi động lại WebSocket: {str(e)}")
 
+
     def check_tp_sl(self):
-        """KIỂM TRA SMART EXIT + TP/SL TRUYỀN THỐNG"""
-        
-        # 1. KIỂM TRA SMART EXIT TRƯỚC
+        # ... (Hàm kiểm tra TP/SL giữ nguyên)
         if self.position_open and self.entry > 0:
             current_price = get_current_price(self.symbol)
             if current_price > 0:
-                # Logic volume check cần giá trị volume, ở đây không có nên chỉ check giá
-                exit_reason = self.smart_exit.check_all_exit_conditions(current_price) 
+                exit_reason = self.smart_exit.check_all_exit_conditions(current_price)
                 if exit_reason:
                     self.close_position(exit_reason)
                     return
         
-        # 2. KIỂM TRA TP/SL TRUYỀN THỐNG
         if not self.position_open or self.entry <= 0 or self._close_attempted:
             return
 
         current_price = get_current_price(self.symbol)
-        if current_price <= 0:
-            return
+        if current_price <= 0: return
 
-        # Tính ROI
         if self.side == "BUY":
             profit = (current_price - self.entry) * abs(self.qty)
         else:
             profit = (self.entry - current_price) * abs(self.qty)
             
         invested = self.entry * abs(self.qty) / self.lev
-        if invested <= 0:
-            return
+        if invested <= 0: return
             
         roi = (profit / invested) * 100
 
@@ -1574,7 +1490,6 @@ class BaseBot:
             self.close_position(f"✅ Đạt TP {self.tp}% (ROI: {roi:.2f}%)")
         elif self.sl is not None and self.sl > 0 and roi <= -self.sl:
             self.close_position(f"❌ Đạt SL {self.sl}% (ROI: {roi:.2f}%)")
-
 # ========== CÁC CHIẾN LƯỢC GIAO DỊCH ==========
 class RSI_EMA_Bot(BaseBot):
     # Dùng chỉ báo calc_rsi (rsi_wilder_last) và calc_ema (ema_last)
