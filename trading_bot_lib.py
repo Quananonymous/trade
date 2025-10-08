@@ -98,9 +98,21 @@ def get_balance(api_key, api_secret):
         url_path = "/fapi/v2/balance"
         params = {"timestamp": ts}
         data = signed_request(url_path, params, api_key, api_secret, 'GET')
-        return data
-    except Exception:
-        return None
+        if not data:
+            return 0.0
+            
+        # Tìm số dư USDT - SỬA LỖI Ở ĐÂY
+        for asset in data:
+            if asset.get('asset') == 'USDT':
+                balance_str = asset.get('availableBalance') or asset.get('balance') or '0'
+                try:
+                    return float(balance_str)
+                except (ValueError, TypeError):
+                    return 0.0
+        return 0.0
+    except Exception as e:
+        logger.error(f"Lỗi get_balance: {e}")
+        return 0.0
 
 def set_leverage(symbol, leverage, api_key, api_secret):
     try:
@@ -817,18 +829,15 @@ class BaseBot:
             price = get_current_price(self.symbol)
             if price <= 0: return False
             
-            balance = get_balance(self.api_key, self.api_secret)
-            if not balance: return False
+            balance_data = get_balance(self.api_key, self.api_secret)  # Đổi tên biến
+            if not balance_data: return False
             
-            usdt = 0
-            for b in balance:
-                if b.get('asset') == 'USDT':
-                    usdt = float(b.get('balance', 0) or b.get('balance', 0))
-                    break
-                    
-            if usdt <= 0: return False
+            # SỬA LỖI Ở ĐÂY - balance_data giờ là số float, không phải list
+            usdt_balance = balance_data  # Đây là số dư USDT dạng float
             
-            invest = usdt * self.percent
+            if usdt_balance <= 0: return False
+            
+            invest = usdt_balance * self.percent
             qty = (invest * self.lev) / price
             step = get_step_size(self.symbol, self.api_key, self.api_secret)
             
@@ -1498,6 +1507,7 @@ class BotManager:
         if balance is None:
             self.log("❌ LỖI: Không thể kết nối Binance API.")
         else:
+            # SỬA LỖI FORMAT STRING Ở ĐÂY
             self.log(f"✅ Kết nối Binance thành công! Số dư: {balance:.2f} USDT")
 
     def log(self, message):
@@ -2112,6 +2122,7 @@ class BotManager:
                             bot_token=self.telegram_bot_token, default_chat_id=self.telegram_chat_id)
                 return
             
+            # SỬA LỖI FORMAT Ở ĐÂY
             send_telegram(
                 f"🎯 <b>CHỌN CHẾ ĐỘ BOT</b>\n\n"
                 f"💰 Số dư hiện có: <b>{balance:.2f} USDT</b>\n\n"
@@ -2186,6 +2197,7 @@ class BotManager:
                     send_telegram("❌ <b>LỖI KẾT NỐI BINANCE</b>\nVui lòng kiểm tra API Key!", chat_id,
                                 bot_token=self.telegram_bot_token, default_chat_id=self.telegram_chat_id)
                 else:
+                    # SỬA LỖI FORMAT Ở ĐÂY
                     send_telegram(f"💰 <b>SỐ DƯ KHẢ DỤNG</b>: {balance:.2f} USDT", chat_id,
                                 bot_token=self.telegram_bot_token, default_chat_id=self.telegram_chat_id)
             except Exception as e:
