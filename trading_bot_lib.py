@@ -1964,10 +1964,10 @@ class BotManager:
         
         # LẤY CẤU HÌNH SMART EXIT
         smart_exit_config = kwargs.get('smart_exit_config', {})
-        dynamic_mode = kwargs.get('dynamic_mode', False)  # 🔄 THÊM CHẾ ĐỘ ĐỘNG
+        bot_mode = kwargs.get('bot_mode', 'static')  # static or dynamic
         
-        # BOT ĐỘNG THÔNG MINH
-        if strategy_type == "Smart Dynamic" or dynamic_mode:
+        # BOT ĐỘNG THÔNG MINH - CHỈ KHI CHỌN ĐÚNG CHIẾN LƯỢC SMART DYNAMIC
+        if strategy_type == "Smart Dynamic":
             strategy_key = f"SmartDynamic_{lev}_{percent}_{tp}_{sl}"
             
             # KIỂM TRA COOLDOWN TRƯỚC KHI THÊM
@@ -1982,8 +1982,7 @@ class BotManager:
                 'tp': tp,
                 'sl': sl,
                 'strategy_key': strategy_key,
-                'smart_exit_config': smart_exit_config,
-                'dynamic_mode': True  # 🔄 LUÔN LÀ BOT ĐỘNG
+                'smart_exit_config': smart_exit_config
             }
             
             qualified_symbols = self._find_qualified_symbols("Smart Dynamic", lev, 
@@ -2007,7 +2006,7 @@ class BotManager:
                     f"🛡️ SL: {sl}%\n"
                     f"🤖 Coin: {', '.join(qualified_symbols[:success_count])}\n\n"
                     f"🔑 <b>Config Key:</b> {strategy_key}\n"
-                    f"🔄 <i>Bot sẽ tự động tìm coin mới sau mỗi lệnh</i>\n"
+                    f"🔄 <i>Hệ thống sẽ tự động tìm coin mới sau khi đóng lệnh</i>\n"
                     f"⏰ <i>Cooldown: {self.cooldown_period//60} phút sau khi đóng lệnh</i>"
                 )
                 self.log(success_msg)
@@ -2016,8 +2015,8 @@ class BotManager:
                 self.log("⚠️ Smart Dynamic: chưa tìm thấy coin phù hợp, sẽ thử lại sau")
                 return True
         
-        # CHIẾN LƯỢC TỰ ĐỘNG KHÁC
-        elif strategy_type in ["Reverse 24h", "Scalping", "Safe Grid", "Trend Following"]:
+        # CÁC CHIẾN LƯỢC ĐỘNG KHÁC - KHI CHỌN BOT ĐỘNG VỚI CHIẾN LƯỢC CỤ THỂ
+        elif bot_mode == 'dynamic' and strategy_type in ["Reverse 24h", "Scalping", "Safe Grid", "Trend Following"]:
             strategy_key = f"{strategy_type}_{lev}_{percent}_{tp}_{sl}"
             
             # Thêm tham số đặc biệt
@@ -2044,7 +2043,6 @@ class BotManager:
                 'sl': sl,
                 'strategy_key': strategy_key,
                 'smart_exit_config': smart_exit_config,
-                'dynamic_mode': dynamic_mode,  # 🔄 THÊM CHẾ ĐỘ ĐỘNG
                 **kwargs
             }
             
@@ -2060,7 +2058,6 @@ class BotManager:
                         success_count += 1
             
             if success_count > 0:
-                mode_text = "ĐỘNG" if dynamic_mode else "TĨNH"
                 success_msg = (
                     f"✅ <b>ĐÃ TẠO {success_count} BOT {strategy_type}</b>\n\n"
                     f"🎯 Chiến lược: {strategy_type}\n"
@@ -2068,7 +2065,6 @@ class BotManager:
                     f"📊 % Số dư: {percent}%\n"
                     f"🎯 TP: {tp}%\n"
                     f"🛡️ SL: {sl}%\n"
-                    f"🤖 Chế độ: {mode_text}\n"
                 )
                 if strategy_type == "Reverse 24h":
                     success_msg += f"📈 Ngưỡng: {threshold}%\n"
@@ -2077,11 +2073,9 @@ class BotManager:
                 elif strategy_type == "Safe Grid":
                     success_msg += f"🛡️ Số lệnh: {grid_levels}\n"
                     
-                success_msg += f"🔗 Coin: {', '.join(qualified_symbols[:success_count])}\n\n"
+                success_msg += f"🤖 Coin: {', '.join(qualified_symbols[:success_count])}\n\n"
                 success_msg += f"🔑 <b>Config Key:</b> {strategy_key}\n"
-                
-                if dynamic_mode:
-                    success_msg += f"🔄 <i>Bot sẽ tự động tìm coin mới sau mỗi lệnh</i>\n"
+                success_msg += f"🔄 <i>Bot sẽ tự động tìm coin mới sau khi đóng lệnh</i>\n"
                 success_msg += f"⏰ <i>Cooldown: {self.cooldown_period//60} phút sau khi đóng lệnh</i>"
                 
                 self.log(success_msg)
@@ -2111,11 +2105,10 @@ class BotManager:
                 
                 bot = bot_class(symbol, lev, percent, tp, sl, self.ws_manager,
                               self.api_key, self.api_secret, self.telegram_bot_token, 
-                              self.telegram_chat_id, smart_exit_config, dynamic_mode)
+                              self.telegram_chat_id, smart_exit_config)
                 
                 self.bots[bot_id] = bot
-                mode_text = "ĐỘNG" if dynamic_mode else "TĨNH"
-                self.log(f"✅ Đã thêm bot {strategy_type}: {symbol} | Chế độ: {mode_text} | ĐB: {lev}x | Vốn: {percent}% | TP/SL: {tp}%/{sl}%")
+                self.log(f"✅ Đã thêm bot {strategy_type}: {symbol} | ĐB: {lev}x | Vốn: {percent}% | TP/SL: {tp}%/{sl}%")
                 return True
                 
             except Exception as e:
