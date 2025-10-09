@@ -700,6 +700,7 @@ class BaseBot:
         self.entry: float = 0.0
         self._close_attempted = False
         self.prices: list = []
+        self.check_position_status()
         self.status = "waiting"
         
         self.coin_manager = CoinManager()
@@ -742,8 +743,11 @@ class BaseBot:
 
     def open_position(self, side: str) -> bool:
         try:
+            self.check_position_status()
             if self.position_open:
+                self.log(f"⚠️ Đã có vị thế {self.side}, bỏ qua tín hiệu {side}")
                 return False
+
                 
             price = get_current_price(self.symbol)
             if price <= 0:
@@ -817,6 +821,40 @@ class BaseBot:
             self.log(f"❌ partial_close lỗi: {e}")
             return False
 
+    def check_position_status(self):
+        try:
+            positions = get_positions(self.symbol, self.api_key, self.api_secret)
+            if not positions:
+                self._reset_position()
+                return
+            
+            position_found = False
+            for pos in positions:
+                if pos['symbol'] == self.symbol:
+                    position_amt = float(pos.get('positionAmt', 0))
+                    if abs(position_amt) > 0:
+                        # ĐÃ TÌM THẤY VỊ THẾ
+                        position_found = True
+                        self.position_open = True
+                        self.status = "open"
+                        self.side = "BUY" if position_amt > 0 else "SELL"
+                        self.qty = position_amt
+                        self.entry = float(pos.get('entryPrice', 0))
+                        break
+                    else:
+                        # VỊ THẾ ĐÃ ĐÓNG
+                        position_found = True
+                        self._reset_position()
+                        break
+            
+            # NẾU KHÔNG TÌM THẤY VỊ THẾ CHO SYMBOL NÀY
+            if not position_found:
+                self._reset_position()
+                
+        except Exception as e:
+            if time.time() - self.last_error_log_time > 10:
+                self.log(f"❌ Lỗi kiểm tra vị thế: {str(e)}")
+                self.last_error_log_time = time.time()
     def close_position(self, reason: str = "") -> bool:
         if not self.position_open or self._close_attempted:
             return False
