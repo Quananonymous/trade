@@ -61,28 +61,6 @@ def create_strategy_keyboard():
         "one_time_keyboard": True
     }
 
-def create_exit_strategy_keyboard():
-    return {
-        "keyboard": [
-            [{"text": "🔄 Thoát lệnh thông minh"}, {"text": "⚡ Thoát lệnh cơ bản"}],
-            [{"text": "🎯 Chỉ TP/SL cố định"}, {"text": "❌ Hủy bỏ"}]
-        ],
-        "resize_keyboard": True,
-        "one_time_keyboard": True
-    }
-
-def create_smart_exit_config_keyboard():
-    return {
-        "keyboard": [
-            [{"text": "Trailing: 30/15"}, {"text": "Trailing: 50/20"}],
-            [{"text": "Time Exit: 4h"}, {"text": "Time Exit: 8h"}],
-            [{"text": "Kết hợp Full"}, {"text": "Cơ bản"}],
-            [{"text": "❌ Hủy bỏ"}]
-        ],
-        "resize_keyboard": True,
-        "one_time_keyboard": True
-    }
-
 def create_bot_mode_keyboard():
     return {
         "keyboard": [
@@ -565,121 +543,13 @@ class WebSocketManager:
     def stop(self):
         self.running = False
 
-# ============================= SMART EXIT 2.0 ===========================
-
-class SmartExitManager:
-    def __init__(self, bot_instance: 'BaseBot'):
-        self.bot = bot_instance
-        self.config = {
-            'enable_trailing': True,
-            'enable_time_exit': False,
-            'enable_volume_exit': False,
-            'enable_support_resistance': False,
-            'trailing_activation': 30,
-            'trailing_distance': 15,
-            'max_hold_time': 6,
-            'min_profit_for_exit': 10,
-            'breakeven_at': 12,
-            'trail_adaptive': True,
-            'tp_ladder': [
-                {'roi': 15, 'pct': 0.30},
-                {'roi': 25, 'pct': 0.30},
-                {'roi': 40, 'pct': 0.40},
-            ],
-        }
-        self.trailing_active = False
-        self.peak_price = 0.0
-        self.position_open_time = 0.0
-        self.volume_history: list = []
-        self._breakeven_active = False
-        self._tp_hit: set = set()
-
-    def update_config(self, **kwargs):
-        changed = {}
-        for k, v in kwargs.items():
-            if k in self.config:
-                self.config[k] = v
-                changed[k] = v
-        if changed:
-            self.bot.log(f"⚙️ Cập nhật Smart Exit: {changed}")
-
-    def _calculate_roi(self, current_price: float) -> float:
-        if not self.bot.position_open or self.bot.entry <= 0 or abs(self.bot.qty) <= 0:
-            return 0.0
-        if self.bot.side == "BUY":
-            profit = (current_price - self.bot.entry) * abs(self.bot.qty)
-        else:
-            profit = (self.bot.entry - current_price) * abs(self.bot.qty)
-        invested = self.bot.entry * abs(self.bot.qty) / self.bot.lev
-        if invested <= 0:
-            return 0.0
-        return (profit / invested) * 100.0
-
-    def _check_trailing_stop(self, current_price: float) -> Optional[str]:
-        roi = self._calculate_roi(current_price)
-        if not self.trailing_active and roi >= self.config['trailing_activation']:
-            self.trailing_active = True
-            self.peak_price = current_price
-            return None
-        if self.trailing_active:
-            self.peak_price = max(self.peak_price, current_price)
-            distance = self.config['trailing_distance']
-            if self.config.get('trail_adaptive'):
-                try:
-                    closes = (self.bot.prices or [])[-120:]
-                    if len(closes) >= 20:
-                        highs = [p*1.0006 for p in closes]
-                        lows  = [p*0.9994 for p in closes]
-                        atrp = atr_last(highs, lows, closes, 14, True)
-                        if atrp is not None:
-                            distance = 8 + min(max(atrp, 1.0), 10.0) * 1.2
-                except Exception:
-                    pass
-            trigger = self.peak_price * (1 - distance/100.0)
-            if current_price <= trigger:
-                return f"🔻 Trailing hit ({distance:.1f}%)"
-        return None
-
-    def check_all_exit_conditions(self, current_price: float, current_volume: Optional[float] = None) -> Optional[str]:
-        if not self.bot.position_open:
-            return None
-        exit_reasons = []
-        
-        if self.config['enable_trailing']:
-            r = self._check_trailing_stop(current_price)
-            if r:
-                exit_reasons.append(r)
-                
-        if self.config['enable_time_exit'] and self.position_open_time > 0:
-            hold_hours = (time.time() - self.position_open_time) / 3600
-            if hold_hours >= self.config['max_hold_time']:
-                exit_reasons.append(f"⏰ Quá thời gian giữ {self.config['max_hold_time']}h")
-
-        current_roi = self._calculate_roi(current_price)
-        if (not self._breakeven_active) and (current_roi >= self.config.get('breakeven_at', 12)):
-            self._breakeven_active = True
-            self.config['min_profit_for_exit'] = max(self.config.get('min_profit_for_exit', 10), 0)
-            self.bot.log(f"🟩 Kích hoạt Breakeven tại ROI {current_roi:.1f}%")
-            
-        for step in self.config.get('tp_ladder', []):
-            roi_lv = step.get('roi', 0)
-            pct = step.get('pct', 0)
-            key = f"tp_{roi_lv}"
-            if current_roi >= roi_lv and key not in self._tp_hit:
-                ok = self.bot.partial_close(pct, reason=f"TP ladder {roi_lv}%")
-                if ok:
-                    self._tp_hit.add(key)
-
-        return exit_reasons[0] if exit_reasons else None
-
 # ================================ BASE BOT ==============================
 
 class BaseBot:
     def __init__(self, symbol: str, lev: int, percent: float, tp: Optional[float], sl: Optional[float],
                  ws_manager: 'WebSocketManager', api_key: str, api_secret: str,
                  telegram_bot_token: Optional[str], telegram_chat_id: Optional[str],
-                 strategy_name: str, config_key: Optional[str] = None,
-                 smart_exit_config: Optional[dict] = None, dynamic_mode: bool = False):
+                 strategy_name: str, config_key: Optional[str] = None, dynamic_mode: bool = False):
         self.symbol = symbol
         self.lev = lev
         self.percent = percent
@@ -703,10 +573,6 @@ class BaseBot:
         self.status = "waiting"
         
         self.coin_manager = CoinManager()
-        self.smart_exit = SmartExitManager(self)
-        if smart_exit_config:
-            self.smart_exit.update_config(**smart_exit_config)
-            
         self._candidate_pool: list = []
         self.last_close_time = 0.0
         
@@ -727,6 +593,7 @@ class BaseBot:
             if len(self.prices) > 1200:
                 self.prices.pop(0)
                 
+            # QUAN TRỌNG: Check không có vị thế trước khi nhận coin
             if not self.position_open:
                 sig = self.get_signal()
                 if sig:
@@ -742,8 +609,19 @@ class BaseBot:
 
     def open_position(self, side: str) -> bool:
         try:
+            # QUAN TRỌNG: Kiểm tra lại không có vị thế trước khi mở lệnh
             if self.position_open:
+                self.log("⚠️ Đang có vị thế, không mở lệnh mới")
                 return False
+                
+            # Kiểm tra vị thế thực tế trên sàn
+            positions = get_positions(self.api_key, self.api_secret)
+            if positions:
+                for pos in positions:
+                    position_amt = float(pos.get('positionAmt', 0))
+                    if position_amt != 0 and pos.get('symbol') == self.symbol:
+                        self.log(f"⚠️ Đang có vị thế {self.symbol} trên sàn, không mở lệnh mới")
+                        return False
                 
             price = get_current_price(self.symbol)
             if price <= 0:
@@ -777,7 +655,6 @@ class BaseBot:
             self.side = side
             self.qty = qty if side == 'BUY' else -qty
             self.entry = price
-            self.smart_exit.position_open_time = time.time()
             self._close_attempted = False
             self.status = "open"
             
@@ -786,35 +663,6 @@ class BaseBot:
             
         except Exception as e:
             self.log(f"❌ open_position lỗi: {e}")
-            return False
-
-    def partial_close(self, fraction: float, reason: str = "") -> bool:
-        try:
-            if not self.position_open or fraction <= 0 or fraction >= 1:
-                return False
-                
-            qty_to_close = abs(self.qty) * fraction
-            if qty_to_close <= 0:
-                return False
-                
-            side = "SELL" if self.side == "BUY" else "BUY"
-            cancel_all_orders(self.symbol, self.api_key, self.api_secret)
-            time.sleep(0.2)
-            
-            res = place_order(self.symbol, side, qty_to_close, self.api_key, self.api_secret)
-            if res:
-                remain = abs(self.qty) - qty_to_close
-                self.qty = remain if self.side == "BUY" else -remain
-                self.log(f"🔹 Chốt {fraction*100:.0f}% vị thế | {reason}")
-                
-                if remain <= 0:
-                    self._reset_position()
-                    self.last_close_time = time.time()
-                return True
-            return False
-            
-        except Exception as e:
-            self.log(f"❌ partial_close lỗi: {e}")
             return False
 
     def close_position(self, reason: str = "") -> bool:
@@ -859,9 +707,6 @@ class BaseBot:
         self.entry = 0.0
         self._close_attempted = False
         self.status = "waiting"
-        self.smart_exit.trailing_active = False
-        self.smart_exit._breakeven_active = False
-        self.smart_exit._tp_hit.clear()
 
     def check_tp_sl(self):
         if not self.position_open or self.entry <= 0:
@@ -870,12 +715,6 @@ class BaseBot:
         current_price = get_current_price(self.symbol)
         if current_price <= 0:
             return
-
-        if self.smart_exit.check_all_exit_conditions(current_price):
-            exit_reason = self.smart_exit.check_all_exit_conditions(current_price)
-            if exit_reason:
-                self.close_position(exit_reason)
-                return
 
         if self._close_attempted:
             return
@@ -1106,10 +945,9 @@ def get_qualified_symbols(api_key: str, api_secret: str, strategy_type: str, lev
 
 class RSI_EMA_Bot(BaseBot):
     def __init__(self, symbol, lev, percent, tp, sl, ws_manager, api_key, api_secret, 
-                 telegram_bot_token, telegram_chat_id, smart_exit_config=None):
+                 telegram_bot_token, telegram_chat_id):
         super().__init__(symbol, lev, percent, tp, sl, ws_manager, api_key, api_secret, 
-                        telegram_bot_token, telegram_chat_id, "RSI/EMA Recursive", 
-                        smart_exit_config=smart_exit_config)
+                        telegram_bot_token, telegram_chat_id, "RSI/EMA Recursive")
         self.rsi_period = 14
         self.ema_fast = 9
         self.ema_slow = 21
@@ -1141,10 +979,9 @@ class RSI_EMA_Bot(BaseBot):
 
 class EMA_Crossover_Bot(BaseBot):
     def __init__(self, symbol, lev, percent, tp, sl, ws_manager, api_key, api_secret, 
-                 telegram_bot_token, telegram_chat_id, smart_exit_config=None):
+                 telegram_bot_token, telegram_chat_id):
         super().__init__(symbol, lev, percent, tp, sl, ws_manager, api_key, api_secret, 
-                        telegram_bot_token, telegram_chat_id, "EMA Crossover", 
-                        smart_exit_config=smart_exit_config)
+                        telegram_bot_token, telegram_chat_id, "EMA Crossover")
         self.ema_fast = 9
         self.ema_slow = 21
         self.prev_ema_fast = None
@@ -1178,11 +1015,9 @@ class EMA_Crossover_Bot(BaseBot):
 
 class Reverse_24h_Bot(BaseBot):
     def __init__(self, symbol, lev, percent, tp, sl, ws_manager, api_key, api_secret, 
-                 telegram_bot_token, telegram_chat_id, threshold=30, config_key=None, 
-                 smart_exit_config=None, dynamic_mode=False):
+                 telegram_bot_token, telegram_chat_id, threshold=30, config_key=None, dynamic_mode=False):
         super().__init__(symbol, lev, percent, tp, sl, ws_manager, api_key, api_secret, 
-                        telegram_bot_token, telegram_chat_id, "Reverse 24h", config_key, 
-                        smart_exit_config, dynamic_mode)
+                        telegram_bot_token, telegram_chat_id, "Reverse 24h", config_key, dynamic_mode)
         self.threshold = threshold
         self.last_24h_check = 0
         self.last_reported_change = 0
@@ -1220,11 +1055,9 @@ class Reverse_24h_Bot(BaseBot):
 
 class Trend_Following_Bot(BaseBot):
     def __init__(self, symbol, lev, percent, tp, sl, ws_manager, api_key, api_secret, 
-                 telegram_bot_token, telegram_chat_id, config_key=None, smart_exit_config=None,
-                 dynamic_mode=False):
+                 telegram_bot_token, telegram_chat_id, config_key=None, dynamic_mode=False):
         super().__init__(symbol, lev, percent, tp, sl, ws_manager, api_key, api_secret, 
-                        telegram_bot_token, telegram_chat_id, "Trend Following", config_key, 
-                        smart_exit_config, dynamic_mode)
+                        telegram_bot_token, telegram_chat_id, "Trend Following", config_key, dynamic_mode)
         self.trend_period = 20
         self.trend_threshold = 0.001
 
@@ -1252,11 +1085,9 @@ class Trend_Following_Bot(BaseBot):
 
 class Scalping_Bot(BaseBot):
     def __init__(self, symbol, lev, percent, tp, sl, ws_manager, api_key, api_secret, 
-                 telegram_bot_token, telegram_chat_id, config_key=None, smart_exit_config=None,
-                 dynamic_mode=False):
+                 telegram_bot_token, telegram_chat_id, config_key=None, dynamic_mode=False):
         super().__init__(symbol, lev, percent, tp, sl, ws_manager, api_key, api_secret, 
-                        telegram_bot_token, telegram_chat_id, "Scalping", config_key, 
-                        smart_exit_config, dynamic_mode)
+                        telegram_bot_token, telegram_chat_id, "Scalping", config_key, dynamic_mode)
         self.rsi_period = 7
         self.min_movement = 0.001
 
@@ -1288,11 +1119,9 @@ class Scalping_Bot(BaseBot):
 
 class Safe_Grid_Bot(BaseBot):
     def __init__(self, symbol, lev, percent, tp, sl, ws_manager, api_key, api_secret, 
-                 telegram_bot_token, telegram_chat_id, grid_levels=5, config_key=None, 
-                 smart_exit_config=None, dynamic_mode=False):
+                 telegram_bot_token, telegram_chat_id, grid_levels=5, config_key=None, dynamic_mode=False):
         super().__init__(symbol, lev, percent, tp, sl, ws_manager, api_key, api_secret, 
-                        telegram_bot_token, telegram_chat_id, "Safe Grid", config_key, 
-                        smart_exit_config, dynamic_mode)
+                        telegram_bot_token, telegram_chat_id, "Safe Grid", config_key, dynamic_mode)
         self.grid_levels = grid_levels
         self.orders_placed = 0
 
@@ -1310,22 +1139,9 @@ class Safe_Grid_Bot(BaseBot):
 
 class SmartDynamicBot(BaseBot):
     def __init__(self, symbol, lev, percent, tp, sl, ws_manager, api_key, api_secret, 
-                 telegram_bot_token, telegram_chat_id, config_key=None, smart_exit_config=None,
-                 dynamic_mode=True):
+                 telegram_bot_token, telegram_chat_id, config_key=None, dynamic_mode=True):
         super().__init__(symbol, lev, percent, tp, sl, ws_manager, api_key, api_secret,
-                        telegram_bot_token, telegram_chat_id, "Smart Dynamic", config_key, 
-                        smart_exit_config, dynamic_mode)
-        
-        default_smart_config = {
-            'enable_trailing': True,
-            'enable_time_exit': True,
-            'enable_support_resistance': True,
-            'trailing_activation': 30,
-            'trailing_distance': 15,
-            'max_hold_time': 4,
-            'min_profit_for_exit': 15
-        }
-        self.smart_exit.update_config(**default_smart_config)
+                        telegram_bot_token, telegram_chat_id, "Smart Dynamic", config_key, dynamic_mode)
 
     def get_signal(self):
         try:
@@ -1420,7 +1236,7 @@ class BotManager:
         
         if api_key and api_secret:
             self._verify_api_connection()
-            self.log("🟢 HỆ THỐNG BOT THÔNG MINH ĐÃ KHỞI ĐỘNG")
+            self.log("🟢 HỆ THỐNG BOT FUTURES ĐÃ KHỞI ĐỘNG")
             
             self.telegram_thread = threading.Thread(target=self._telegram_listener, daemon=True)
             self.telegram_thread.start()
@@ -1446,7 +1262,7 @@ class BotManager:
                          default_chat_id=self.telegram_chat_id)
 
     def send_main_menu(self, chat_id):
-        welcome = "🤖 <b>BOT GIAO DỊCH FUTURES THÔNG MINH</b>\n\n🎯 <b>HỆ THỐNG ĐA CHIẾN LƯỢC + SMART EXIT + BOT ĐỘNG TỰ TÌM COIN</b>"
+        welcome = "🤖 <b>BOT GIAO DỊCH FUTURES</b>\n\n🎯 <b>HỆ THỐNG ĐA CHIẾN LƯỢC + BOT ĐỘNG TỰ TÌM COIN</b>"
         send_telegram(welcome, chat_id, create_main_menu(),
                      bot_token=self.telegram_bot_token, 
                      default_chat_id=self.telegram_chat_id)
@@ -1560,7 +1376,6 @@ class BotManager:
             tp = config['tp']
             sl = config['sl']
             strategy_key = config['strategy_key']
-            smart_exit_config = config.get('smart_exit_config', {})
             dynamic_mode = True
             
             bot_class = {
@@ -1578,16 +1393,16 @@ class BotManager:
                 threshold = config.get('threshold', 30)
                 bot = bot_class(symbol, leverage, percent, tp, sl, self.ws_manager,
                               self.api_key, self.api_secret, self.telegram_bot_token, 
-                              self.telegram_chat_id, threshold, strategy_key, smart_exit_config, dynamic_mode)
+                              self.telegram_chat_id, threshold, strategy_key, dynamic_mode)
             elif strategy_type == "Safe Grid":
                 grid_levels = config.get('grid_levels', 5)
                 bot = bot_class(symbol, leverage, percent, tp, sl, self.ws_manager,
                               self.api_key, self.api_secret, self.telegram_bot_token,
-                              self.telegram_chat_id, grid_levels, strategy_key, smart_exit_config, dynamic_mode)
+                              self.telegram_chat_id, grid_levels, strategy_key, dynamic_mode)
             else:
                 bot = bot_class(symbol, leverage, percent, tp, sl, self.ws_manager,
                               self.api_key, self.api_secret, self.telegram_bot_token,
-                              self.telegram_chat_id, strategy_key, smart_exit_config, dynamic_mode)
+                              self.telegram_chat_id, strategy_key, dynamic_mode)
             
             bot_id = f"{symbol}_{strategy_key}"
             self.bots[bot_id] = bot
@@ -1610,7 +1425,6 @@ class BotManager:
             self.log("❌ LỖI: Không thể kết nối Binance")
             return False
         
-        smart_exit_config = kwargs.get('smart_exit_config', {})
         bot_mode = kwargs.get('bot_mode', 'static')
         
         if strategy_type == "Smart Dynamic":
@@ -1626,8 +1440,7 @@ class BotManager:
                 'percent': percent,
                 'tp': tp,
                 'sl': sl,
-                'strategy_key': strategy_key,
-                'smart_exit_config': smart_exit_config
+                'strategy_key': strategy_key
             }
             
             qualified_symbols = self._find_qualified_symbols("Smart Dynamic", lev, 
@@ -1683,7 +1496,6 @@ class BotManager:
                 'tp': tp,
                 'sl': sl,
                 'strategy_key': strategy_key,
-                'smart_exit_config': smart_exit_config,
                 **kwargs
             }
             
@@ -1750,16 +1562,16 @@ class BotManager:
                     threshold = kwargs.get('threshold', 30)
                     bot = bot_class(symbol, lev, percent, tp, sl, self.ws_manager,
                                   self.api_key, self.api_secret, self.telegram_bot_token, 
-                                  self.telegram_chat_id, threshold, None, smart_exit_config)
+                                  self.telegram_chat_id, threshold)
                 elif strategy_type == "Safe Grid":
                     grid_levels = kwargs.get('grid_levels', 5)
                     bot = bot_class(symbol, lev, percent, tp, sl, self.ws_manager,
                                   self.api_key, self.api_secret, self.telegram_bot_token,
-                                  self.telegram_chat_id, grid_levels, None, smart_exit_config)
+                                  self.telegram_chat_id, grid_levels)
                 else:
                     bot = bot_class(symbol, lev, percent, tp, sl, self.ws_manager,
                                   self.api_key, self.api_secret, self.telegram_bot_token,
-                                  self.telegram_chat_id, None, smart_exit_config)
+                                  self.telegram_chat_id)
                 
                 self.bots[bot_id] = bot
                 self.log(f"✅ Đã thêm bot {strategy_type}: {symbol} | ĐB: {lev}x | Vốn: {percent}% | TP/SL: {tp}%/{sl}%")
@@ -1861,60 +1673,17 @@ class BotManager:
                 if text in strategy_map:
                     strategy = strategy_map[text]
                     user_state['strategy'] = strategy
-                    user_state['step'] = 'waiting_exit_strategy'
                     
-                    send_telegram(
-                        f"🎯 <b>ĐÃ CHỌN: {strategy}</b>\n\nChọn chiến lược thoát lệnh:",
-                        chat_id,
-                        create_exit_strategy_keyboard(),
-                        self.telegram_bot_token, self.telegram_chat_id
-                    )
-
-        elif current_step == 'waiting_exit_strategy':
-            if text == '❌ Hủy bỏ':
-                self.user_states[chat_id] = {}
-                send_telegram("❌ Đã hủy thêm bot", chat_id, create_main_menu(),
-                            self.telegram_bot_token, self.telegram_chat_id)
-            elif text in ["🔄 Thoát lệnh thông minh", "⚡ Thoát lệnh cơ bản", "🎯 Chỉ TP/SL cố định"]:
-                if text == "🔄 Thoát lệnh thông minh":
-                    user_state['exit_strategy'] = 'smart_full'
-                    user_state['step'] = 'waiting_smart_config'
-                    send_telegram("Chọn cấu hình Smart Exit:", chat_id,
-                                create_smart_exit_config_keyboard(),
-                                self.telegram_bot_token, self.telegram_chat_id)
-                elif text == "⚡ Thoát lệnh cơ bản":
-                    user_state['exit_strategy'] = 'smart_basic'
-                    user_state['smart_exit_config'] = {
-                        'enable_trailing': True, 'enable_time_exit': True
-                    }
-                    self._continue_bot_creation(chat_id, user_state)
-                else:
-                    user_state['exit_strategy'] = 'traditional'
-                    user_state['smart_exit_config'] = {}
-                    self._continue_bot_creation(chat_id, user_state)
-
-        elif current_step == 'waiting_smart_config':
-            if text == '❌ Hủy bỏ':
-                self.user_states[chat_id] = {}
-                send_telegram("❌ Đã hủy thêm bot", chat_id, create_main_menu(),
-                            self.telegram_bot_token, self.telegram_chat_id)
-            else:
-                smart_config = {}
-                if text == "Trailing: 30/15":
-                    smart_config = {'trailing_activation': 30, 'trailing_distance': 15}
-                elif text == "Trailing: 50/20":
-                    smart_config = {'trailing_activation': 50, 'trailing_distance': 20}
-                elif text == "Time Exit: 4h":
-                    smart_config = {'max_hold_time': 4}
-                elif text == "Time Exit: 8h":
-                    smart_config = {'max_hold_time': 8}
-                elif text == "Kết hợp Full":
-                    smart_config = {'trailing_activation': 35, 'trailing_distance': 15, 'max_hold_time': 6}
-                elif text == "Cơ bản":
-                    smart_config = {'trailing_activation': 30, 'trailing_distance': 15, 'max_hold_time': 6}
-                
-                user_state['smart_exit_config'] = smart_config
-                self._continue_bot_creation(chat_id, user_state)
+                    if user_state.get('bot_mode') == 'static':
+                        user_state['step'] = 'waiting_symbol'
+                        send_telegram("Chọn cặp coin:", chat_id,
+                                    create_symbols_keyboard(strategy),
+                                    self.telegram_bot_token, self.telegram_chat_id)
+                    else:
+                        user_state['step'] = 'waiting_leverage'
+                        send_telegram("Chọn đòn bẩy:", chat_id,
+                                    create_leverage_keyboard(),
+                                    self.telegram_bot_token, self.telegram_chat_id)
 
         elif current_step == 'waiting_symbol':
             if text == '❌ Hủy bỏ':
@@ -2016,21 +1785,19 @@ class BotManager:
                         tp = user_state.get('tp')
                         sl = user_state.get('sl')
                         symbol = user_state.get('symbol')
-                        smart_exit_config = user_state.get('smart_exit_config', {})
                         
                         success = False
                         
                         if bot_mode == 'static':
                             success = self.add_bot(
                                 symbol=symbol, lev=leverage, percent=percent,
-                                tp=tp, sl=sl, strategy_type=strategy,
-                                smart_exit_config=smart_exit_config
+                                tp=tp, sl=sl, strategy_type=strategy
                             )
                         else:
                             success = self.add_bot(
                                 symbol=None, lev=leverage, percent=percent,
                                 tp=tp, sl=sl, strategy_type=strategy,
-                                bot_mode='dynamic', smart_exit_config=smart_exit_config
+                                bot_mode='dynamic'
                             )
                         
                         if success:
@@ -2126,7 +1893,7 @@ class BotManager:
                             bot_token=self.telegram_bot_token, default_chat_id=self.telegram_chat_id)
         
         elif text in ["🎯 Chiến lược", "⚙️ Cấu hình"]:
-            info = "🎯 <b>HỆ THỐNG BOT FUTURES THÔNG MINH</b>\n\n"
+            info = "🎯 <b>HỆ THỐNG BOT FUTURES</b>\n\n"
             info += "🤖 <b>Bot Tĩnh:</b> Coin cố định\n"
             info += "🔄 <b>Bot Động:</b> Tự tìm coin\n"
             info += "🎯 <b>Chiến lược:</b> RSI/EMA, Crossover, Reverse 24h, Trend, Scalping, Grid, Smart Dynamic\n"
@@ -2137,21 +1904,6 @@ class BotManager:
         
         else:
             self.send_main_menu(chat_id)
-
-    def _continue_bot_creation(self, chat_id, user_state):
-        strategy = user_state.get('strategy')
-        bot_mode = user_state.get('bot_mode', 'static')
-        
-        if bot_mode == 'static':
-            user_state['step'] = 'waiting_symbol'
-            send_telegram("Chọn cặp coin:", chat_id,
-                        create_symbols_keyboard(strategy),
-                        self.telegram_bot_token, self.telegram_chat_id)
-        else:
-            user_state['step'] = 'waiting_leverage'
-            send_telegram("Chọn đòn bẩy:", chat_id,
-                        create_leverage_keyboard(),
-                        self.telegram_bot_token, self.telegram_chat_id)
 
 # ========== KHỞI TẠO GLOBAL INSTANCES ==========
 coin_manager = CoinManager()
