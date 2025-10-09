@@ -446,18 +446,32 @@ class CoinManager:
             cls._instance.active_configs: Dict[tuple, set] = {}
             cls._instance.symbol_cooldowns: Dict[str, float] = {}
             cls._instance.cooldown_seconds: int = 20*60
+            cls._instance.config_coin_count: Dict[str, int] = {}  # Đếm số coin theo config
         return cls._instance
 
     def register_coin(self, symbol: str, bot_id: str, strategy_name: str, config_key: Optional[str] = None) -> bool:
         with self._lock:
             if symbol in self.symbol_to_bot:
                 return False
+            
+            # Đếm số coin theo config
+            key = (strategy_name, config_key)
+            if key not in self.config_coin_count:
+                self.config_coin_count[str(key)] = 0
+            
+            # Kiểm tra nếu config đã có đủ 2 coin
+            if self.config_coin_count[str(key)] >= 2:
+                return False
+                
             self.symbol_to_bot[symbol] = bot_id
             self.symbol_configs[symbol] = (strategy_name, config_key)
-            key = (strategy_name, config_key)
+            
             if key not in self.active_configs:
                 self.active_configs[key] = set()
             self.active_configs[key].add(symbol)
+            
+            # Tăng số coin của config
+            self.config_coin_count[str(key)] += 1
             return True
 
     def unregister_coin(self, symbol: str):
@@ -469,6 +483,10 @@ class CoinManager:
                 key = (tup[0], tup[1])
                 if key in self.active_configs and symbol in self.active_configs[key]:
                     self.active_configs[key].remove(symbol)
+                
+                # Giảm số coin của config
+                if str(key) in self.config_coin_count:
+                    self.config_coin_count[str(key)] = max(0, self.config_coin_count[str(key)] - 1)
 
     def has_same_config_bot(self, symbol: str, config_key: Optional[str]) -> bool:
         with self._lock:
@@ -484,6 +502,19 @@ class CoinManager:
                 if cfg == config_key:
                     count += 1
             return count
+
+    def can_add_more_coins(self, strategy_name: str, config_key: Optional[str] = None) -> bool:
+        """Kiểm tra xem config có thể thêm coin mới không (tối đa 2 coin)"""
+        with self._lock:
+            key = (strategy_name, config_key)
+            current_count = self.config_coin_count.get(str(key), 0)
+            return current_count < 2
+
+    def get_coin_count(self, strategy_name: str, config_key: Optional[str] = None) -> int:
+        """Lấy số coin hiện tại của config"""
+        with self._lock:
+            key = (strategy_name, config_key)
+            return self.config_coin_count.get(str(key), 0)
 
     def set_cooldown(self, symbol: str, seconds: Optional[int] = None):
         ts = time.time() + (seconds or self.cooldown_seconds)
@@ -745,49 +776,73 @@ class BaseBot:
 
     def _find_new_coin_after_exit(self):
         try:
-            self.log("🔄 Tìm coin mới (2 ứng viên)...")
+            # QUAN TRỌNG: Kiểm tra số coin hiện tại của config
+            current_coin_count = self.coin_manager.get_coin_count(self.strategy_name, self.config_key)
             
-            if self._candidate_pool:
+            if current_coin_count >= 2:
+                self.log(f"⚠️ Config đã có {current_coin_count}/2 coin, không tìm coin mới")
+                return
+                
+            self.log("🔄 Tìm coin mới...")
+            
+            # Nếu có candidate trong pool và config chưa đủ coin
+            if self._candidate_pool and current_coin_count < 2:
                 cached = self._candidate_pool.pop(0)
                 if not self.coin_manager.is_in_cooldown(cached):
                     old_symbol = self.symbol
                     self.ws_manager.remove_symbol(old_symbol)
                     self.coin_manager.unregister_coin(old_symbol)
                     self.symbol = cached
-                    if self.coin_manager.register_coin(cached, f"{self.strategy_name}_{id(self)}", self.strategy_name, self.config_key):
-                        self._restart_websocket_for_new_coin()
-                        self.log(f"🔁 Dùng ứng viên sẵn có: {old_symbol} → {cached}")
+                    
+                    # Kiểm tra lại trước khi đăng ký
+                    if self.coin_manager.can_add_more_coins(self.strategy_name, self.config_key):
+                        if self.coin_manager.register_coin(cached, f"{self.strategy_name}_{id(self)}", self.strategy_name, self.config_key):
+                            self._restart_websocket_for_new_coin()
+                            self.log(f"🔁 Dùng ứng viên sẵn có: {old_symbol} → {cached}")
+                            return
+                    else:
+                        self.log("⚠️ Đã đủ 2 coin, không thêm coin mới")
                         return
 
-            new_symbols = get_qualified_symbols(
-                self.api_key,
-                self.api_secret,
-                self.strategy_name,
-                self.lev,
-                threshold=getattr(self, 'threshold', None),
-                volatility=getattr(self, 'volatility', None),
-                grid_levels=getattr(self, 'grid_levels', None),
-                max_candidates=12,
-                final_limit=2,
-                strategy_key=self.config_key
-            )
-            
-            if new_symbols:
-                primary = new_symbols[0]
-                old_symbol = self.symbol
-                self.ws_manager.remove_symbol(old_symbol)
-                self.coin_manager.unregister_coin(old_symbol)
-                self.symbol = primary
+            # Chỉ tìm coin mới nếu config chưa đủ 2 coin
+            if current_coin_count < 2:
+                new_symbols = get_qualified_symbols(
+                    self.api_key,
+                    self.api_secret,
+                    self.strategy_name,
+                    self.lev,
+                    threshold=getattr(self, 'threshold', None),
+                    volatility=getattr(self, 'volatility', None),
+                    grid_levels=getattr(self, 'grid_levels', None),
+                    max_candidates=12,
+                    final_limit=1,  # Chỉ lấy 1 coin chính
+                    strategy_key=self.config_key
+                )
                 
-                if self.coin_manager.register_coin(primary, f"{self.strategy_name}_{id(self)}", self.strategy_name, self.config_key):
-                    self._restart_websocket_for_new_coin()
-                    msg = f"🔄 Chuyển {old_symbol} → {primary}"
-                    if len(new_symbols) > 1:
-                        self._candidate_pool = [new_symbols[1]]
-                        msg += f" | Backup: {new_symbols[1]}"
-                    self.log(msg)
+                if new_symbols:
+                    primary = new_symbols[0]
+                    old_symbol = self.symbol
+                    self.ws_manager.remove_symbol(old_symbol)
+                    self.coin_manager.unregister_coin(old_symbol)
+                    self.symbol = primary
+                    
+                    # Kiểm tra trước khi đăng ký coin mới
+                    if self.coin_manager.can_add_more_coins(self.strategy_name, self.config_key):
+                        if self.coin_manager.register_coin(primary, f"{self.strategy_name}_{id(self)}", self.strategy_name, self.config_key):
+                            self._restart_websocket_for_new_coin()
+                            msg = f"🔄 Chuyển {old_symbol} → {primary}"
+                            
+                            # Chỉ backup nếu config chưa đủ coin
+                            if len(new_symbols) > 1 and current_coin_count < 1:
+                                self._candidate_pool = [new_symbols[1]]
+                                msg += f" | Backup: {new_symbols[1]}"
+                            self.log(msg)
+                    else:
+                        self.log("⚠️ Đã đủ 2 coin, không thêm coin mới")
+                else:
+                    self.log("❌ Không tìm thấy coin mới phù hợp")
             else:
-                self.log("❌ Không tìm thấy coin mới phù hợp")
+                self.log(f"✅ Đã đủ {current_coin_count}/2 coin, không tìm coin mới")
                 
         except Exception as e:
             self.log(f"❌ Lỗi tìm coin mới: {e}")
@@ -1291,9 +1346,17 @@ class BotManager:
                     if (hasattr(bot, 'config_key') and bot.config_key and
                         not bot.position_open and 
                         bot.strategy_name in ["Reverse 24h", "Scalping", "Safe Grid", "Trend Following", "Smart Dynamic"]):
-                        self.log(f"🔄 Bot động {bot_id} đang tìm coin mới...")
-                        if hasattr(bot, '_find_new_coin_after_exit'):
-                            bot._find_new_coin_after_exit()
+                        
+                        # QUAN TRỌNG: Chỉ tìm coin mới nếu config chưa đủ 2 coin
+                        coin_manager = CoinManager()
+                        current_coin_count = coin_manager.get_coin_count(bot.strategy_name, bot.config_key)
+                        
+                        if current_coin_count < 2:
+                            self.log(f"🔄 Bot động {bot_id} đang tìm coin mới... ({current_coin_count}/2)")
+                            if hasattr(bot, '_find_new_coin_after_exit'):
+                                bot._find_new_coin_after_exit()
+                        else:
+                            self.log(f"✅ Bot {bot_id} đã có đủ {current_coin_count}/2 coin, không tìm mới")
                 
                 if current_time - self.last_auto_scan > self.auto_scan_interval:
                     self._scan_auto_strategies()
@@ -1320,10 +1383,11 @@ class BotManager:
                     continue
                 
                 coin_manager = CoinManager()
-                current_bots_count = coin_manager.count_bots_by_config(strategy_key)
+                current_coin_count = coin_manager.get_coin_count(strategy_type, strategy_key)
                 
-                if current_bots_count < 2:
-                    self.log(f"🔄 {strategy_type} (Config: {strategy_key}): đang có {current_bots_count}/2 bot, tìm thêm coin...")
+                # QUAN TRỌNG: Chỉ tìm coin mới nếu chưa đủ 2 coin
+                if current_coin_count < 2:
+                    self.log(f"🔄 {strategy_type} (Config: {strategy_key}): đang có {current_coin_count}/2 coin, tìm thêm coin...")
                     
                     qualified_symbols = self._find_qualified_symbols(strategy_type, 
                                                                    strategy_config['leverage'], 
@@ -1333,7 +1397,7 @@ class BotManager:
                     added_count = 0
                     for symbol in qualified_symbols:
                         bot_id = f"{symbol}_{strategy_key}"
-                        if bot_id not in self.bots and added_count < (2 - current_bots_count):
+                        if bot_id not in self.bots and added_count < (2 - current_coin_count):
                             success = self._create_auto_bot(symbol, strategy_type, strategy_config)
                             if success:
                                 added_count += 1
@@ -1344,7 +1408,7 @@ class BotManager:
                     else:
                         self.log(f"⚠️ {strategy_type}: không tìm thấy coin mới phù hợp cho config {strategy_key}")
                 else:
-                    self.log(f"✅ {strategy_type} (Config: {strategy_key}): đã đủ 2 bot, không tìm thêm")
+                    self.log(f"✅ {strategy_type} (Config: {strategy_key}): đã đủ {current_coin_count}/2 coin, không tìm thêm")
                         
             except Exception as e:
                 self.log(f"❌ Lỗi quét {strategy_type}: {str(e)}")
@@ -1359,7 +1423,7 @@ class BotManager:
                 self.api_key, self.api_secret, strategy_type, leverage,
                 threshold, volatility, grid_levels, 
                 max_candidates=20, 
-                final_limit=2,
+                final_limit=2,  # Lấy tối đa 2 coin
                 strategy_key=strategy_key
             )
             
@@ -1434,6 +1498,14 @@ class BotManager:
                 self.log(f"⏰ Smart Dynamic (Config: {strategy_key}): đang trong cooldown, không thể thêm mới")
                 return False
             
+            # QUAN TRỌNG: Kiểm tra số coin hiện tại của config
+            coin_manager = CoinManager()
+            current_coin_count = coin_manager.get_coin_count("Smart Dynamic", strategy_key)
+            
+            if current_coin_count >= 2:
+                self.log(f"✅ Config {strategy_key} đã có đủ {current_coin_count}/2 coin, không thêm mới")
+                return True
+            
             self.auto_strategies[strategy_key] = {
                 'strategy_type': "Smart Dynamic",
                 'leverage': lev,
@@ -1445,6 +1517,10 @@ class BotManager:
             
             qualified_symbols = self._find_qualified_symbols("Smart Dynamic", lev, 
                                                            self.auto_strategies[strategy_key], strategy_key)
+            
+            # QUAN TRỌNG: Chỉ thêm số coin còn thiếu
+            max_to_add = 2 - current_coin_count
+            qualified_symbols = qualified_symbols[:max_to_add]
             
             success_count = 0
             for symbol in qualified_symbols:
@@ -1489,6 +1565,14 @@ class BotManager:
                 self.log(f"⏰ {strategy_type} (Config: {strategy_key}): đang trong cooldown, không thể thêm mới")
                 return False
             
+            # QUAN TRỌNG: Kiểm tra số coin hiện tại của config
+            coin_manager = CoinManager()
+            current_coin_count = coin_manager.get_coin_count(strategy_type, strategy_key)
+            
+            if current_coin_count >= 2:
+                self.log(f"✅ Config {strategy_key} đã có đủ {current_coin_count}/2 coin, không thêm mới")
+                return True
+            
             self.auto_strategies[strategy_key] = {
                 'strategy_type': strategy_type,
                 'leverage': lev,
@@ -1501,6 +1585,10 @@ class BotManager:
             
             qualified_symbols = self._find_qualified_symbols(strategy_type, lev, 
                                                            self.auto_strategies[strategy_key], strategy_key)
+            
+            # QUAN TRỌNG: Chỉ thêm số coin còn thiếu
+            max_to_add = 2 - current_coin_count
+            qualified_symbols = qualified_symbols[:max_to_add]
             
             success_count = 0
             for symbol in qualified_symbols:
