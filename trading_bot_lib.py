@@ -406,7 +406,7 @@ class SmartCoinFinder:
         self.analyzer = MultiTimeframeAnalyzer()
         
     def find_coin_by_direction(self, target_direction, excluded_symbols=None):
-        """TÌM 1 COIN DUY NHẤT theo hướng chỉ định - RESET HOÀN TOÀN MỖI LẦN"""
+        """TÌM 1 COIN DUY NHẤT - ĐÃ SỬA LỖI TRẢ VỀ None"""
         try:
             if excluded_symbols is None:
                 excluded_symbols = set()
@@ -415,6 +415,10 @@ class SmartCoinFinder:
             
             # Lấy danh sách coin USDT toàn bộ Binance
             all_symbols = get_all_usdt_pairs(limit=100)
+            
+            if not all_symbols:
+                logger.error("❌ Không lấy được danh sách coin từ Binance")
+                return None
             
             # Xáo trộn danh sách để random chọn coin
             random.shuffle(all_symbols)
@@ -428,7 +432,7 @@ class SmartCoinFinder:
                     
                     # Phân tích coin
                     result = self.analyze_symbol_for_finding(symbol, target_direction)
-                    if result and result['qualified']:
+                    if result and result.get('qualified', False):
                         logger.info(f"✅ Bot đã tìm thấy coin: {symbol} - {target_direction} (điểm: {result['score']:.2f})")
                         return result
                         
@@ -438,32 +442,54 @@ class SmartCoinFinder:
             
             # Nếu không tìm thấy coin nào, sử dụng fallback
             logger.warning(f"⚠️ Không tìm thấy coin {target_direction} phù hợp, sử dụng fallback")
-            return self._find_fallback_coin(target_direction, excluded_symbols)
+            fallback_coin = self._find_fallback_coin(target_direction, excluded_symbols)
             
+            # 🎯 SỬA LỖI: ĐẢM BẢO fallback_coin CÓ qualified=True
+            if fallback_coin:
+                fallback_coin['qualified'] = True
+                return fallback_coin
+            else:
+                return None
+                
         except Exception as e:
             logger.error(f"❌ Lỗi tìm coin: {str(e)}")
-            return self._find_fallback_coin(target_direction, excluded_symbols)
+            return None
     
     def analyze_symbol_for_finding(self, symbol, target_direction):
-        """Phân tích chi tiết một symbol - THÊM DEBUG"""
+        """Phân tích chi tiết một symbol - THÊM DEBUG CHI TIẾT"""
         try:
             # Phân tích đa khung thời gian
             signal, timeframe_data = self.analyzer.analyze_symbol(symbol)
             
-            logger.debug(f"🔍 {symbol} - Target: {target_direction}, Actual: {signal}")
+            logger.info(f"🔍 {symbol} - Target: {target_direction}, Actual: {signal}")
             
             if signal != target_direction:
-                logger.debug(f"❌ {symbol} - Signal không khớp: {signal} != {target_direction}")
+                logger.info(f"❌ {symbol} - Signal không khớp: {signal} != {target_direction}")
+                
+                # Log chi tiết từng khung thời gian để debug
+                for tf, data in timeframe_data.items():
+                    stats = data.get('stats', {})
+                    if stats:
+                        logger.info(f"   {tf}: {data['signal']} | Tăng: {stats.get('bullish_ratio', 0):.1%}")
+                        
                 return None
             
             # Tính điểm chất lượng
             score = self.calculate_quality_score(timeframe_data, target_direction)
             
-            logger.debug(f"📊 {symbol} - Điểm chất lượng: {score:.2f}")
+            logger.info(f"📊 {symbol} - Điểm chất lượng: {score:.2f}")
             
-            # 🎯 GIẢM NGƯỠNG từ 0.7 → 0.4
-            if score >= 0.4:  # DỄ HƠN ĐỂ TÌM ĐƯỢC COIN
-                logger.debug(f"✅ {symbol} - ĐẠT TIÊU CHUẨN")
+            # Log chi tiết điểm số
+            for tf, data in timeframe_data.items():
+                stats = data.get('stats', {})
+                if stats:
+                    bullish_ratio = stats.get('bullish_ratio', 0.5)
+                    clarity_score = max(0, (bullish_ratio - 0.52)) * 3 if target_direction == "SELL" else max(0, ((1 - bullish_ratio) - 0.52)) * 3
+                    logger.info(f"   {tf}: {data['signal']} | Tăng: {bullish_ratio:.1%} | Điểm rõ: {clarity_score:.2f}")
+            
+            # GIẢM NGƯỠNG để test
+            if score >= 0.3:  # GIẢM XUỐNG 0.3 ĐỂ TEST
+                logger.info(f"✅ {symbol} - ĐẠT TIÊU CHUẨN (điểm: {score:.2f} >= 0.3)")
                 return {
                     'symbol': symbol,
                     'direction': target_direction,
@@ -472,14 +498,14 @@ class SmartCoinFinder:
                     'qualified': True
                 }
             else:
-                logger.debug(f"❌ {symbol} - Điểm thấp: {score:.2f} < 0.4")
+                logger.info(f"❌ {symbol} - Điểm thấp: {score:.2f} < 0.3")
             
             return None
             
         except Exception as e:
-            logger.debug(f"❌ Lỗi phân tích {symbol}: {str(e)}")
+            logger.error(f"❌ Lỗi phân tích {symbol}: {str(e)}")
             return None
-    
+        
     def calculate_quality_score(self, timeframe_data, target_direction):
         """Tính điểm chất lượng - ĐÃ SỬA ĐỘ KHÓ"""
         try:
@@ -524,10 +550,13 @@ class SmartCoinFinder:
             return 0
     
     def _find_fallback_coin(self, target_direction, excluded_symbols):
-        """Phương pháp dự phòng khi không tìm thấy coin tốt"""
+        """Phương pháp dự phòng - ĐÃ SỬA LỖI"""
         logger.info(f"🔄 Sử dụng fallback cho {target_direction}")
         
         all_symbols = get_all_usdt_pairs(limit=50)
+        if not all_symbols:
+            return None
+            
         random.shuffle(all_symbols)
         
         for symbol in all_symbols:
@@ -540,20 +569,23 @@ class SmartCoinFinder:
                     continue
                 
                 score = 0
-                if target_direction == "BUY" and change_24h < -8:
-                    score = abs(change_24h) / 20
-                elif target_direction == "SELL" and change_24h > 8:
-                    score = abs(change_24h) / 20
+                if target_direction == "BUY" and change_24h < -5:  # GIẢM NGƯỠNG
+                    score = abs(change_24h) / 15  # Normalize
+                elif target_direction == "SELL" and change_24h > 5:  # GIẢM NGƯỠNG
+                    score = abs(change_24h) / 15
                 
-                if score > 0.3:
+                if score > 0.2:  # GIẢM NGƯỠNG
+                    logger.info(f"🔄 Fallback: {symbol} - {target_direction} (điểm: {score:.2f})")
                     return {
                         'symbol': symbol,
                         'direction': target_direction,
                         'score': score,
-                        'fallback': True
+                        'fallback': True,
+                        'qualified': True  # 🎯 THÊM qualified
                     }
                         
-            except Exception:
+            except Exception as e:
+                logger.debug(f"❌ Lỗi fallback {symbol}: {str(e)}")
                 continue
         
         return None
@@ -1024,7 +1056,7 @@ class BaseBot:
             return "BUY" if random.random() > 0.5 else "SELL"
 
     def find_and_set_coin(self):
-        """TÌM VÀ SET COIN MỚI - RESET HOÀN TOÀN"""
+        """TÌM VÀ SET COIN MỚI - ĐÃ SỬA LỖI 'qualified'"""
         try:
             current_time = time.time()
             if current_time - self.last_find_time < self.find_interval:
@@ -1045,36 +1077,41 @@ class BaseBot:
                 excluded_symbols
             )
             
-            if coin_data and coin_data['qualified']:
-                new_symbol = coin_data['symbol']
-                
-                # Đăng ký coin mới
-                if self._register_coin_with_retry(new_symbol):
-                    # Cập nhật symbol và thiết lập WebSocket
-                    if self.symbol:
-                        self.ws_manager.remove_symbol(self.symbol)
-                        self.coin_manager.unregister_coin(self.symbol)
-                    
-                    self.symbol = new_symbol
-                    self.ws_manager.add_symbol(self.symbol, self._handle_price_update)
-                    
-                    # Log thông tin coin mới
-                    analysis_info = self._format_coin_analysis(coin_data)
-                    self.log(f"🎯 Đã tìm thấy coin {new_symbol} - {self.current_target_direction}\n{analysis_info}")
-                    
-                    self.status = "waiting"
-                    return True
-                else:
-                    self.log(f"❌ Không thể đăng ký coin {new_symbol} - có thể đã có bot khác trade")
-                    return False
-            else:
+            # 🎯 SỬA LỖI: KIỂM TRA coin_data CÓ TỒN TẠI KHÔNG
+            if coin_data is None:
                 self.log(f"⚠️ Không tìm thấy coin {self.current_target_direction} phù hợp, thử lại sau")
+                return False
+                
+            # 🎯 SỬA LỖI: KIỂM TRA qualified CÓ TỒN TẠI KHÔNG
+            if not coin_data.get('qualified', False):
+                self.log(f"⚠️ Coin {coin_data.get('symbol', 'UNKNOWN')} không đủ tiêu chuẩn, thử lại sau")
+                return False
+            
+            new_symbol = coin_data['symbol']
+            
+            # Đăng ký coin mới
+            if self._register_coin_with_retry(new_symbol):
+                # Cập nhật symbol và thiết lập WebSocket
+                if self.symbol:
+                    self.ws_manager.remove_symbol(self.symbol)
+                    self.coin_manager.unregister_coin(self.symbol)
+                
+                self.symbol = new_symbol
+                self.ws_manager.add_symbol(self.symbol, self._handle_price_update)
+                
+                # Log thông tin coin mới
+                analysis_info = self._format_coin_analysis(coin_data)
+                self.log(f"🎯 Đã tìm thấy coin {new_symbol} - {self.current_target_direction}\n{analysis_info}")
+                
+                self.status = "waiting"
+                return True
+            else:
+                self.log(f"❌ Không thể đăng ký coin {new_symbol} - có thể đã có bot khác trade")
                 return False
                 
         except Exception as e:
             self.log(f"❌ Lỗi tìm coin: {str(e)}")
             return False
-
     def _format_coin_analysis(self, coin_data):
         """Định dạng thông tin phân tích coin"""
         info = ""
