@@ -519,9 +519,9 @@ class SmartCoinFinder:
             # 🎯 GIẢM NGƯỠNG CHẤP NHẬN COIN
             return final_score
             
-    except Exception as e:
-        logger.error(f"❌ Lỗi tính điểm: {str(e)}")
-        return 0
+        except Exception as e:
+            logger.error(f"❌ Lỗi tính điểm: {str(e)}")
+            return 0
     
     def _find_fallback_coin(self, target_direction, excluded_symbols):
         """Phương pháp dự phòng khi không tìm thấy coin tốt"""
