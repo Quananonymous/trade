@@ -341,7 +341,88 @@ class AIMarketAnalyzer:
             logger.error(f"❌ Lỗi dự đoán AI: {str(e)}")
             return "NEUTRAL"
 
+    def extract_features(self, symbol_data, market_data):
+        """Trích xuất đặc trưng từ dữ liệu symbol và thị trường"""
+        try:
+            prices = symbol_data.get('prices', [])
+            volumes = symbol_data.get('volumes', [])
+            
+            if len(prices) < 50:
+                return None
     
+            # 1. RSI (14 periods)
+            rsi = self.calc_rsi(prices, 14)
+    
+            # 2. EMA9, EMA21, EMA50
+            ema9 = self.calc_ema(prices, 9)
+            ema21 = self.calc_ema(prices, 21)
+            ema50 = self.calc_ema(prices, 50)
+    
+            # 3. MACD và Signal
+            macd, signal = self.calc_macd(prices)
+    
+            # 4. Volume ratio: volume hiện tại so với trung bình 20 phiên
+            volume_ratio = 1.0
+            if len(volumes) >= 20:
+                current_volume = volumes[-1] if volumes else 0
+                avg_volume_20 = np.mean(volumes[-20:])
+                volume_ratio = current_volume / avg_volume_20 if avg_volume_20 != 0 else 1.0
+    
+            # 5. Price changes
+            if len(prices) >= 13:  # 12 phiên 5m trong 1h + 1 phiên hiện tại
+                price_1h_ago = prices[-13]
+                price_change_1h = (prices[-1] - price_1h_ago) / price_1h_ago * 100
+            else:
+                price_change_1h = 0
+    
+            if len(prices) >= 49:  # 48 phiên 5m trong 4h + 1 phiên hiện tại
+                price_4h_ago = prices[-49]
+                price_change_4h = (prices[-1] - price_4h_ago) / price_4h_ago * 100
+            else:
+                price_change_4h = 0
+    
+            if len(prices) >= 289:  # 288 phiên 5m trong 24h + 1 phiên hiện tại
+                price_24h_ago = prices[-289]
+                price_change_24h = (prices[-1] - price_24h_ago) / price_24h_ago * 100
+            else:
+                price_change_24h = 0
+    
+            # 6. Volatility: độ lệch chuẩn của log returns trong 10 phiên
+            volatility = 0
+            if len(prices) >= 11:
+                returns = []
+                for i in range(1, 11):
+                    if prices[-i] != 0:
+                        ret = np.log(prices[-i] / prices[-i-1])
+                        returns.append(ret)
+                if returns:
+                    volatility = np.std(returns) * 100  # Đơn vị %
+    
+            # 7. BTC dominance và Fear greed index từ market_data
+            btc_dominance = market_data.get('btc_dominance', 50.0)
+            fear_greed = market_data.get('fear_greed', 50)
+    
+            features = [
+                rsi if rsi is not None else 50,
+                ema9 if ema9 is not None else prices[-1],
+                ema21 if ema21 is not None else prices[-1],
+                ema50 if ema50 is not None else prices[-1],
+                macd if macd is not None else 0,
+                signal if signal is not None else 0,
+                volume_ratio,
+                price_change_1h,
+                price_change_4h,
+                price_change_24h,
+                volatility,
+                btc_dominance,
+                fear_greed
+            ]
+    
+            return features
+    
+        except Exception as e:
+            logger.error(f"❌ Lỗi trích xuất đặc trưng: {str(e)}")
+            return None
     def calc_rsi(self, prices, period=14):
         """Tính RSI"""
         try:
