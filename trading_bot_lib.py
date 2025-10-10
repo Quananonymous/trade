@@ -1,4 +1,4 @@
-# trading_bot_lib.py - HOÀN CHỈNH VỚI CHỈ BÁO NÂNG CAO & TÌM COIN THÔNG MINH
+# trading_bot_lib.py - HOÀN CHỈNH VỚI CƠ CHẾ TÌM BOT THÔNG MINH & QUẢN LÝ n BOT
 import json
 import hmac
 import hashlib
@@ -30,19 +30,7 @@ def setup_logging():
     return logging.getLogger()
 
 logger = setup_logging()
-def get_batch_ticker_info(symbols):
-    """Lấy thông tin ticker cho nhiều coin cùng lúc"""
-    try:
-        # Binance API cho phép lấy nhiều symbol cùng lúc
-        symbol_param = '["' + '","'.join(symbols) + '"]'
-        url = f"https://fapi.binance.com/fapi/v1/ticker/24hr?symbols={symbol_param}"
-        data = binance_api_request(url)
-        if data:
-            return {item['symbol']: item for item in data}
-        return {}
-    except Exception as e:
-        logger.error(f"Lỗi lấy batch ticker: {str(e)}")
-        return {}
+
 # ========== HÀM TELEGRAM ==========
 def send_telegram(message, chat_id=None, reply_markup=None, bot_token=None, default_chat_id=None):
     if not bot_token:
@@ -370,7 +358,7 @@ def binance_api_request(url, method='GET', params=None, headers=None, timeout=15
     logger.error(f"Không thể thực hiện yêu cầu API sau {max_retries} lần thử")
     return None
 
-def get_all_usdt_pairs(limit=None):  # Thêm limit=None
+def get_all_usdt_pairs(limit=None):
     """Lấy danh sách TẤT CẢ coin USDT với volume 24h - LOẠI BỎ BTC"""
     try:
         url = "https://fapi.binance.com/fapi/v1/exchangeInfo"
@@ -500,6 +488,103 @@ def get_24h_ticker(symbol):
     except Exception as e:
         logger.error(f"Lỗi lấy ticker 24h: {str(e)}")
     return None
+
+def get_batch_ticker_info(symbols):
+    """Lấy thông tin ticker cho nhiều coin cùng lúc"""
+    try:
+        # Binance API cho phép lấy nhiều symbol cùng lúc
+        symbol_param = '["' + '","'.join(symbols) + '"]'
+        url = f"https://fapi.binance.com/fapi/v1/ticker/24hr?symbols={symbol_param}"
+        data = binance_api_request(url)
+        if data:
+            return {item['symbol']: item for item in data}
+        return {}
+    except Exception as e:
+        logger.error(f"Lỗi lấy batch ticker: {str(e)}")
+        return {}
+
+# ========== CƠ CHẾ TÌM BOT THÔNG MINH ==========
+def get_qualified_symbol(strategy_config, excluded_symbols=None):
+    """
+    Tìm 1 symbol duy nhất đủ điều kiện theo chiến lược
+    """
+    if excluded_symbols is None:
+        excluded_symbols = []
+    
+    try:
+        # Lấy tất cả symbol có volume cao từ Binance
+        all_symbols = get_all_usdt_pairs(limit=100)
+        
+        # Lọc theo chiến lược và loại bỏ các symbol đã có
+        qualified_symbols = []
+        
+        for symbol in all_symbols:
+            if symbol in excluded_symbols:
+                continue
+                
+            # Kiểm tra điều kiện theo chiến lược
+            if check_strategy_conditions(symbol, strategy_config):
+                qualified_symbols.append(symbol)
+        
+        # Trả về symbol đầu tiên đủ điều kiện
+        return qualified_symbols[0] if qualified_symbols else None
+        
+    except Exception as e:
+        logger.error(f"Lỗi khi tìm symbol: {e}")
+        return None
+
+def check_strategy_conditions(symbol, strategy_config):
+    """
+    Kiểm tra điều kiện chiến lược cho symbol
+    """
+    try:
+        # Lấy thông tin klines và ticker
+        klines = get_klines_with_cache(symbol, "5m", 50)
+        ticker_info = get_24h_ticker(symbol)
+        
+        if not klines or not ticker_info:
+            return False
+            
+        closes = klines[3]
+        price_change = ticker_info['price_change_percent']
+        volume = ticker_info['volume']
+        
+        # Điều kiện cơ bản
+        if volume < 1000000:  # Volume tối thiểu 1M USDT
+            return False
+            
+        # Kiểm tra theo chiến lược
+        strategy_type = strategy_config.get('strategy_type', 'Smart Dynamic')
+        
+        if strategy_type == "Reverse 24h":
+            threshold = strategy_config.get('threshold', 25)
+            return abs(price_change) >= threshold
+            
+        elif strategy_type == "Scalping":
+            volatility_std = np.std(closes[-20:]) / np.mean(closes[-20:]) * 100
+            volatility_threshold = strategy_config.get('volatility', 3)
+            return (2 <= abs(price_change) <= 15 and 
+                    volatility_std >= volatility_threshold)
+                    
+        elif strategy_type == "Trend Following":
+            if len(closes) >= 50:
+                short_trend = (closes[-1] - closes[-10]) / closes[-10] * 100
+                medium_trend = (closes[-1] - closes[-25]) / closes[-25] * 100
+                trend_strength = (abs(short_trend) + abs(medium_trend)) / 2
+                return trend_strength >= 3
+                
+        elif strategy_type == "Smart Dynamic":
+            rsi = calc_rsi(closes, 14)
+            volatility_std = np.std(closes[-20:]) / np.mean(closes[-20:]) * 100
+            return (1 <= abs(price_change) <= 12 and
+                    volatility_std >= 2 and
+                    rsi and 20 <= rsi <= 80)
+        
+        return True
+        
+    except Exception as e:
+        logger.error(f"Lỗi kiểm tra điều kiện {symbol}: {e}")
+        return False
 
 def get_qualified_symbols(api_key, api_secret, strategy_type, leverage, threshold=None, volatility=None, grid_levels=None, max_candidates=50, final_limit=2, strategy_key=None):
     """TÌM COIN THÔNG MINH - LẤY TẤT CẢ COIN - PHÂN LOẠI THEO CHIẾN LƯỢC - LOẠI BỎ BTC"""
@@ -1469,6 +1554,43 @@ class BaseBot:
         elif self.sl is not None and self.sl > 0 and roi <= -self.sl:
             self.close_position(f"❌ Đạt SL {self.sl}% (ROI: {roi:.2f}%)")
 
+    def has_active_orders(self):
+        """Kiểm tra bot có orders active không"""
+        try:
+            orders = get_positions(self.symbol, self.api_key, self.api_secret)
+            for order in orders:
+                position_amt = float(order.get('positionAmt', 0))
+                if abs(position_amt) > 0:
+                    return True
+            return False
+        except Exception as e:
+            self.log(f"Lỗi kiểm tra active orders: {e}")
+            return False
+
+    def check_status(self):
+        """
+        Kiểm tra trạng thái bot với cơ chế tránh trùng lặp
+        """
+        try:
+            # Kiểm tra trạng thái orders hiện tại
+            current_orders = self.has_active_orders()
+            
+            if not current_orders:
+                if self.entry_price:  # Đã có lệnh entry trước đó
+                    return "completed"
+                else:
+                    return "waiting"
+            
+            # Phân loại trạng thái
+            if self.position_open:
+                return "active"
+            else:
+                return "waiting"
+                
+        except Exception as e:
+            self.log(f"Lỗi khi check status: {e}")
+            return "error"
+
 # ========== CÁC CHIẾN LƯỢC VỚI CHỈ BÁO NÂNG CAO ==========
 class RSI_EMA_Bot(BaseBot):
     def __init__(self, symbol, lev, percent, tp, sl, ws_manager, api_key, api_secret, telegram_bot_token, telegram_chat_id):
@@ -1848,14 +1970,19 @@ class SmartDynamicBot(BaseBot):
             self.log(f"❌ Lỗi Smart Dynamic signal: {str(e)}")
             return None
 
-# ========== BOT MANAGER HOÀN CHỈNH ==========
+# ========== BOT MANAGER HOÀN CHỈNH VỚI CƠ CHẾ TÌM BOT THÔNG MINH ==========
 class BotManager:
-    def __init__(self, api_key=None, api_secret=None, telegram_bot_token=None, telegram_chat_id=None):
+    def __init__(self, api_key=None, api_secret=None, telegram_bot_token=None, telegram_chat_id=None, max_bots=5):
         self.ws_manager = WebSocketManager()
         self.bots = {}
         self.running = True
         self.start_time = time.time()
         self.user_states = {}
+        
+        # CẤU HÌNH MỚI: Quản lý n bot
+        self.max_bots = max_bots
+        self.pending_symbols = []
+        self.excluded_symbols = set()
         
         self.auto_strategies = {}
         self.last_auto_scan = 0
@@ -1889,6 +2016,211 @@ class BotManager:
                 self.send_main_menu(self.telegram_chat_id)
         else:
             self.log("⚡ BotManager khởi động ở chế độ không config")
+
+    def update_bot_list(self, strategy_config):
+        """
+        Cập nhật danh sách bot - chỉ thêm bot mới khi có bot đặt lệnh
+        """
+        try:
+            # Bước 1: Kiểm tra và xử lý các bot đang active
+            self._process_active_bots()
+            
+            # Bước 2: Nếu chưa đủ bot và có bot đã đặt lệnh, tìm bot mới
+            if len(self.bots) < self.max_bots and self._has_active_orders():
+                new_symbol = self._find_new_symbol(strategy_config)
+                if new_symbol:
+                    self._add_new_bot(new_symbol, strategy_config)
+            
+            # Bước 3: Hiển thị trạng thái
+            self._display_status()
+            
+        except Exception as e:
+            self.log(f"Lỗi khi cập nhật bot list: {e}")
+    
+    def _process_active_bots(self):
+        """Xử lý các bot đang active"""
+        bots_to_remove = []
+        
+        for bot_id, bot in self.bots.items():
+            try:
+                # Kiểm tra trạng thái bot
+                status = bot.check_status()
+                
+                # Nếu bot đã kết thúc hoặc lỗi, loại bỏ
+                if status in ['completed', 'error', 'cancelled']:
+                    bots_to_remove.append(bot_id)
+                    self.excluded_symbols.add(bot.symbol)
+                    
+            except Exception as e:
+                self.log(f"Lỗi khi kiểm tra bot {bot_id}: {e}")
+                bots_to_remove.append(bot_id)
+        
+        # Xóa các bot không còn active
+        for bot_id in bots_to_remove:
+            bot = self.bots[bot_id]
+            self.excluded_symbols.add(bot.symbol)
+            del self.bots[bot_id]
+    
+    def _has_active_orders(self):
+        """
+        Kiểm tra xem có ít nhất một bot đã đặt lệnh thành công chưa
+        """
+        for bot in self.bots.values():
+            if bot.has_active_orders():
+                return True
+        return False
+    
+    def _find_new_symbol(self, strategy_config):
+        """
+        Tìm symbol mới không trùng lặp
+        """
+        return get_qualified_symbol(
+            strategy_config, 
+            excluded_symbols=list(self.excluded_symbols)
+        )
+    
+    def _add_new_bot(self, symbol, strategy_config):
+        """
+        Thêm bot mới vào hệ thống
+        """
+        try:
+            if symbol not in [bot.symbol for bot in self.bots.values()] and symbol not in self.excluded_symbols:
+                # Tạo bot mới dựa trên chiến lược
+                strategy_type = strategy_config.get('strategy_type', 'Smart Dynamic')
+                leverage = strategy_config.get('leverage', 10)
+                percent = strategy_config.get('percent', 5)
+                tp = strategy_config.get('tp', 100)
+                sl = strategy_config.get('sl', 50)
+                
+                bot_class = {
+                    "Reverse 24h": Reverse_24h_Bot,
+                    "Scalping": Scalping_Bot,
+                    "Safe Grid": Safe_Grid_Bot,
+                    "Trend Following": Trend_Following_Bot,
+                    "Smart Dynamic": SmartDynamicBot
+                }.get(strategy_type, SmartDynamicBot)
+                
+                if strategy_type == "Reverse 24h":
+                    threshold = strategy_config.get('threshold', 30)
+                    bot = bot_class(symbol, leverage, percent, tp, sl, self.ws_manager,
+                                  self.api_key, self.api_secret, self.telegram_bot_token, 
+                                  self.telegram_chat_id, threshold)
+                elif strategy_type == "Safe Grid":
+                    grid_levels = strategy_config.get('grid_levels', 5)
+                    bot = bot_class(symbol, leverage, percent, tp, sl, self.ws_manager,
+                                  self.api_key, self.api_secret, self.telegram_bot_token,
+                                  self.telegram_chat_id, grid_levels)
+                else:
+                    bot = bot_class(symbol, leverage, percent, tp, sl, self.ws_manager,
+                                  self.api_key, self.api_secret, self.telegram_bot_token,
+                                  self.telegram_chat_id)
+                
+                bot_id = f"{symbol}_{strategy_type}"
+                self.bots[bot_id] = bot
+                self.excluded_symbols.add(symbol)
+                self.log(f"✅ Đã thêm bot mới: {symbol} - {strategy_type}")
+                
+        except Exception as e:
+            self.log(f"Lỗi khi thêm bot {symbol}: {e}")
+            self.excluded_symbols.add(symbol)
+    
+    def _display_status(self):
+        """Hiển thị trạng thái hiện tại"""
+        active_count = len(self.bots)
+        self.log(f"🎯 Trạng thái Bot Manager: {active_count}/{self.max_bots} bot đang active")
+        
+        for bot_id, bot in self.bots.items():
+            status = bot.check_status()
+            self.log(f"   - {bot_id}: {status}")
+
+    def scan_and_allocate_bots(self, strategy_name, allocation_rules):
+        """
+        Duyệt bot theo yêu cầu chiến lược và phân bổ vào list
+        
+        Args:
+            strategy_name: Tên chiến lược
+            allocation_rules: Quy tắc phân bổ
+        """
+        try:
+            # Lấy config chiến lược
+            strategy_config = self._get_strategy_config(strategy_name, allocation_rules)
+            
+            # Duyệt theo khối lượng giảm dần từ Binance
+            high_volume_symbols = get_all_usdt_pairs(limit=50)
+            
+            allocated_count = 0
+            
+            for symbol in high_volume_symbols:
+                # Kiểm tra nếu đã đủ số lượng bot
+                if len(self.bots) >= self.max_bots:
+                    break
+                    
+                # Kiểm tra symbol không trùng lặp
+                if symbol in self.excluded_symbols:
+                    continue
+                
+                # Kiểm tra điều kiện chiến lược
+                if self._meets_strategy_requirements(symbol, strategy_config, allocation_rules):
+                    # Thêm bot mới
+                    self._add_new_bot(symbol, strategy_config)
+                    allocated_count += 1
+                    
+                    # Chờ bot này đặt lệnh trước khi tiếp tục
+                    time.sleep(2)  # Delay ngắn để tránh rate limit
+                    
+            self.log(f"✅ Đã phân bổ {allocated_count} bot theo chiến lược {strategy_name}")
+            
+        except Exception as e:
+            self.log(f"Lỗi khi scan và allocate bots: {e}")
+
+    def _get_strategy_config(self, strategy_name, allocation_rules):
+        """Lấy config chiến lược"""
+        return {
+            'strategy_type': strategy_name,
+            'leverage': allocation_rules.get('leverage', 10),
+            'percent': allocation_rules.get('percent', 5),
+            'tp': allocation_rules.get('tp', 100),
+            'sl': allocation_rules.get('sl', 50),
+            'threshold': allocation_rules.get('threshold', 30),
+            'volatility': allocation_rules.get('volatility', 3),
+            'grid_levels': allocation_rules.get('grid_levels', 5)
+        }
+
+    def _meets_strategy_requirements(self, symbol, strategy_config, allocation_rules):
+        """
+        Kiểm tra symbol có đáp ứng yêu cầu chiến lược không
+        """
+        try:
+            # Kiểm tra volume
+            volume_ok = self._check_volume_requirement(symbol, allocation_rules.get('min_volume', 1000000))
+            
+            # Kiểm tra biến động giá
+            volatility_ok = self._check_volatility(symbol, allocation_rules.get('max_volatility', 10))
+            
+            # Kiểm tra điều kiện chiến lược cụ thể
+            strategy_ok = check_strategy_conditions(symbol, strategy_config)
+            
+            return volume_ok and volatility_ok and strategy_ok
+            
+        except Exception as e:
+            self.log(f"Lỗi kiểm tra requirements {symbol}: {e}")
+            return False
+
+    def _check_volume_requirement(self, symbol, min_volume):
+        """Kiểm tra volume"""
+        ticker_info = get_24h_ticker(symbol)
+        if ticker_info and ticker_info['volume'] >= min_volume:
+            return True
+        return False
+
+    def _check_volatility(self, symbol, max_volatility):
+        """Kiểm tra biến động"""
+        klines = get_klines_with_cache(symbol, "5m", 20)
+        if klines:
+            closes = klines[3]
+            volatility_std = np.std(closes) / np.mean(closes) * 100
+            return volatility_std <= max_volatility
+        return False
 
     def _verify_api_connection(self):
         balance = get_balance(self.api_key, self.api_secret)
@@ -1950,17 +2282,9 @@ class BotManager:
             try:
                 current_time = time.time()
                 
-                # TÌM COIN MỚI CHO BOT ĐỘNG
-                for bot_id, bot in list(self.bots.items()):
-                    if (hasattr(bot, 'config_key') and bot.config_key and
-                        not bot.position_open and 
-                        current_time - bot.last_close_time < 300 and
-                        bot.strategy_name in ["Reverse 24h", "Scalping", "Safe Grid", "Trend Following", "Smart Dynamic"]):
-                        
-                        if current_time - getattr(bot, '_last_find_attempt', 0) > 300:
-                            self.log(f"🔄 Bot động {bot_id} đang tìm coin mới...")
-                            bot._last_find_attempt = current_time
-                            bot._find_new_coin_after_close()
+                # CẬP NHẬT: Sử dụng cơ chế mới để quản lý bot
+                for strategy_key, strategy_config in self.auto_strategies.items():
+                    self.update_bot_list(strategy_config)
                 
                 # AUTO SCAN CHO CÁC CHIẾN LƯỢC TỰ ĐỘNG
                 if current_time - self.last_auto_scan > self.auto_scan_interval:
@@ -1986,33 +2310,17 @@ class BotManager:
                 if self._is_in_cooldown(strategy_type, strategy_key):
                     continue
                 
-                coin_manager = CoinManager()
-                current_bots_count = coin_manager.count_bots_by_config(strategy_key)
+                # SỬ DỤNG CƠ CHẾ MỚI: Quét và phân bổ bot
+                allocation_rules = {
+                    'min_volume': 1000000,
+                    'max_volatility': 10,
+                    'leverage': strategy_config.get('leverage', 10),
+                    'percent': strategy_config.get('percent', 5),
+                    'tp': strategy_config.get('tp', 100),
+                    'sl': strategy_config.get('sl', 50)
+                }
                 
-                if current_bots_count == 0:
-                    self.log(f"🔄 {strategy_type} (Config: {strategy_key}): đang có 0 bot, tìm coin...")
-                    
-                    qualified_symbols = self._find_qualified_symbols(strategy_type, 
-                                                                   strategy_config['leverage'], 
-                                                                   strategy_config, strategy_key)
-                    
-                    added_count = 0
-                    for symbol in qualified_symbols:
-                        if added_count >= 2:
-                            break
-                        bot_id = f"{symbol}_{strategy_key}"
-                        if bot_id not in self.bots:
-                            success = self._create_auto_bot(symbol, strategy_type, strategy_config)
-                            if success:
-                                added_count += 1
-                                self.log(f"✅ Đã thêm {symbol} cho {strategy_type}")
-                    
-                    if added_count > 0:
-                        self.log(f"🎯 {strategy_type}: đã thêm {added_count} bot mới")
-                    else:
-                        self.log(f"⚠️ {strategy_type}: không tìm thấy coin phù hợp")
-                else:
-                    self.log(f"✅ {strategy_type} (Config: {strategy_key}): đang có {current_bots_count} bot")
+                self.scan_and_allocate_bots(strategy_type, allocation_rules)
                         
             except Exception as e:
                 self.log(f"❌ Lỗi quét {strategy_type}: {str(e)}")
@@ -2076,7 +2384,7 @@ class BotManager:
         
         bot_mode = kwargs.get('bot_mode', 'static')
         
-        # BOT ĐỘNG THÔNG MINH
+        # BOT ĐỘNG THÔNG MINH - SỬ DỤNG CƠ CHẾ MỚI
         if strategy_type == "Smart Dynamic":
             strategy_key = f"SmartDynamic_{lev}_{percent}_{tp}_{sl}"
             
@@ -2093,33 +2401,18 @@ class BotManager:
                 'strategy_key': strategy_key
             }
             
-            qualified_symbols = self._find_qualified_symbols("Smart Dynamic", lev, 
-                                                           self.auto_strategies[strategy_key], strategy_key)
+            # SỬ DỤNG CƠ CHẾ MỚI: Quét và phân bổ
+            allocation_rules = {
+                'min_volume': 1000000,
+                'max_volatility': 10,
+                'leverage': lev,
+                'percent': percent,
+                'tp': tp,
+                'sl': sl
+            }
             
-            success_count = 0
-            for symbol in qualified_symbols:
-                bot_id = f"{symbol}_{strategy_key}"
-                if bot_id not in self.bots:
-                    success = self._create_auto_bot(symbol, "Smart Dynamic", self.auto_strategies[strategy_key])
-                    if success:
-                        success_count += 1
-            
-            if success_count > 0:
-                success_msg = (
-                    f"✅ <b>ĐÃ TẠO {success_count} BOT ĐỘNG THÔNG MINH</b>\n\n"
-                    f"🎯 Chiến lược: Smart Dynamic\n"
-                    f"💰 Đòn bẩy: {lev}x\n"
-                    f"📊 % Số dư: {percent}%\n"
-                    f"🎯 TP: {tp}%\n"
-                    f"🛡️ SL: {sl}%\n"
-                    f"🤖 Coin: {', '.join(qualified_symbols[:success_count])}\n\n"
-                    f"🔑 <b>Config Key:</b> {strategy_key}"
-                )
-                self.log(success_msg)
-                return True
-            else:
-                self.log("⚠️ Smart Dynamic: chưa tìm thấy coin phù hợp")
-                return True
+            self.scan_and_allocate_bots("Smart Dynamic", allocation_rules)
+            return True
         
         # CÁC CHIẾN LƯỢC ĐỘNG KHÁC
         elif bot_mode == 'dynamic' and strategy_type in ["Reverse 24h", "Scalping", "Safe Grid", "Trend Following"]:
@@ -2149,41 +2442,21 @@ class BotManager:
                 **kwargs
             }
             
-            qualified_symbols = self._find_qualified_symbols(strategy_type, lev, 
-                                                           self.auto_strategies[strategy_key], strategy_key)
+            # SỬ DỤNG CƠ CHẾ MỚI: Quét và phân bổ
+            allocation_rules = {
+                'min_volume': 1000000,
+                'max_volatility': 10,
+                'leverage': lev,
+                'percent': percent,
+                'tp': tp,
+                'sl': sl,
+                'threshold': kwargs.get('threshold', 30),
+                'volatility': kwargs.get('volatility', 3),
+                'grid_levels': kwargs.get('grid_levels', 5)
+            }
             
-            success_count = 0
-            for symbol in qualified_symbols:
-                bot_id = f"{symbol}_{strategy_key}"
-                if bot_id not in self.bots:
-                    success = self._create_auto_bot(symbol, strategy_type, self.auto_strategies[strategy_key])
-                    if success:
-                        success_count += 1
-            
-            if success_count > 0:
-                success_msg = (
-                    f"✅ <b>ĐÃ TẠO {success_count} BOT {strategy_type}</b>\n\n"
-                    f"🎯 Chiến lược: {strategy_type}\n"
-                    f"💰 Đòn bẩy: {lev}x\n"
-                    f"📊 % Số dư: {percent}%\n"
-                    f"🎯 TP: {tp}%\n"
-                    f"🛡️ SL: {sl}%\n"
-                )
-                if strategy_type == "Reverse 24h":
-                    success_msg += f"📈 Ngưỡng: {threshold}%\n"
-                elif strategy_type == "Scalping":
-                    success_msg += f"⚡ Biến động: {volatility}%\n"
-                elif strategy_type == "Safe Grid":
-                    success_msg += f"🛡️ Số lệnh: {grid_levels}\n"
-                    
-                success_msg += f"🤖 Coin: {', '.join(qualified_symbols[:success_count])}\n\n"
-                success_msg += f"🔑 <b>Config Key:</b> {strategy_key}"
-                
-                self.log(success_msg)
-                return True
-            else:
-                self.log(f"⚠️ {strategy_type}: chưa tìm thấy coin phù hợp")
-                return True
+            self.scan_and_allocate_bots(strategy_type, allocation_rules)
+            return True
         
         # CHIẾN LƯỢC TĨNH
         else:
@@ -2382,7 +2655,7 @@ class BotManager:
                         )
                         return
                     else:
-                        # BOT ĐỘNG - TỰ ĐỘNG TÌM COIN
+                        # BOT ĐỘNG - SỬ DỤNG CƠ CHẾ MỚI
                         success = self.add_bot(
                             symbol=None,  # Bot động tự tìm coin
                             lev=lev,
@@ -2501,7 +2774,7 @@ class BotManager:
                     
                     message += f"🔹 {bot_id} | {status} | {mode} | ĐB: {bot.lev}x\n"
                 
-                message += f"\n📊 Tổng số: {len(self.bots)} bot | 🔄 Động: {dynamic_bots}"
+                message += f"\n📊 Tổng số: {len(self.bots)}/{self.max_bots} bot | 🔄 Động: {dynamic_bots}"
                 send_telegram(message, chat_id,
                             bot_token=self.telegram_bot_token, default_chat_id=self.telegram_chat_id)
         
@@ -2634,13 +2907,13 @@ class BotManager:
             config_info = (
                 "⚙️ <b>CẤU HÌNH HỆ THỐNG NÂNG CAO</b>\n\n"
                 f"🔑 Binance API: {api_status}\n"
-                f"🤖 Tổng số bot: {len(self.bots)}\n"
+                f"🤖 Tổng số bot: {len(self.bots)}/{self.max_bots}\n"
                 f"🔄 Bot động: {dynamic_bots_count}\n"
                 f"📊 Chiến lược: {len(set(bot.strategy_name for bot in self.bots.values()))}\n"
                 f"🔄 Auto scan: {len(self.auto_strategies)} cấu hình\n"
                 f"🌐 WebSocket: {len(self.ws_manager.connections)} kết nối\n"
                 f"⏰ Cooldown: {self.cooldown_period//60} phút\n"
-                f"💡 Phiên bản: Enhanced Indicators v2.0"
+                f"💡 Phiên bản: Enhanced Bot Manager v2.0"
             )
             send_telegram(config_info, chat_id,
                         bot_token=self.telegram_bot_token, default_chat_id=self.telegram_chat_id)
