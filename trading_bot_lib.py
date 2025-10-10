@@ -1199,44 +1199,6 @@ class BaseBot:
             self.log(f"❌ Lỗi cân bằng tín hiệu: {str(e)}")
             return original_signal
 
-    def get_position_summary(self):
-        """Lấy thống kê tổng quan vị thế toàn hệ thống"""
-        try:
-            buy_count = 0
-            sell_count = 0
-            open_positions = []
-            
-            bot_manager = getattr(self, '_bot_manager', None)
-            if bot_manager and hasattr(bot_manager, 'bots'):
-                for bot_id, bot in bot_manager.bots.items():
-                    if bot.position_open:
-                        if bot.side == "BUY":
-                            buy_count += 1
-                        elif bot.side == "SELL":
-                            sell_count += 1
-                        open_positions.append(f"{bot.symbol}({bot.side})")
-            
-            total = buy_count + sell_count
-            if total > 0:
-                buy_ratio = buy_count / total
-                sell_ratio = sell_count / total
-                
-                summary = (
-                    f"📊 **THỐNG KÊ VỊ THẾ TOÀN HỆ THỐNG**\n"
-                    f"🟢 BUY: {buy_count} vị thế ({buy_ratio:.1%})\n"
-                    f"🔴 SELL: {sell_count} vị thế ({sell_ratio:.1%})\n"
-                    f"📈 Tổng: {total} vị thế đang mở\n"
-                )
-                
-                if open_positions:
-                    summary += f"🔗 Các vị thế: {', '.join(open_positions)}"
-                
-                return summary
-            else:
-                return "📊 Không có vị thế nào đang mở"
-                
-        except Exception as e:
-            return f"❌ Lỗi thống kê: {str(e)}"
     def check_position_status(self):
         if not self.symbol:
             return
@@ -1611,6 +1573,44 @@ class BotManager:
         else:
             self.log(f"✅ Kết nối Binance thành công! Số dư: {balance:.2f} USDT")
 
+    def get_position_summary(self):
+        """Lấy thống kê tổng quan vị thế toàn hệ thống"""
+        try:
+            buy_count = 0
+            sell_count = 0
+            open_positions = []
+            
+            bot_manager = getattr(self, '_bot_manager', None)
+            if bot_manager and hasattr(bot_manager, 'bots'):
+                for bot_id, bot in bot_manager.bots.items():
+                    if bot.position_open:
+                        if bot.side == "BUY":
+                            buy_count += 1
+                        elif bot.side == "SELL":
+                            sell_count += 1
+                        open_positions.append(f"{bot.symbol}({bot.side})")
+            
+            total = buy_count + sell_count
+            if total > 0:
+                buy_ratio = buy_count / total
+                sell_ratio = sell_count / total
+                
+                summary = (
+                    f"📊 **THỐNG KÊ VỊ THẾ TOÀN HỆ THỐNG**\n"
+                    f"🟢 BUY: {buy_count} vị thế ({buy_ratio:.1%})\n"
+                    f"🔴 SELL: {sell_count} vị thế ({sell_ratio:.1%})\n"
+                    f"📈 Tổng: {total} vị thế đang mở\n"
+                )
+                
+                if open_positions:
+                    summary += f"🔗 Các vị thế: {', '.join(open_positions)}"
+                
+                return summary
+            else:
+                return "📊 Không có vị thế nào đang mở"
+                
+        except Exception as e:
+            return f"❌ Lỗi thống kê: {str(e)}"
     def log(self, message):
         logger.info(f"[SYSTEM] {message}")
         if self.telegram_bot_token and self.telegram_chat_id:
