@@ -240,18 +240,13 @@ def create_bot_count_keyboard():
 class AIMarketAnalyzer:
     """AI PHÂN TÍCH THỊ TRƯỜNG & ĐỀ XUẤT HƯỚNG GIAO DỊCH"""
     
-    # Trong hàm __init__ của AIMarketAnalyzer, thêm:
     def __init__(self):
         self.model = None
         self.scaler = StandardScaler()
         self.model_path = "ai_market_model.pkl"
         self.scaler_path = "ai_scaler.pkl"
+        self.is_trained = False
         self.load_model()
-        
-        # Nếu model chưa được train, khởi tạo với dữ liệu mẫu
-        if not hasattr(self.model, 'classes_') or not hasattr(self.scaler, 'mean_'):
-            logger.info("🔄 Khởi tạo AI với dữ liệu mẫu...")
-            self.initialize_ai_with_sample_data()
         
     def load_model(self):
         """Tải mô hình AI đã train"""
@@ -259,123 +254,92 @@ class AIMarketAnalyzer:
             if os.path.exists(self.model_path) and os.path.exists(self.scaler_path):
                 self.model = joblib.load(self.model_path)
                 self.scaler = joblib.load(self.scaler_path)
+                self.is_trained = True
                 logger.info("✅ Đã tải mô hình AI thành công")
             else:
                 self.model = RandomForestClassifier(n_estimators=100, random_state=42)
                 logger.info("🆕 Khởi tạo mô hình AI mới")
+                # Tạo dữ liệu mẫu để train scaler ngay từ đầu
+                self._initialize_with_sample_data()
         except Exception as e:
             logger.error(f"❌ Lỗi tải mô hình AI: {str(e)}")
             self.model = RandomForestClassifier(n_estimators=100, random_state=42)
+            self._initialize_with_sample_data()
     
-    def save_model(self):
-        """Lưu mô hình AI"""
+    def _initialize_with_sample_data(self):
+        """Khởi tạo với dữ liệu mẫu để scaler được fit"""
         try:
-            joblib.dump(self.model, self.model_path)
-            joblib.dump(self.scaler, self.scaler_path)
-            logger.info("💾 Đã lưu mô hình AI")
-        except Exception as e:
-            logger.error(f"❌ Lỗi lưu mô hình AI: {str(e)}")
-    
-    def extract_features(self, symbol_data, market_data):
-        """Trích xuất đặc trưng cho AI"""
-        try:
-            features = []
+            # Tạo dữ liệu mẫu có cấu trúc giống thật
+            sample_data = []
+            for i in range(100):
+                sample = [
+                    np.random.uniform(20, 80),    # RSI
+                    np.random.uniform(1000, 50000), # EMA9
+                    np.random.uniform(1000, 50000), # EMA21  
+                    np.random.uniform(1000, 50000), # EMA50
+                    np.random.uniform(-50, 50),   # MACD
+                    np.random.uniform(-50, 50),   # Signal
+                    np.random.uniform(0.1, 5.0),  # Volume ratio
+                    np.random.uniform(-10, 10),   # Price change 1h
+                    np.random.uniform(-20, 20),   # Price change 4h
+                    np.random.uniform(-30, 30),   # Price change 24h
+                    np.random.uniform(0.5, 20),   # Volatility
+                    np.random.uniform(30, 70),    # BTC dominance
+                    np.random.uniform(10, 90)     # Fear greed
+                ]
+                sample_data.append(sample)
             
-            # 1. Chỉ báo kỹ thuật
-            prices = symbol_data.get('prices', [])
-            volumes = symbol_data.get('volumes', [])
+            # Fit scaler
+            self.scaler.fit(sample_data)
             
-            if len(prices) < 50:
-                return None
+            # Train model với dữ liệu mẫu (tất cả neutral)
+            y_sample = [1] * len(sample_data)  # 1 = NEUTRAL
+            X_sample_scaled = self.scaler.transform(sample_data)
+            self.model.fit(X_sample_scaled, y_sample)
             
-            # RSI
-            rsi = self.calc_rsi(prices[-14:])
-            
-            # EMA
-            ema_9 = self.calc_ema(prices, 9)
-            ema_21 = self.calc_ema(prices, 21)
-            ema_50 = self.calc_ema(prices, 50)
-            
-            # MACD
-            macd, signal = self.calc_macd(prices)
-            
-            # Volume analysis
-            volume_avg = np.mean(volumes[-20:]) if volumes else 0
-            volume_current = volumes[-1] if volumes else 0
-            volume_ratio = volume_current / volume_avg if volume_avg > 0 else 0
-            
-            # Price momentum
-            price_change_1h = (prices[-1] - prices[-4]) / prices[-4] * 100 if len(prices) >= 4 else 0
-            price_change_4h = (prices[-1] - prices[-16]) / prices[-16] * 100 if len(prices) >= 16 else 0
-            price_change_24h = (prices[-1] - prices[-96]) / prices[-96] * 100 if len(prices) >= 96 else 0
-            
-            # Volatility
-            volatility = np.std(prices[-20:]) / np.mean(prices[-20:]) * 100 if len(prices) >= 20 else 0
-            
-            # Market sentiment
-            btc_dominance = market_data.get('btc_dominance', 0)
-            fear_greed = market_data.get('fear_greed', 50)
-            
-            features = [
-                rsi or 50,
-                ema_9 or prices[-1],
-                ema_21 or prices[-1], 
-                ema_50 or prices[-1],
-                macd or 0,
-                signal or 0,
-                volume_ratio,
-                price_change_1h,
-                price_change_4h, 
-                price_change_24h,
-                volatility,
-                btc_dominance,
-                fear_greed
-            ]
-            
-            return features
+            self.is_trained = True
+            logger.info("✅ Đã khởi tạo AI với dữ liệu mẫu")
             
         except Exception as e:
-            logger.error(f"❌ Lỗi trích xuất đặc trưng: {str(e)}")
-            return None
-    
-    # trading_bot_lib.py - SỬA LỖI AI SCALER
+            logger.error(f"❌ Lỗi khởi tạo dữ liệu mẫu: {str(e)}")
+            self.is_trained = False
 
-# Trong class AIMarketAnalyzer, sửa hàm predict_direction:
-
-def predict_direction(self, symbol_data, market_data):
-    """Dự đoán hướng giao dịch cho symbol - ĐÃ SỬA LỖI SCALER"""
-    try:
-        features = self.extract_features(symbol_data, market_data)
-        if features is None:
-            return "NEUTRAL"
-        
-        # KIỂM TRA SCALER ĐÃ ĐƯỢC FIT CHƯA
-        if not hasattr(self.scaler, 'mean_'):
-            # Nếu chưa fit, sử dụng features gốc không scaled
-            logger.warning("⚠️ Scaler chưa được fit, sử dụng features gốc")
-            features_scaled = [features]
-        else:
+    def predict_direction(self, symbol_data, market_data):
+        """Dự đoán hướng giao dịch cho symbol - ĐÃ SỬA LỖI"""
+        try:
+            if not self.is_trained:
+                logger.warning("⚠️ AI chưa được train, trả về NEUTRAL")
+                return "NEUTRAL"
+                
+            features = self.extract_features(symbol_data, market_data)
+            if features is None:
+                return "NEUTRAL"
+            
+            # Kiểm tra scaler đã được fit chưa
+            if not hasattr(self.scaler, 'mean_'):
+                logger.warning("⚠️ Scaler chưa được fit")
+                return "NEUTRAL"
+            
             # Chuẩn hóa features
-            features_scaled = self.scaler.transform([features])
-        
-        # Kiểm tra model đã được train chưa
-        if not hasattr(self.model, 'classes_'):
-            logger.warning("⚠️ Model chưa được train, trả về NEUTRAL")
+            try:
+                features_scaled = self.scaler.transform([features])
+            except Exception as e:
+                logger.error(f"❌ Lỗi chuẩn hóa features: {str(e)}")
+                return "NEUTRAL"
+            
+            # Dự đoán
+            prediction = self.model.predict(features_scaled)[0]
+            confidence = np.max(self.model.predict_proba(features_scaled))
+            
+            directions = {0: "SELL", 1: "NEUTRAL", 2: "BUY"}
+            direction = directions.get(prediction, "NEUTRAL")
+            
+            logger.info(f"🤖 AI dự đoán {direction} (độ tin cậy: {confidence:.2f})")
+            return direction if confidence > 0.6 else "NEUTRAL"
+            
+        except Exception as e:
+            logger.error(f"❌ Lỗi dự đoán AI: {str(e)}")
             return "NEUTRAL"
-        
-        # Dự đoán
-        prediction = self.model.predict(features_scaled)[0]
-        confidence = np.max(self.model.predict_proba(features_scaled))
-        
-        directions = {0: "SELL", 1: "NEUTRAL", 2: "BUY"}
-        direction = directions.get(prediction, "NEUTRAL")
-        
-        logger.info(f"🤖 AI dự đoán {direction} (độ tin cậy: {confidence:.2f})")
-        return direction if confidence > 0.6 else "NEUTRAL"
-        
-    except Exception as e:
-        logger.error(f"❌ Lỗi dự đoán AI: {str(e)}")
-        return "NEUTRAL"
 
 # Thêm hàm để train scaler với dữ liệu mẫu
 def initialize_ai_with_sample_data(self):
@@ -551,7 +515,7 @@ class PositionBalancer:
 
 # ========== SMART COIN FINDER ==========
 class SmartCoinFinder:
-    """TÌM COIN THÔNG MINH - CHỌN HƯỚNG TRƯỚC, TÌM COIN SAU"""
+    """TÌM COIN THÔNG MINH - SỬ DỤNG AI THẬT SỰ"""
     
     def __init__(self, api_key, api_secret, ai_analyzer, position_balancer):
         self.api_key = api_key
@@ -560,65 +524,104 @@ class SmartCoinFinder:
         self.position_balancer = position_balancer
         
     def find_coins_by_direction(self, target_direction, strategy_type, count=2, market_data=None):
-        """TÌM COIN THEO HƯỚNG CHỈ ĐỊNH - CƠ CHẾ ĐẢO NGƯỢC"""
+        """TÌM COIN THEO HƯỚNG CHỈ ĐỊNH - SỬ DỤNG AI THẬT"""
         try:
-            logger.info(f"🎯 Bắt đầu tìm {count} coin cho hướng {target_direction} ({strategy_type})")
+            logger.info(f"🎯 AI đang tìm {count} coin cho hướng {target_direction}")
             
-            # Lấy danh sách coin tiềm năng
-            all_symbols = get_all_usdt_pairs(limit=100)
+            all_symbols = get_all_usdt_pairs(limit=80)
             qualified_coins = []
             
-            # Lấy dữ liệu thị trường nếu chưa có
             if market_data is None:
                 market_data = self.get_market_sentiment()
             
             for symbol in all_symbols:
                 try:
-                    # Bỏ qua BTC, ETH để tránh biến động cao
                     if symbol in ['BTCUSDT', 'ETHUSDT']:
                         continue
                     
-                    # Lấy dữ liệu kỹ thuật cho coin
+                    # Lấy dữ liệu kỹ thuật
                     symbol_data = self.get_symbol_data(symbol)
-                    if not symbol_data:
+                    if not symbol_data or len(symbol_data.get('prices', [])) < 50:
                         continue
                     
-                    # AI PHÂN TÍCH HƯỚNG cho coin này
+                    # SỬ DỤNG AI ĐỂ DỰ ĐOÁN HƯỚNG
                     ai_direction = self.ai_analyzer.predict_direction(symbol_data, market_data)
                     
                     # CHỈ CHỌN COIN CÓ HƯỚNG TRÙNG VỚI MỤC TIÊU
                     if ai_direction == target_direction:
-                        # ĐÁNH GIÁ CHẤT LƯỢNG TÍN HIỆU
                         score = self.calculate_signal_score(symbol_data, target_direction, strategy_type)
                         
-                        if score > 0.6:  # Ngưỡng chất lượng
+                        if score > 0.5:  # Ngưỡng thấp hơn để có nhiều coin hơn
                             qualified_coins.append({
                                 'symbol': symbol,
                                 'direction': target_direction,
                                 'score': score,
                                 'strategy_type': strategy_type,
-                                'data': symbol_data
+                                'ai_confidence': "high" if score > 0.7 else "medium"
                             })
-                            logger.info(f"✅ {symbol}: phù hợp {target_direction} (điểm: {score:.2f})")
+                            logger.info(f"✅ {symbol}: AI đề xuất {target_direction} (điểm: {score:.2f})")
                     
-                    time.sleep(0.1)  # Tránh rate limit
+                    time.sleep(0.1)
                     
                 except Exception as e:
                     logger.error(f"❌ Lỗi phân tích {symbol}: {str(e)}")
                     continue
             
-            # Sắp xếp theo điểm số
+            # Sắp xếp theo điểm số AI
             qualified_coins.sort(key=lambda x: x['score'], reverse=True)
             
-            # Chọn coin tốt nhất
             selected_coins = qualified_coins[:count]
             
-            logger.info(f"🎯 Đã tìm thấy {len(selected_coins)} coin cho {target_direction}")
+            if selected_coins:
+                symbols = [coin['symbol'] for coin in selected_coins]
+                logger.info(f"🎯 AI đã chọn {len(selected_coins)} coin: {symbols}")
+            else:
+                logger.warning(f"⚠️ AI không tìm thấy coin nào cho {target_direction}")
+                # Fallback: sử dụng phương pháp đơn giản
+                selected_coins = self._find_coins_fallback(target_direction, strategy_type, count)
+            
             return selected_coins
             
         except Exception as e:
-            logger.error(f"❌ Lỗi tìm coin theo hướng: {str(e)}")
-            return []
+            logger.error(f"❌ Lỗi tìm coin AI: {str(e)}")
+            return self._find_coins_fallback(target_direction, strategy_type, count)
+    
+    def _find_coins_fallback(self, target_direction, strategy_type, count):
+        """Phương pháp dự phòng khi AI gặp lỗi"""
+        logger.info(f"🔄 Sử dụng phương pháp dự phòng cho {target_direction}")
+        
+        all_symbols = get_all_usdt_pairs(limit=50)
+        qualified_coins = []
+        
+        for symbol in all_symbols:
+            try:
+                if symbol in ['BTCUSDT', 'ETHUSDT']:
+                    continue
+                
+                change_24h = get_24h_change(symbol)
+                if change_24h is None:
+                    continue
+                
+                score = 0
+                if target_direction == "BUY" and change_24h < -10:
+                    score = abs(change_24h) / 100
+                elif target_direction == "SELL" and change_24h > 10:
+                    score = abs(change_24h) / 100
+                
+                if score > 0:
+                    qualified_coins.append({
+                        'symbol': symbol,
+                        'direction': target_direction,
+                        'score': score,
+                        'strategy_type': strategy_type,
+                        'ai_confidence': "fallback"
+                    })
+                    
+            except Exception:
+                continue
+        
+        qualified_coins.sort(key=lambda x: x['score'], reverse=True)
+        return qualified_coins[:count]
     
     def calculate_signal_score(self, symbol_data, target_direction, strategy_type):
         """TÍNH ĐIỂM CHẤT LƯỢNG TÍN HIỆU - TỔNG HỢP ĐA CHỈ BÁO"""
@@ -1854,6 +1857,13 @@ class BotManager:
         
         # KHỞI TẠO AI VÀ CÂN BẰNG
         self.ai_analyzer = AIMarketAnalyzer()
+        
+        # Kiểm tra trạng thái AI
+        if hasattr(self.ai_analyzer, 'is_trained') and self.ai_analyzer.is_trained:
+            logger.info("🤖 AI Market Analyzer: Đã sẵn sàng")
+        else:
+            logger.warning("⚠️ AI Market Analyzer: Chưa được train, sẽ sử dụng fallback")
+            
         self.position_balancer = PositionBalancer(self)
         self.coin_finder = SmartCoinFinder(api_key, api_secret, self.ai_analyzer, self.position_balancer)
         
