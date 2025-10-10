@@ -64,7 +64,6 @@ def signed_request(url_path: str, params: dict, api_key: str, secret_key: str, m
         return None
 
 def get_balance(api_key: str, api_secret: str) -> float:
-    """Lấy số dư USDT"""
     try:
         ts = int(time.time() * 1000)
         url_path = "/fapi/v2/balance"
@@ -73,14 +72,34 @@ def get_balance(api_key: str, api_secret: str) -> float:
         if data:
             for b in data:
                 if b.get('asset') == 'USDT':
-                    balance = float(b.get('balance', 0))
-                    logger.info(f"💰 Số dư: {balance:.2f} USDT")
-                    return balance
+                    # THAY ĐỔI: Lấy availableBalance thay vì balance
+                    available_balance = float(b.get('availableBalance', 0))
+                    total_balance = float(b.get('balance', 0))
+                    logger.info(f"💰 Số dư khả dụng: {available_balance:.2f} USDT | Tổng: {total_balance:.2f} USDT")
+                    return available_balance  # ← QUAN TRỌNG: Trả về số khả dụng
         return 0.0
     except Exception as e:
         logger.error(f"get_balance error: {e}")
         return 0.0
 
+def get_detailed_balance(api_key: str, api_secret: str) -> Dict[str, float]:
+    try:
+        ts = int(time.time() * 1000)
+        url_path = "/fapi/v2/balance"
+        params = {"timestamp": ts}
+        data = signed_request(url_path, params, api_key, api_secret, 'GET')
+        if data:
+            for b in data:
+                if b.get('asset') == 'USDT':
+                    return {
+                        'available': float(b.get('availableBalance', 0)),
+                        'total': float(b.get('balance', 0)),
+                        'unrealized_pnl': float(b.get('crossUnPnl', 0))
+                    }
+        return {}
+    except Exception as e:
+        logger.error(f"get_detailed_balance error: {e}")
+        return {}
 def get_current_price(symbol: str) -> float:
     """Lấy giá hiện tại"""
     try:
@@ -1233,13 +1252,19 @@ class BotManager:
                             self.telegram_bot_token, self.telegram_chat_id)
         
         elif text == "💰 Số dư":
-            balance = get_balance(self.api_key, self.api_secret)
-            if balance == 0:
+            detailed_balance = get_detailed_balance(self.api_key, self.api_secret)
+            if not detailed_balance:
                 send_telegram("❌ Lỗi kết nối Binance", chat_id,
                             bot_token=self.telegram_bot_token, default_chat_id=self.telegram_chat_id)
-            else:
-                send_telegram(f"💰 <b>SỐ DƯ KHẢ DỤNG</b>: {balance:.2f} USDT", chat_id,
-                            bot_token=self.telegram_bot_token, default_chat_id=self.telegram_chat_id)
+    else:
+        message = (
+            f"💰 <b>CHI TIẾT SỐ DƯ</b>\n\n"
+            f"🟢 <b>Khả dụng:</b> {detailed_balance['available']:.2f} USDT\n"
+            f"📊 <b>Tổng số dư:</b> {detailed_balance['total']:.2f} USDT\n"
+            f"📈 <b>Lợi nhuận chưa thực hiện:</b> {detailed_balance['unrealized_pnl']:.2f} USDT"
+        )
+        send_telegram(message, chat_id,
+                    bot_token=self.telegram_bot_token, default_chat_id=self.telegram_chat_id)
         
         elif text == "📈 Vị thế":
             positions = get_positions(self.api_key, self.api_secret)
