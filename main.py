@@ -1,5 +1,5 @@
 # main.py
-from trading_bot_lib_optimized import BotManager  # Import từ file mới
+from trading_bot_lib import BotManager  # Import từ file mới
 import os
 import json
 import time
@@ -179,3 +179,4 @@ def main():
 
 if __name__ == "__main__":
     main()
+
