@@ -1703,9 +1703,6 @@ class EMA_Crossover_Bot(BaseBot):
                       current_price < ema_trend and current_price < bb_middle):
                     signal = "SELL"
                 
-                if signal:
-                    self.log(f"🎯 EMA Crossover: {signal} | Fast: {ema_fast:.4f} | Slow: {ema_slow:.4f}")
-
             self.prev_ema_fast = ema_fast
             self.prev_ema_slow = ema_slow
 
