@@ -1,4 +1,4 @@
-# ai_trading_bot.py - AI TRADING BOT ĐỈNH CAO THẾ GIỚI
+# trading_bot_lib.py - AI TRADING BOT ĐỈNH CAO THẾ GIỚI
 import json
 import hmac
 import hashlib
@@ -61,10 +61,10 @@ def send_telegram(message, chat_id=None, reply_markup=None, bot_token=None, defa
 def create_main_menu():
     return {
         "keyboard": [
-            [{"text": "📊 Danh sách Bot"}],
-            [{"text": "➕ Thêm Bot"}, {"text": "⛔ Dừng Bot"}],
-            [{"text": "💰 Số dư"}, {"text": "📈 Vị thế"}],
-            [{"text": "⚙️ Cấu hình"}, {"text": "🎯 Chiến lược AI"}]
+            [{"text": "Danh sách Bot"}],
+            [{"text": "Them Bot"}, {"text": "Dung Bot"}],
+            [{"text": "So du"}, {"text": "Vi the"}],
+            [{"text": "Cau hinh"}, {"text": "Chien luoc AI"}]
         ],
         "resize_keyboard": True,
         "one_time_keyboard": False
@@ -73,9 +73,9 @@ def create_main_menu():
 def create_strategy_keyboard():
     return {
         "keyboard": [
-            [{"text": "🧠 DeepMind AlphaTrade"}, {"text": "🚀 OpenAI Quant"}],
-            [{"text": "⚡ NVIDIA Trading AI"}, {"text": "🔬 MIT Deep Learning"}],
-            [{"text": "🎯 Stanford RL Trader"}, {"text": "❌ Hủy bỏ"}]
+            [{"text": "DeepMind AlphaTrade"}, {"text": "OpenAI Quant"}],
+            [{"text": "NVIDIA Trading AI"}, {"text": "MIT Deep Learning"}],
+            [{"text": "Stanford RL Trader"}, {"text": "Huy bo"}]
         ],
         "resize_keyboard": True,
         "one_time_keyboard": True
@@ -497,7 +497,7 @@ class AITradingBot:
         self.thread = threading.Thread(target=self._run, daemon=True)
         self.thread.start()
         
-        self.log(f"🚀 AI Trading Bot khởi động | {self.symbol} | ĐB: {leverage}x | Vốn: {percent}%")
+        self.log(f"AI Trading Bot khoi dong | {self.symbol} | DB: {leverage}x | Von: {percent}%")
 
     def log(self, message):
         """Ghi log và gửi Telegram"""
@@ -516,7 +516,7 @@ class AITradingBot:
                 data = response.json()
                 return float(data['price'])
         except Exception as e:
-            self.log(f"❌ Lỗi lấy giá: {str(e)}")
+            self.log(f"Loi lay gia: {str(e)}")
         return 0
 
     def get_balance(self):
@@ -536,7 +536,7 @@ class AITradingBot:
                     if asset['asset'] == 'USDT':
                         return float(asset['availableBalance'])
         except Exception as e:
-            self.log(f"❌ Lỗi lấy số dư: {str(e)}")
+            self.log(f"Loi lay so du: {str(e)}")
         return 0
 
     def place_order(self, side, quantity):
@@ -560,7 +560,7 @@ class AITradingBot:
                 data = response.json()
                 return data
         except Exception as e:
-            self.log(f"❌ Lỗi đặt lệnh: {str(e)}")
+            self.log(f"Loi dat lenh: {str(e)}")
         return None
 
     def check_position(self):
@@ -591,7 +591,7 @@ class AITradingBot:
                 self.quantity = 0
                 self.entry_price = 0
         except Exception as e:
-            self.log(f"❌ Lỗi kiểm tra vị thế: {str(e)}")
+            self.log(f"Loi kiem tra vi the: {str(e)}")
         return False
 
     def calculate_position_size(self):
@@ -616,12 +616,12 @@ class AITradingBot:
     def execute_trade(self, signal):
         """Thực hiện giao dịch theo tín hiệu AI"""
         if self.position_open:
-            self.log(f"⚠️ Đã có vị thế {self.side}, bỏ qua tín hiệu {signal}")
+            self.log(f"Da co vi the {self.side}, bo qua tin hieu {signal}")
             return False
 
         position_size = self.calculate_position_size()
         if position_size <= 0:
-            self.log("❌ Khối lượng position không hợp lệ")
+            self.log("Khoi luong position khong hop le")
             return False
 
         # Đặt lệnh
@@ -633,18 +633,18 @@ class AITradingBot:
             self.entry_price = self.get_current_price()
             
             message = (
-                f"✅ <b>AI ĐÃ MỞ VỊ THẾ {self.symbol}</b>\n"
-                f"🤖 Chiến lược: {self.strategy_name}\n"
-                f"📌 Hướng: {signal}\n"
-                f"🏷️ Giá vào: {self.entry_price:.4f}\n"
-                f"📊 Khối lượng: {position_size:.4f}\n"
-                f💰 Đòn bẩy: {self.leverage}x\n"
-                f"🎯 TP: {self.tp}% | 🛡️ SL: {self.sl}%"
+                f"AI DA MO VI THE {self.symbol}\n"
+                f"Chien luoc: {self.strategy_name}\n"
+                f"Huong: {signal}\n"
+                f"Gia vao: {self.entry_price:.4f}\n"
+                f"Khoi luong: {position_size:.4f}\n"
+                f"Don bay: {self.leverage}x\n"
+                f"TP: {self.tp}% | SL: {self.sl}%"
             )
             self.log(message)
             return True
         else:
-            self.log(f"❌ Lỗi mở lệnh {signal}")
+            self.log(f"Loi mo lenh {signal}")
             return False
 
     def check_exit_conditions(self):
@@ -670,9 +670,9 @@ class AITradingBot:
 
         # Kiểm tra TP/SL
         if roi >= self.tp:
-            self.close_position(f"✅ Đạt TP {self.tp}% (ROI: {roi:.2f}%)")
+            self.close_position(f"Dat TP {self.tp}% (ROI: {roi:.2f}%)")
         elif roi <= -self.sl:
-            self.close_position(f"❌ Đạt SL {self.sl}% (ROI: {roi:.2f}%)")
+            self.close_position(f"Dat SL {self.sl}% (ROI: {roi:.2f}%)")
 
     def close_position(self, reason=""):
         """Đóng vị thế hiện tại"""
@@ -695,12 +695,12 @@ class AITradingBot:
             self.total_pnl += final_pnl
             
             message = (
-                f"⛔ <b>ĐÃ ĐÓNG VỊ THẾ {self.symbol}</b>\n"
-                f"🤖 Chiến lược: {self.strategy_name}\n"
-                f"📌 Lý do: {reason}\n"
-                f"🏷️ Giá ra: {current_price:.4f}\n"
-                f"💰 PnL: {final_pnl:.2f} USDT\n"
-                f"📊 Tổng PnL: {self.total_pnl:.2f} USDT"
+                f"DA DONG VI THE {self.symbol}\n"
+                f"Chien luoc: {self.strategy_name}\n"
+                f"Ly do: {reason}\n"
+                f"Gia ra: {current_price:.4f}\n"
+                f"PnL: {final_pnl:.2f} USDT\n"
+                f"Tong PnL: {self.total_pnl:.2f} USDT"
             )
             self.log(message)
             
@@ -712,7 +712,7 @@ class AITradingBot:
             
             return True
         else:
-            self.log(f"❌ Lỗi đóng lệnh")
+            self.log(f"Loi dong lenh")
             return False
 
     def _run(self):
@@ -734,7 +734,7 @@ class AITradingBot:
                     signal, confidence = self.ai_engine.get_ai_signal(self.symbol, self.prices)
                     
                     if signal and confidence > 0.6:
-                        self.log(f"🎯 AI Signal: {signal} | Confidence: {confidence:.2f} | Regime: {self.ai_engine.volatility_regime}")
+                        self.log(f"AI Signal: {signal} | Confidence: {confidence:.2f} | Regime: {self.ai_engine.volatility_regime}")
                         self.execute_trade(signal)
                 
                 # Kiểm tra điều kiện thoát lệnh
@@ -744,13 +744,13 @@ class AITradingBot:
                 time.sleep(5)  # Chờ 5 giây giữa các lần check
                 
             except Exception as e:
-                self.log(f"❌ Lỗi hệ thống: {str(e)}")
+                self.log(f"Loi he thong: {str(e)}")
                 time.sleep(10)
 
     def stop(self):
         """Dừng bot"""
         self._stop = True
-        self.log("🔴 Bot AI đã dừng")
+        self.log("Bot AI da dung")
 
 # ========== AI BOT MANAGER ==========
 class AIBotManager:
@@ -767,29 +767,29 @@ class AIBotManager:
         
         # AI Strategy configurations
         self.ai_strategies = {
-            "🧠 DeepMind AlphaTrade": {
+            "DeepMind AlphaTrade": {
                 "description": "DeepMind RL - Reinforcement Learning tiên tiến",
                 "risk_profile": "MEDIUM"
             },
-            "🚀 OpenAI Quant": {
+            "OpenAI Quant": {
                 "description": "OpenAI Transformer - Price prediction",
                 "risk_profile": "LOW"
             },
-            "⚡ NVIDIA Trading AI": {
+            "NVIDIA Trading AI": {
                 "description": "NVIDIA GAN - Pattern recognition",
                 "risk_profile": "HIGH" 
             },
-            "🔬 MIT Deep Learning": {
+            "MIT Deep Learning": {
                 "description": "MIT Temporal CNN - Feature extraction",
                 "risk_profile": "MEDIUM"
             },
-            "🎯 Stanford RL Trader": {
+            "Stanford RL Trader": {
                 "description": "Stanford RL - Risk-aware trading",
                 "risk_profile": "LOW"
             }
         }
         
-        self.log("🚀 AI Trading System khởi động - 5 AI Hàng Đầu Thế Giới")
+        self.log("AI Trading System khoi dong - 5 AI Hang Dau The Gioi")
         
         # Start Telegram listener
         self.telegram_thread = threading.Thread(target=self._telegram_listener, daemon=True)
@@ -807,13 +807,13 @@ class AIBotManager:
 
     def send_main_menu(self, chat_id):
         welcome_msg = (
-            "🤖 <b>AI TRADING BOT - 5 AI HÀNG ĐẦU THẾ GIỚI</b>\n\n"
-            "🧠 <b>DeepMind AlphaTrade</b> - Reinforcement Learning\n"
-            "🚀 <b>OpenAI Quant</b> - Transformer Prediction\n"  
-            "⚡ <b>NVIDIA Trading AI</b> - GAN Pattern Recognition\n"
-            "🔬 <b>MIT Deep Learning</b> - Temporal CNN\n"
-            "🎯 <b>Stanford RL Trader</b> - Risk-Aware Policy\n\n"
-            "Chọn chức năng:"
+            "AI TRADING BOT - 5 AI HANG DAU THE GIOI\n\n"
+            "DeepMind AlphaTrade - Reinforcement Learning\n"
+            "OpenAI Quant - Transformer Prediction\n"  
+            "NVIDIA Trading AI - GAN Pattern Recognition\n"
+            "MIT Deep Learning - Temporal CNN\n"
+            "Stanford RL Trader - Risk-Aware Policy\n\n"
+            "Chon chuc nang:"
         )
         send_telegram(welcome_msg, chat_id, create_main_menu(),
                      bot_token=self.telegram_bot_token,
@@ -824,7 +824,7 @@ class AIBotManager:
         bot_id = f"{symbol}_{strategy_name}"
         
         if bot_id in self.bots:
-            self.log(f"⚠️ Đã có bot {strategy_name} cho {symbol}")
+            self.log(f"Da co bot {strategy_name} cho {symbol}")
             return False
             
         try:
@@ -842,11 +842,11 @@ class AIBotManager:
             )
             
             self.bots[bot_id] = bot
-            self.log(f"✅ Đã thêm {strategy_name}: {symbol} | ĐB: {leverage}x | Vốn: {percent}% | TP/SL: {tp}%/{sl}%")
+            self.log(f"Da them {strategy_name}: {symbol} | DB: {leverage}x | Von: {percent}% | TP/SL: {tp}%/{sl}%")
             return True
             
         except Exception as e:
-            self.log(f"❌ Lỗi tạo bot: {str(e)}")
+            self.log(f"Loi tao bot: {str(e)}")
             return False
 
     def stop_bot(self, bot_id):
@@ -854,7 +854,7 @@ class AIBotManager:
         if bot_id in self.bots:
             self.bots[bot_id].stop()
             del self.bots[bot_id]
-            self.log(f"⛔ Đã dừng bot {bot_id}")
+            self.log(f"Da dung bot {bot_id}")
             return True
         return False
 
@@ -863,7 +863,7 @@ class AIBotManager:
         for bot_id in list(self.bots.keys()):
             self.stop_bot(bot_id)
         self.running = False
-        self.log("🔴 Hệ thống AI đã dừng")
+        self.log("He thong AI da dung")
 
     def _telegram_listener(self):
         """Lắng nghe tin nhắn Telegram"""
@@ -891,23 +891,23 @@ class AIBotManager:
                                 self._handle_telegram_message(chat_id, text)
                                 
             except Exception as e:
-                logger.error(f"Lỗi Telegram: {str(e)}")
+                logger.error(f"Loi Telegram: {str(e)}")
                 time.sleep(10)
 
     def _handle_telegram_message(self, chat_id, text):
         """Xử lý tin nhắn Telegram"""
-        if text == "➕ Thêm Bot":
+        if text == "Them Bot":
             self._start_bot_creation(chat_id)
-        elif text == "📊 Danh sách Bot":
+        elif text == "Danh sach Bot":
             self._list_bots(chat_id)
-        elif text == "⛔ Dừng Bot":
+        elif text == "Dung Bot":
             self._stop_bot_menu(chat_id)
-        elif text == "💰 Số dư":
+        elif text == "So du":
             self._show_balance(chat_id)
-        elif text == "🎯 Chiến lược AI":
+        elif text == "Chien luoc AI":
             self._show_strategies(chat_id)
-        elif text.startswith("⛔ "):
-            bot_id = text.replace("⛔ ", "")
+        elif text.startswith("Dung "):
+            bot_id = text.replace("Dung ", "")
             self.stop_bot(bot_id)
             self.send_main_menu(chat_id)
         else:
@@ -917,14 +917,14 @@ class AIBotManager:
         """Bắt đầu quy trình tạo bot"""
         balance = self._get_balance()
         if balance is None:
-            send_telegram("❌ Lỗi kết nối Binance!", chat_id,
+            send_telegram("Loi ket noi Binance!", chat_id,
                          bot_token=self.telegram_bot_token,
                          default_chat_id=self.telegram_chat_id)
             return
             
         send_telegram(
-            f"💰 <b>Số dư: {balance:.2f} USDT</b>\n\n"
-            "Chọn chiến lược AI:",
+            f"So du: {balance:.2f} USDT\n\n"
+            "Chon chien luoc AI:",
             chat_id,
             create_strategy_keyboard(),
             bot_token=self.telegram_bot_token,
@@ -934,16 +934,16 @@ class AIBotManager:
     def _list_bots(self, chat_id):
         """Hiển thị danh sách bot"""
         if not self.bots:
-            send_telegram("🤖 Không có bot nào đang chạy", chat_id,
+            send_telegram("Khong co bot nao dang chay", chat_id,
                          bot_token=self.telegram_bot_token,
                          default_chat_id=self.telegram_chat_id)
         else:
-            message = "🤖 <b>DANH SÁCH BOT AI</b>\n\n"
+            message = "DANH SACH BOT AI\n\n"
             for bot_id, bot in self.bots.items():
-                status = "🟢 Đang chạy" if not bot._stop else "🔴 Đã dừng"
-                message += f"🔹 {bot_id}\n"
-                message += f"   📊 {bot.symbol} | {status}\n"
-                message += f"   💰 PnL: {bot.total_pnl:.2f} USDT\n\n"
+                status = "Dang chay" if not bot._stop else "Da dung"
+                message += f"{bot_id}\n"
+                message += f"  {bot.symbol} | {status}\n"
+                message += f"  PnL: {bot.total_pnl:.2f} USDT\n\n"
             
             send_telegram(message, chat_id,
                          bot_token=self.telegram_bot_token,
@@ -952,16 +952,16 @@ class AIBotManager:
     def _stop_bot_menu(self, chat_id):
         """Hiển thị menu dừng bot"""
         if not self.bots:
-            send_telegram("🤖 Không có bot nào đang chạy", chat_id,
+            send_telegram("Khong co bot nao dang chay", chat_id,
                          bot_token=self.telegram_bot_token,
                          default_chat_id=self.telegram_chat_id)
         else:
             keyboard = {"keyboard": [], "resize_keyboard": True, "one_time_keyboard": True}
             for bot_id in self.bots.keys():
-                keyboard["keyboard"].append([{"text": f"⛔ {bot_id}"}])
-            keyboard["keyboard"].append([{"text": "❌ Hủy bỏ"}])
+                keyboard["keyboard"].append([{"text": f"Dung {bot_id}"}])
+            keyboard["keyboard"].append([{"text": "Huy bo"}])
             
-            send_telegram("Chọn bot để dừng:", chat_id, keyboard,
+            send_telegram("Chon bot de dung:", chat_id, keyboard,
                          bot_token=self.telegram_bot_token,
                          default_chat_id=self.telegram_chat_id)
 
@@ -982,55 +982,55 @@ class AIBotManager:
                     if asset['asset'] == 'USDT':
                         return float(asset['availableBalance'])
         except Exception as e:
-            logger.error(f"Lỗi lấy số dư: {str(e)}")
+            logger.error(f"Loi lay so du: {str(e)}")
         return None
 
     def _show_balance(self, chat_id):
         """Hiển thị số dư"""
         balance = self._get_balance()
         if balance is None:
-            send_telegram("❌ Lỗi lấy số dư!", chat_id,
+            send_telegram("Loi lay so du!", chat_id,
                          bot_token=self.telegram_bot_token,
                          default_chat_id=self.telegram_chat_id)
         else:
-            send_telegram(f"💰 <b>SỐ DƯ KHẢ DỤNG: {balance:.2f} USDT</b>", chat_id,
+            send_telegram(f"So du kha dung: {balance:.2f} USDT", chat_id,
                          bot_token=self.telegram_bot_token,
                          default_chat_id=self.telegram_chat_id)
 
     def _show_strategies(self, chat_id):
         """Hiển thị thông tin chiến lược AI"""
         strategies_info = (
-            "🎯 <b>5 AI TRADING HÀNG ĐẦU THẾ GIỚI</b>\n\n"
+            "5 AI TRADING HANG DAU THE GIOI\n\n"
             
-            "🧠 <b>DeepMind AlphaTrade</b>\n"
-            "• Reinforcement Learning tiên tiến\n"
+            "DeepMind AlphaTrade\n"
+            "• Reinforcement Learning tien tien\n"
             "• Multi-timeframe momentum analysis\n"
             "• Deep Q-Learning decision making\n"
-            "• 📊 Risk: MEDIUM\n\n"
+            "• Risk: MEDIUM\n\n"
             
-            "🚀 <b>OpenAI Quant</b>\n"
+            "OpenAI Quant\n"
             "• Transformer-based price prediction\n"
             "• Sequence attention mechanism\n"
             "• GPT-style pattern recognition\n"
-            "• 📊 Risk: LOW\n\n"
+            "• Risk: LOW\n\n"
             
-            "⚡ <b>NVIDIA Trading AI</b>\n"
+            "NVIDIA Trading AI\n"
             "• GAN pattern generation\n"
             "• Neural network discrimination\n"
             "• Advanced feature extraction\n"
-            "• 📊 Risk: HIGH\n\n"
+            "• Risk: HIGH\n\n"
             
-            "🔬 <b>MIT Deep Learning</b>\n"
+            "MIT Deep Learning\n"
             "• Temporal convolution networks\n"
             "• Multi-scale feature analysis\n"
             "• Academic research foundation\n"
-            "• 📊 Risk: MEDIUM\n\n"
+            "• Risk: MEDIUM\n\n"
             
-            "🎯 <b>Stanford RL Trader</b>\n"
+            "Stanford RL Trader\n"
             "• Risk-aware reinforcement learning\n"
             "• Policy optimization\n"
             "• Market regime adaptation\n"
-            "• 📊 Risk: LOW"
+            "• Risk: LOW"
         )
         
         send_telegram(strategies_info, chat_id,
