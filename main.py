@@ -5,22 +5,24 @@ import time
 import logging
 from trading_bot_lib import BotManager, setup_logging
 
-# ========== CẤU HÌNH CỦA BẠN ==========
-CONFIG = {
-    'BINANCE_API_KEY': "your_binance_api_key_here",
-    'BINANCE_API_SECRET': "your_binance_secret_key_here", 
-    'TELEGRAM_BOT_TOKEN': "your_telegram_bot_token_here",
-    'TELEGRAM_CHAT_ID': "your_telegram_chat_id_here"
-}
-
-# ========== CẬP NHẬT VỚI THÔNG TIN THỰC TẾ CỦA BẠN ==========
-def update_config_with_real_info():
-    """Cập nhật config với thông tin thực tế của bạn"""
-    # THAY THẾ CÁC GIÁ TRỊ NÀY BẰNG THÔNG TIN THỰC TẾ CỦA BẠN
-    CONFIG['BINANCE_API_KEY'] = "*******"  # Thay bằng API key thực
-    CONFIG['BINANCE_API_SECRET'] = "*******"  # Thay bằng Secret key thực
-    CONFIG['TELEGRAM_BOT_TOKEN'] = "*******"  # Thay bằng Telegram bot token thực
-    CONFIG['TELEGRAM_CHAT_ID'] = "*******"  # Thay bằng Chat ID thực
+def load_environment_config():
+    """Tải cấu hình từ biến môi trường"""
+    config = {
+        'BINANCE_API_KEY': os.getenv('BINANCE_API_KEY'),
+        'BINANCE_API_SECRET': os.getenv('BINANCE_API_SECRET'),
+        'TELEGRAM_BOT_TOKEN': os.getenv('TELEGRAM_BOT_TOKEN'),
+        'TELEGRAM_CHAT_ID': os.getenv('TELEGRAM_CHAT_ID')
+    }
+    
+    # Kiểm tra các biến bắt buộc
+    required_vars = ['BINANCE_API_KEY', 'BINANCE_API_SECRET']
+    missing_vars = [var for var in required_vars if not config[var]]
+    
+    if missing_vars:
+        logging.error(f"❌ Thiếu biến môi trường bắt buộc: {', '.join(missing_vars)}")
+        return None
+    
+    return config
 
 def print_banner():
     """In banner khởi động"""
@@ -39,31 +41,37 @@ def print_banner():
     """
     print(banner)
 
-def check_config():
-    """Kiểm tra cấu hình"""
-    print("🔧 Đang kiểm tra cấu hình...")
+def check_environment_config(config):
+    """Kiểm tra cấu hình từ biến môi trường"""
+    print("🔧 Đang kiểm tra cấu hình từ biến môi trường...")
     
     issues = []
     
-    if CONFIG['BINANCE_API_KEY'] in ["your_binance_api_key_here", "*******"]:
-        issues.append("❌ BINANCE_API_KEY chưa được cấu hình")
+    if not config['BINANCE_API_KEY']:
+        issues.append("❌ BINANCE_API_KEY chưa được thiết lập")
     
-    if CONFIG['BINANCE_API_SECRET'] in ["your_binance_secret_key_here", "*******"]:
-        issues.append("❌ BINANCE_API_SECRET chưa được cấu hình")
+    if not config['BINANCE_API_SECRET']:
+        issues.append("❌ BINANCE_API_SECRET chưa được thiết lập")
     
-    if CONFIG['TELEGRAM_BOT_TOKEN'] in ["your_telegram_bot_token_here", "*******"]:
-        issues.append("❌ TELEGRAM_BOT_TOKEN chưa được cấu hình")
+    if not config['TELEGRAM_BOT_TOKEN']:
+        issues.append("⚠️ TELEGRAM_BOT_TOKEN chưa được thiết lập (Telegram notifications sẽ bị tắt)")
     
-    if CONFIG['TELEGRAM_CHAT_ID'] in ["your_telegram_chat_id_here", "*******"]:
-        issues.append("❌ TELEGRAM_CHAT_ID chưa được cấu hình")
+    if not config['TELEGRAM_CHAT_ID']:
+        issues.append("⚠️ TELEGRAM_CHAT_ID chưa được thiết lập (Telegram notifications sẽ bị tắt)")
     
     if issues:
         print("\n".join(issues))
-        print("\n📝 HƯỚNG DẪN CẤU HÌNH:")
-        print("1. Mở file main.py")
-        print("2. Tìm hàm update_config_with_real_info()")
-        print("3. Thay thế các giá trị '*******' bằng thông tin thực tế của bạn")
-        print("4. Lưu file và chạy lại")
+    
+    # Chỉ cần Binance API để chạy, Telegram là optional
+    if not config['BINANCE_API_KEY'] or not config['BINANCE_API_SECRET']:
+        print("\n📝 HƯỚNG DẪN CẤU HÌNH TRÊN RAILWAY:")
+        print("1. Vào dashboard Railway của bạn")
+        print("2. Chọn project → Settings → Variables")
+        print("3. Thêm các biến môi trường:")
+        print("   - BINANCE_API_KEY")
+        print("   - BINANCE_API_SECRET") 
+        print("   - TELEGRAM_BOT_TOKEN (optional)")
+        print("   - TELEGRAM_CHAT_ID (optional)")
         return False
     
     return True
@@ -77,32 +85,44 @@ def main():
     # Thiết lập logging
     logger = setup_logging()
     
-    # Cập nhật config với thông tin thực tế
-    update_config_with_real_info()
+    # Tải cấu hình từ biến môi trường
+    config = load_environment_config()
+    if not config:
+        print("❌ Không thể tải cấu hình từ biến môi trường")
+        return
     
     # Kiểm tra cấu hình
-    if not check_config():
+    if not check_environment_config(config):
         return
     
     print("✅ Cấu hình hợp lệ!")
     print(f"🔑 Binance API: ✅")
-    print(f"🤖 Telegram Bot: ✅")
+    if config['TELEGRAM_BOT_TOKEN'] and config['TELEGRAM_CHAT_ID']:
+        print(f"🤖 Telegram Bot: ✅")
+    else:
+        print(f"🤖 Telegram Bot: ⚠️ (Chế độ không Telegram)")
     
     # Khởi tạo BotManager
     try:
         print("\n🚀 Đang khởi động hệ thống Bot AI...")
         
         bot_manager = BotManager(
-            api_key=CONFIG['BINANCE_API_KEY'],
-            api_secret=CONFIG['BINANCE_API_SECRET'],
-            telegram_bot_token=CONFIG['TELEGRAM_BOT_TOKEN'],
-            telegram_chat_id=CONFIG['TELEGRAM_CHAT_ID']
+            api_key=config['BINANCE_API_KEY'],
+            api_secret=config['BINANCE_API_SECRET'],
+            telegram_bot_token=config['TELEGRAM_BOT_TOKEN'],
+            telegram_chat_id=config['TELEGRAM_CHAT_ID']
         )
         
         print("✅ Hệ thống Bot AI đã khởi động thành công!")
         print("\n📋 HƯỚNG DẪN SỬ DỤNG:")
-        print("   • Mở Telegram và tìm bot của bạn")
-        print("   • Sử dụng menu để thêm bot, xem số dư, quản lý vị thế")
+        
+        if config['TELEGRAM_BOT_TOKEN'] and config['TELEGRAM_CHAT_ID']:
+            print("   • Mở Telegram và tìm bot của bạn")
+            print("   • Sử dụng menu để thêm bot, xem số dư, quản lý vị thế")
+        else:
+            print("   • Chạy ở chế độ không Telegram")
+            print("   • Sử dụng logs để theo dõi hoạt động")
+            
         print("   • Hệ thống sẽ tự động tìm coin và giao dịch")
         print("   • Nhấn Ctrl+C để dừng hệ thống")
         
@@ -141,38 +161,38 @@ def main():
             print("✅ Hệ thống đã dừng an toàn")
 
 def quick_test():
-    """Chế độ test nhanh"""
+    """Chế độ test nhanh kết nối"""
     print("\n🎯 CHẾ ĐỘ KIỂM TRA NHANH")
     
-    # Cập nhật config với thông tin thực tế
-    update_config_with_real_info()
-    
-    if not check_config():
+    config = load_environment_config()
+    if not config:
         return
     
     try:
         print("🔗 Đang kết nối Binance...")
         from trading_bot_lib import get_balance
         
-        balance = get_balance(CONFIG['BINANCE_API_KEY'], CONFIG['BINANCE_API_SECRET'])
+        balance = get_balance(config['BINANCE_API_KEY'], config['BINANCE_API_SECRET'])
         if balance is not None:
             print(f"✅ Kết nối Binance thành công! Số dư: {balance:.2f} USDT")
         else:
-            print("❌ Lỗi kết nối Binance")
+            print("❌ Lỗi kết nối Binance - Kiểm tra API Key/Secret")
             return
             
-        if CONFIG['TELEGRAM_BOT_TOKEN']:
+        if config['TELEGRAM_BOT_TOKEN'] and config['TELEGRAM_CHAT_ID']:
             print("🔗 Đang kiểm tra Telegram...")
             from trading_bot_lib import send_telegram
             try:
                 send_telegram(
-                    "🤖 Bot AI đã khởi động thành công!\nHệ thống đã sẵn sàng hoạt động.",
-                    bot_token=CONFIG['TELEGRAM_BOT_TOKEN'],
-                    default_chat_id=CONFIG['TELEGRAM_CHAT_ID']
+                    "🤖 Bot AI - Kiểm tra kết nối thành công!\nHệ thống đã sẵn sàng hoạt động.",
+                    bot_token=config['TELEGRAM_BOT_TOKEN'],
+                    default_chat_id=config['TELEGRAM_CHAT_ID']
                 )
                 print("✅ Kết nối Telegram thành công!")
             except Exception as e:
                 print(f"⚠️ Lỗi Telegram: {e}")
+        else:
+            print("⚠️ Telegram chưa được cấu hình - Bỏ qua kiểm tra")
         
         print("\n✅ Tất cả kiểm tra đã hoàn tất! Hệ thống sẵn sàng.")
         
