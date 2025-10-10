@@ -60,17 +60,6 @@ def send_telegram(message, chat_id=None, reply_markup=None, bot_token=None, defa
         logger.error(f"Lỗi kết nối Telegram: {str(e)}")
 
 # ========== MENU TELEGRAM HOÀN CHỈNH ==========
-def create_main_menu():
-    return {
-        "keyboard": [
-            [{"text": "📊 Danh sách Bot"}],
-            [{"text": "➕ Thêm Bot"}, {"text": "⛔ Dừng Bot"}],
-            [{"text": "💰 Số dư"}, {"text": "📈 Vị thế"}],
-            [{"text": "⚙️ Cấu hình"}, {"text": "🎯 Chiến lược"}]
-        ],
-        "resize_keyboard": True,
-        "one_time_keyboard": False
-    }
 
 def create_cancel_keyboard():
     return {
@@ -133,7 +122,17 @@ def create_symbols_keyboard(strategy=None):
         "resize_keyboard": True,
         "one_time_keyboard": True
     }
-
+def create_main_menu():
+    return {
+        "keyboard": [
+            [{"text": "📊 Danh sách Bot"}, {"text": "📊 Thống kê"}],
+            [{"text": "➕ Thêm Bot"}, {"text": "⛔ Dừng Bot"}],
+            [{"text": "💰 Số dư"}, {"text": "📈 Vị thế"}],
+            [{"text": "⚙️ Cấu hình"}, {"text": "🎯 Chiến lược"}]
+        ],
+        "resize_keyboard": True,
+        "one_time_keyboard": False
+    }
 def create_leverage_keyboard(strategy=None):
     leverages = ["3", "5", "10", "15", "20", "25", "50", "75", "100"]
     
@@ -353,33 +352,32 @@ class MultiTimeframeAnalyzer:
             return "NEUTRAL", {}
     
     def aggregate_signals(self, timeframe_signals):
-        """Tổng hợp tín hiệu - ĐÃ SỬA LOGIC DỄ HƠN"""
+        """Tổng hợp tín hiệu - SỬA LOGIC ĐỂ CÓ TÍN HIỆU RÕ RÀNG HƠN"""
         signals = []
-        bullish_ratios = []
         
         for tf, data in timeframe_signals.items():
             signals.append(data['signal'])
-            bullish_ratios.append(data['bullish_ratio'])
         
         # Đếm số khung thời gian đồng thuận
         buy_signals = signals.count("BUY")
         sell_signals = signals.count("SELL")
-        neutral_signals = signals.count("NEUTRAL")
         
         logger.info(f"📊 {list(timeframe_signals.keys())[0].split('_')[0]} Tín hiệu: "
-                   f"1m={signals[0]}, 5m={signals[1]}, 15m={signals[2]}, 30m={signals[3]}")
+                   f"1m={signals[0]}, 5m={signals[1]}, 15m={signals[2]}, 30m={signals[3]} "
+                   f"(BUY: {buy_signals}/4, SELL: {sell_signals}/4)")
         
-        # 🎯 SỬA QUAN TRỌNG: LOGIC DỄ HƠN
-        # Chỉ cần 2/4 khung đồng ý là đủ
-        if buy_signals >= 2 and sell_signals == 0:
+        # 🎯 SỬA LOGIC: ƯU TIÊN TÍN HIỆU RÕ RÀNG
+        # Nếu 3/4 khung đồng ý → tín hiệu mạnh
+        if buy_signals >= 3:
             return "BUY"
-        elif sell_signals >= 2 and buy_signals == 0:
+        elif sell_signals >= 3:
             return "SELL"
-        # Nếu có cả BUY và SELL, ưu tiên số lượng nhiều hơn
-        elif buy_signals > sell_signals:
+        # Nếu 2/4 khung đồng ý và 2 khung còn lại là NEUTRAL → tín hiệu trung bình
+        elif buy_signals >= 2 and (buy_signals + sell_signals) == 2:
             return "BUY"
-        elif sell_signals > buy_signals:
+        elif sell_signals >= 2 and (buy_signals + sell_signals) == 2:
             return "SELL"
+        # Nếu phân hóa (2 BUY + 2 SELL) → NEUTRAL
         else:
             return "NEUTRAL"
     def get_klines(self, symbol, interval, limit):
@@ -1020,7 +1018,7 @@ class BaseBot:
         raise NotImplementedError("Phương thức get_signal cần được triển khai")
 
     def get_target_direction(self):
-        """XÁC ĐỊNH HƯỚNG GIAO DỊCH - RESET HOÀN TOÀN MỖI LẦN"""
+        """XÁC ĐỊNH HƯỚNG GIAO DỊCH - ĐÃ SỬA LOGIC CÂN BẰNG"""
         try:
             # Lấy tỷ lệ BUY/SELL hiện tại từ tất cả bot
             buy_count = 0
@@ -1041,22 +1039,35 @@ class BaseBot:
                 return "BUY" if random.random() > 0.5 else "SELL"
             
             buy_ratio = buy_count / total
+            sell_ratio = sell_count / total
             
-            # Nếu BUY nhiều hơn → ưu tiên SELL và ngược lại
-            if buy_ratio > 0.6:
+            self.log(f"📊 Thống kê vị thế: BUY={buy_count}, SELL={sell_count} (BUY {buy_ratio:.1%})")
+            
+            # 🎯 SỬA QUAN TRỌNG: LOGIC CÂN BẰNG ĐÚNG
+            # Nếu BUY nhiều hơn → cần tìm SELL để cân bằng
+            if buy_ratio > 0.6:  # BUY chiếm >60%
+                self.log(f"⚖️ CÂN BẰNG: BUY đang chiếm ưu thế ({buy_ratio:.1%}) → ƯU TIÊN TÌM SELL")
                 return "SELL"
-            elif buy_ratio < 0.4:
+            elif sell_ratio > 0.6:  # SELL chiếm >60%
+                self.log(f"⚖️ CÂN BẰNG: SELL đang chiếm ưu thế ({sell_ratio:.1%}) → ƯU TIÊN TÌM BUY")
+                return "BUY"
+            elif buy_ratio > sell_ratio:  # BUY nhiều hơn SELL
+                self.log(f"⚖️ CÂN BẰNG: BUY nhiều hơn SELL → ƯU TIÊN TÌM SELL")
+                return "SELL"
+            elif sell_ratio > buy_ratio:  # SELL nhiều hơn BUY
+                self.log(f"⚖️ CÂN BẰNG: SELL nhiều hơn BUY → ƯU TIÊN TÌM BUY")
                 return "BUY"
             else:
                 # Cân bằng → random
-                return "BUY" if random.random() > 0.5 else "SELL"
-            
+                direction = "BUY" if random.random() > 0.5 else "SELL"
+                self.log(f"⚖️ CÂN BẰNG: Thị trường cân bằng → RANDOM {direction}")
+                return direction
+                
         except Exception as e:
             self.log(f"❌ Lỗi xác định hướng: {str(e)}")
             return "BUY" if random.random() > 0.5 else "SELL"
-
     def find_and_set_coin(self):
-        """TÌM VÀ SET COIN MỚI - ĐÃ SỬA LỖI 'qualified'"""
+        """TÌM VÀ SET COIN MỚI - THÊM LOGGING CÂN BẰNG"""
         try:
             current_time = time.time()
             if current_time - self.last_find_time < self.find_interval:
@@ -1067,15 +1078,23 @@ class BaseBot:
             # Xác định hướng giao dịch mới
             self.current_target_direction = self.get_target_direction()
             
+            # Log rõ lý do chọn hướng
+            self.log(f"🎯 Đang tìm coin {self.current_target_direction} để CÂN BẰNG hệ thống")
+            
             # Lấy danh sách coin đang được quản lý để tránh trùng lặp
             managed_coins = self.coin_manager.get_managed_coins()
             excluded_symbols = set(managed_coins.keys())
+            
+            # Log các coin đang được trade
+            if excluded_symbols:
+                self.log(f"🚫 Tránh các coin đang trade: {', '.join(excluded_symbols)}")
             
             # Tìm coin mới
             coin_data = self.coin_finder.find_coin_by_direction(
                 self.current_target_direction, 
                 excluded_symbols
             )
+        
             
             # 🎯 SỬA LỖI: KIỂM TRA coin_data CÓ TỒN TẠI KHÔNG
             if coin_data is None:
@@ -1126,7 +1145,7 @@ class BaseBot:
         return info
 
     def get_signal_with_balance(self, original_signal):
-        """ĐIỀU CHỈNH TÍN HIỆU DỰA TRÊN CÂN BẰNG VỊ THẾ"""
+        """ĐIỀU CHỈNH TÍN HIỆU DỰA TRÊN CÂN BẰNG VỊ THẾ - ĐÃ SỬA"""
         try:
             current_time = time.time()
             if current_time - self.position_balance_check < self.balance_check_interval:
@@ -1154,20 +1173,70 @@ class BaseBot:
             buy_ratio = buy_count / total
             sell_ratio = sell_count / total
             
-            # Nếu chênh lệch lớn, điều chỉnh tín hiệu
-            if original_signal == "BUY" and buy_ratio - sell_ratio > 0.3:
-                self.log(f"⚖️ Cân bằng: BUY {buy_ratio:.1%} vs SELL {sell_ratio:.1%} → Ưu tiên SELL")
-                return "SELL"
-            elif original_signal == "SELL" and sell_ratio - buy_ratio > 0.3:
-                self.log(f"⚖️ Cân bằng: BUY {buy_ratio:.1%} vs SELL {sell_ratio:.1%} → Ưu tiên BUY")
-                return "BUY"
+            self.log(f"📊 Cân bằng tín hiệu: BUY={buy_count}, SELL={sell_count} | Tín hiệu gốc: {original_signal}")
             
-            return original_signal
+            # 🎯 SỬA LOGIC: ĐIỀU CHỈNH TÍN HIỆU THEO CÂN BẰNG
+            # Nếu BUY nhiều và tín hiệu là BUY → chuyển thành SELL
+            if original_signal == "BUY" and buy_ratio > 0.6:
+                self.log(f"⚖️ ĐIỀU CHỈNH: BUY nhiều ({buy_ratio:.1%}) + tín hiệu BUY → CHUYỂN THÀNH SELL")
+                return "SELL"
+            # Nếu SELL nhiều và tín hiệu là SELL → chuyển thành BUY
+            elif original_signal == "SELL" and sell_ratio > 0.6:
+                self.log(f"⚖️ ĐIỀU CHỈNH: SELL nhiều ({sell_ratio:.1%}) + tín hiệu SELL → CHUYỂN THÀNH BUY")
+                return "BUY"
+            # Nếu chênh lệch vừa phải, vẫn điều chỉnh nhưng ưu tiên hơn
+            elif original_signal == "BUY" and buy_ratio > sell_ratio + 0.2:
+                self.log(f"⚖️ ĐIỀU CHỈNH: BUY nhiều hơn SELL → ƯU TIÊN SELL")
+                return "SELL"
+            elif original_signal == "SELL" and sell_ratio > buy_ratio + 0.2:
+                self.log(f"⚖️ ĐIỀU CHỈNH: SELL nhiều hơn BUY → ƯU TIÊN BUY")
+                return "BUY"
+            else:
+                self.log(f"⚖️ GIỮ NGUYÊN: Tín hiệu {original_signal} phù hợp với cân bằng")
+                return original_signal
             
         except Exception as e:
             self.log(f"❌ Lỗi cân bằng tín hiệu: {str(e)}")
             return original_signal
 
+    def get_position_summary(self):
+        """Lấy thống kê tổng quan vị thế toàn hệ thống"""
+        try:
+            buy_count = 0
+            sell_count = 0
+            open_positions = []
+            
+            bot_manager = getattr(self, '_bot_manager', None)
+            if bot_manager and hasattr(bot_manager, 'bots'):
+                for bot_id, bot in bot_manager.bots.items():
+                    if bot.position_open:
+                        if bot.side == "BUY":
+                            buy_count += 1
+                        elif bot.side == "SELL":
+                            sell_count += 1
+                        open_positions.append(f"{bot.symbol}({bot.side})")
+            
+            total = buy_count + sell_count
+            if total > 0:
+                buy_ratio = buy_count / total
+                sell_ratio = sell_count / total
+                
+                summary = (
+                    f"📊 **THỐNG KÊ VỊ THẾ TOÀN HỆ THỐNG**\n"
+                    f"🟢 BUY: {buy_count} vị thế ({buy_ratio:.1%})\n"
+                    f"🔴 SELL: {sell_count} vị thế ({sell_ratio:.1%})\n"
+                    f"📈 Tổng: {total} vị thế đang mở\n"
+                )
+                
+                if open_positions:
+                    summary += f"🔗 Các vị thế: {', '.join(open_positions)}"
+                
+                return summary
+            else:
+                return "📊 Không có vị thế nào đang mở"
+                
+        except Exception as e:
+            return f"❌ Lỗi thống kê: {str(e)}"
     def check_position_status(self):
         if not self.symbol:
             return
@@ -1226,25 +1295,32 @@ class BaseBot:
                     if self.find_and_set_coin():
                         self.log("✅ Đã tìm thấy coin mới, bắt đầu phân tích...")
                     else:
-                        time.sleep(10)  # Chờ trước khi tìm lại
+                        time.sleep(10)
                     continue
                 
                 # NẾU ĐANG CHỜ TÍN HIỆU
                 if not self.position_open:
                     signal = self.get_signal()
                     
-                    # ÁP DỤNG CÂN BẰNG VỊ THẾ
-                    balanced_signal = self.get_signal_with_balance(signal)
-                    
-                    if (balanced_signal and 
-                        current_time - self.last_trade_time > 60 and
-                        current_time - self.last_close_time > self.cooldown_period):
+                    # 🎯 SỬA QUAN TRỌNG: CHỈ XỬ LÝ NẾU SIGNAL KHÁC NEUTRAL
+                    if signal and signal != "NEUTRAL":
+                        # ÁP DỤNG CÂN BẰNG VỊ THẾ
+                        balanced_signal = self.get_signal_with_balance(signal)
                         
-                        self.log(f"🎯 Nhận tín hiệu {balanced_signal}, đang mở lệnh...")
-                        if self.open_position(balanced_signal):
-                            self.last_trade_time = current_time
-                        else:
-                            time.sleep(30)
+                        if (balanced_signal and balanced_signal != "NEUTRAL" and
+                            current_time - self.last_trade_time > 60 and
+                            current_time - self.last_close_time > self.cooldown_period):
+                            
+                            self.log(f"🎯 Nhận tín hiệu {balanced_signal}, đang mở lệnh...")
+                            if self.open_position(balanced_signal):
+                                self.last_trade_time = current_time
+                            else:
+                                time.sleep(30)
+                    else:
+                        # Nếu signal là NEUTRAL hoặc None, chỉ log debug
+                        if signal == "NEUTRAL":
+                            logger.debug(f"⚪ {self.symbol} - Tín hiệu NEUTRAL, bỏ qua")
+                        time.sleep(5)  # Chờ ngắn trước khi phân tích lại
                 
                 # KIỂM TRA TP/SL
                 if self.position_open and not self._close_attempted:
@@ -1269,30 +1345,35 @@ class BaseBot:
         self.log(f"🔴 Bot dừng")
 
     def open_position(self, side):
+        # 🎯 SỬA QUAN TRỌNG: VALIDATE SIDE TRƯỚC KHI ĐẶT LỆNH
+        if side not in ["BUY", "SELL"]:
+            self.log(f"❌ Side không hợp lệ: {side}")
+            return False
+            
         try:
             self.check_position_status()
             if self.position_open:
                 self.log(f"⚠️ Đã có vị thế {self.side}, bỏ qua tín hiệu {side}")
                 return False
-
+    
             if self.should_be_removed:
                 self.log("⚠️ Bot đã được đánh dấu xóa, không mở lệnh mới")
                 return False
-
+    
             if not set_leverage(self.symbol, self.lev, self.api_key, self.api_secret):
                 self.log(f"❌ Không thể đặt đòn bẩy {self.lev}x")
                 return False
-
+    
             balance = get_balance(self.api_key, self.api_secret)
             if balance is None or balance <= 0:
                 self.log("❌ Không đủ số dư")
                 return False
-
+    
             current_price = get_current_price(self.symbol)
             if current_price <= 0:
                 self.log("❌ Lỗi lấy giá")
                 return False
-
+    
             step_size = get_step_size(self.symbol, self.api_key, self.api_secret)
             usd_amount = balance * (self.percent / 100)
             qty = (usd_amount * self.lev) / current_price
@@ -1300,11 +1381,14 @@ class BaseBot:
             if step_size > 0:
                 qty = math.floor(qty / step_size) * step_size
                 qty = round(qty, 8)
-
+    
             if qty < step_size:
                 self.log(f"❌ Số lượng quá nhỏ: {qty}")
                 return False
-
+    
+            # 🎯 THÊM LOG CHI TIẾT TRƯỚC KHI ĐẶT LỆNH
+            self.log(f"📊 Đang đặt lệnh {side} - SL: {step_size}, Qty: {qty}, Giá: {current_price}")
+            
             result = place_order(self.symbol, side, qty, self.api_key, self.api_secret)
             if result and 'orderId' in result:
                 executed_qty = float(result.get('executedQty', 0))
@@ -1335,12 +1419,16 @@ class BaseBot:
             else:
                 error_msg = result.get('msg', 'Unknown error') if result else 'No response'
                 self.log(f"❌ Lỗi đặt lệnh {side}: {error_msg}")
-                return False
                 
+                # 🎯 LOG CHI TIẾT LỖI API
+                if result and 'code' in result:
+                    self.log(f"📋 Mã lỗi Binance: {result['code']} - {result.get('msg', '')}")
+                    
+                return False
+                    
         except Exception as e:
             self.log(f"❌ Lỗi mở lệnh: {str(e)}")
             return False
-
     def close_position(self, reason=""):
         try:
             self.check_position_status()
@@ -2020,6 +2108,10 @@ class BotManager:
                 send_telegram(message, chat_id,
                             bot_token=self.telegram_bot_token, default_chat_id=self.telegram_chat_id)
         
+        elif text == "📊 Thống kê":
+            summary = self.get_position_summary()
+            send_telegram(summary, chat_id,
+                         bot_token=self.telegram_bot_token, default_chat_id=self.telegram_chat_id)
         elif text == "⛔ Dừng Bot":
             if not self.bots:
                 send_telegram("🤖 Không có bot nào đang chạy", chat_id,
