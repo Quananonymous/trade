@@ -784,12 +784,12 @@ class BaseBot:
         self.coin_manager.unregister_coin(self.symbol)
         self.log("⛔ Bot đã dừng")
 
-# ============================ STRATEGIES ====================
+# ============================ STRATEGIES - ĐÃ SỬA LỖI CONSTRUCTOR ====================
 class RSI_EMA_Bot(BaseBot):
     def __init__(self, symbol, lev, percent, tp, sl, ws_manager, api_key, api_secret, 
-                 telegram_bot_token, telegram_chat_id):
+                 telegram_bot_token, telegram_chat_id, config_key=None, dynamic_mode=False):
         super().__init__(symbol, lev, percent, tp, sl, ws_manager, api_key, api_secret, 
-                        telegram_bot_token, telegram_chat_id, "RSI/EMA Recursive")
+                        telegram_bot_token, telegram_chat_id, "RSI/EMA Recursive", config_key, dynamic_mode)
 
     def get_signal(self):
         try:
@@ -815,9 +815,9 @@ class RSI_EMA_Bot(BaseBot):
 
 class EMA_Crossover_Bot(BaseBot):
     def __init__(self, symbol, lev, percent, tp, sl, ws_manager, api_key, api_secret, 
-                 telegram_bot_token, telegram_chat_id):
+                 telegram_bot_token, telegram_chat_id, config_key=None, dynamic_mode=False):
         super().__init__(symbol, lev, percent, tp, sl, ws_manager, api_key, api_secret, 
-                        telegram_bot_token, telegram_chat_id, "EMA Crossover")
+                        telegram_bot_token, telegram_chat_id, "EMA Crossover", config_key, dynamic_mode)
         self.prev_ema_fast = None
         self.prev_ema_slow = None
 
@@ -1069,29 +1069,21 @@ class BotManager:
                 self.log(f"❌ Chiến lược {strategy_type} không được hỗ trợ")
                 return False
             
+            # Lấy các tham số bổ sung
+            dynamic_mode = kwargs.get('dynamic_mode', False)
+            config_key = kwargs.get('config_key')
+            
             if strategy_type == "Reverse 24h":
                 threshold = kwargs.get('threshold', 30)
-                dynamic_mode = kwargs.get('dynamic_mode', False)
-                config_key = kwargs.get('config_key')
                 bot = bot_class(symbol, lev, percent, tp, sl, self.ws_manager,
                               self.api_key, self.api_secret, self.telegram_bot_token, 
                               self.telegram_chat_id, threshold, config_key, dynamic_mode)
             elif strategy_type == "Safe Grid":
                 grid_levels = kwargs.get('grid_levels', 5)
-                dynamic_mode = kwargs.get('dynamic_mode', False)
-                config_key = kwargs.get('config_key')
                 bot = bot_class(symbol, lev, percent, tp, sl, self.ws_manager,
                               self.api_key, self.api_secret, self.telegram_bot_token,
                               self.telegram_chat_id, grid_levels, config_key, dynamic_mode)
-            elif strategy_type == "Smart Dynamic":
-                dynamic_mode = kwargs.get('dynamic_mode', True)
-                config_key = kwargs.get('config_key')
-                bot = bot_class(symbol, lev, percent, tp, sl, self.ws_manager,
-                              self.api_key, self.api_secret, self.telegram_bot_token, 
-                              self.telegram_chat_id, config_key, dynamic_mode)
             else:
-                dynamic_mode = kwargs.get('dynamic_mode', False)
-                config_key = kwargs.get('config_key')
                 bot = bot_class(symbol, lev, percent, tp, sl, self.ws_manager,
                               self.api_key, self.api_secret, self.telegram_bot_token,
                               self.telegram_chat_id, config_key, dynamic_mode)
