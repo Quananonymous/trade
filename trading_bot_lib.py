@@ -31,6 +31,8 @@ def setup_logging():
 
 logger = setup_logging()
 
+
+
 # ========== HÀM TELEGRAM ==========
 def send_telegram(message, chat_id=None, reply_markup=None, bot_token=None, default_chat_id=None):
     if not bot_token:
@@ -1018,53 +1020,64 @@ class BaseBot:
         raise NotImplementedError("Phương thức get_signal cần được triển khai")
 
     def get_target_direction(self):
-        """XÁC ĐỊNH HƯỚNG GIAO DỊCH - ĐÃ SỬA LOGIC CÂN BẰNG"""
+        """XÁC ĐỊNH HƯỚNG GIAO DỊCH - CHECK TẤT CẢ VỊ THẾ TRÊN BINANCE"""
         try:
-            # Lấy tỷ lệ BUY/SELL hiện tại từ tất cả bot
+            # 🎯 SỬA QUAN TRỌNG: Lấy tất cả vị thế từ Binance, không chỉ từ bot
+            all_positions = get_positions(api_key=self.api_key, api_secret=self.api_secret)
+            
             buy_count = 0
             sell_count = 0
+            position_details = []
             
-            bot_manager = getattr(self, '_bot_manager', None)
-            if bot_manager and hasattr(bot_manager, 'bots'):
-                for bot_id, bot in bot_manager.bots.items():
-                    if bot.position_open:
-                        if bot.side == "BUY":
-                            buy_count += 1
-                        elif bot.side == "SELL":
-                            sell_count += 1
+            # Đếm tất cả vị thế đang mở trên Binance
+            for pos in all_positions:
+                position_amt = float(pos.get('positionAmt', 0))
+                if position_amt != 0:  # Có vị thế mở
+                    symbol = pos.get('symbol', 'UNKNOWN')
+                    if position_amt > 0:
+                        buy_count += 1
+                        position_details.append(f"{symbol}(LONG)")
+                    else:
+                        sell_count += 1
+                        position_details.append(f"{symbol}(SHORT)")
             
             total = buy_count + sell_count
+            
+            self.log(f"🔍 TẤT CẢ VỊ THẾ BINANCE: {buy_count} LONG, {sell_count} SHORT")
+            if position_details:
+                self.log(f"🔍 Chi tiết: {', '.join(position_details)}")
+            
             if total == 0:
-                # Nếu không có bot nào đang mở, random hướng
-                return "BUY" if random.random() > 0.5 else "SELL"
+                direction = "BUY" if random.random() > 0.5 else "SELL"
+                self.log(f"⚖️ Không có vị thế nào trên Binance → RANDOM {direction}")
+                return direction
             
             buy_ratio = buy_count / total
             sell_ratio = sell_count / total
             
-            self.log(f"📊 Thống kê vị thế: BUY={buy_count}, SELL={sell_count} (BUY {buy_ratio:.1%})")
+            self.log(f"📊 TỶ LỆ VỊ THẾ: LONG {buy_ratio:.1%} vs SHORT {sell_ratio:.1%}")
             
-            # 🎯 SỬA QUAN TRỌNG: LOGIC CÂN BẰNG ĐÚNG
-            # Nếu BUY nhiều hơn → cần tìm SELL để cân bằng
-            if buy_ratio > 0.6:  # BUY chiếm >60%
-                self.log(f"⚖️ CÂN BẰNG: BUY đang chiếm ưu thế ({buy_ratio:.1%}) → ƯU TIÊN TÌM SELL")
+            # 🎯 LOGIC CÂN BẰNG DỰA TRÊN TẤT CẢ VỊ THẾ
+            if buy_ratio >= 0.6:  # LONG chiếm ≥60%
+                self.log(f"⚖️ QUYẾT ĐỊNH: LONG chiếm ưu thế ({buy_ratio:.1%}) → TÌM SHORT")
                 return "SELL"
-            elif sell_ratio > 0.6:  # SELL chiếm >60%
-                self.log(f"⚖️ CÂN BẰNG: SELL đang chiếm ưu thế ({sell_ratio:.1%}) → ƯU TIÊN TÌM BUY")
+            elif sell_ratio >= 0.6:  # SHORT chiếm ≥60%
+                self.log(f"⚖️ QUYẾT ĐỊNH: SHORT chiếm ưu thế ({sell_ratio:.1%}) → TÌM LONG")
                 return "BUY"
-            elif buy_ratio > sell_ratio:  # BUY nhiều hơn SELL
-                self.log(f"⚖️ CÂN BẰNG: BUY nhiều hơn SELL → ƯU TIÊN TÌM SELL")
+            elif buy_count > sell_count:  # LONG nhiều hơn SHORT
+                self.log(f"⚖️ QUYẾT ĐỊNH: LONG nhiều hơn SHORT ({buy_count} vs {sell_count}) → TÌM SHORT")
                 return "SELL"
-            elif sell_ratio > buy_ratio:  # SELL nhiều hơn BUY
-                self.log(f"⚖️ CÂN BẰNG: SELL nhiều hơn BUY → ƯU TIÊN TÌM BUY")
+            elif sell_count > buy_count:  # SHORT nhiều hơn LONG
+                self.log(f"⚖️ QUYẾT ĐỊNH: SHORT nhiều hơn LONG ({sell_count} vs {buy_count}) → TÌM LONG")
                 return "BUY"
             else:
                 # Cân bằng → random
                 direction = "BUY" if random.random() > 0.5 else "SELL"
-                self.log(f"⚖️ CÂN BẰNG: Thị trường cân bằng → RANDOM {direction}")
+                self.log(f"⚖️ QUYẾT ĐỊNH: Cân bằng ({buy_count} LONG, {sell_count} SHORT) → RANDOM {direction}")
                 return direction
                 
         except Exception as e:
-            self.log(f"❌ Lỗi xác định hướng: {str(e)}")
+            self.log(f"❌ Lỗi kiểm tra vị thế Binance: {str(e)}")
             return "BUY" if random.random() > 0.5 else "SELL"
     def find_and_set_coin(self):
         """TÌM VÀ SET COIN MỚI - THÊM LOGGING CÂN BẰNG"""
@@ -1145,7 +1158,7 @@ class BaseBot:
         return info
 
     def get_signal_with_balance(self, original_signal):
-        """ĐIỀU CHỈNH TÍN HIỆU DỰA TRÊN CÂN BẰNG VỊ THẾ - ĐÃ SỬA"""
+        """ĐIỀU CHỈNH TÍN HIỆU - CÂN BẰNG VỚI TẤT CẢ VỊ THẾ BINANCE"""
         try:
             current_time = time.time()
             if current_time - self.position_balance_check < self.balance_check_interval:
@@ -1153,18 +1166,19 @@ class BaseBot:
             
             self.position_balance_check = current_time
             
-            # Lấy tỷ lệ BUY/SELL hiện tại từ tất cả bot
+            # 🎯 SỬA: Lấy tất cả vị thế từ Binance
+            all_positions = get_positions(api_key=self.api_key, api_secret=self.api_secret)
+            
             buy_count = 0
             sell_count = 0
             
-            bot_manager = getattr(self, '_bot_manager', None)
-            if bot_manager and hasattr(bot_manager, 'bots'):
-                for bot_id, bot in bot_manager.bots.items():
-                    if bot.position_open:
-                        if bot.side == "BUY":
-                            buy_count += 1
-                        elif bot.side == "SELL":
-                            sell_count += 1
+            for pos in all_positions:
+                position_amt = float(pos.get('positionAmt', 0))
+                if position_amt != 0:
+                    if position_amt > 0:
+                        buy_count += 1
+                    else:
+                        sell_count += 1
             
             total = buy_count + sell_count
             if total == 0:
@@ -1173,32 +1187,28 @@ class BaseBot:
             buy_ratio = buy_count / total
             sell_ratio = sell_count / total
             
-            self.log(f"📊 Cân bằng tín hiệu: BUY={buy_count}, SELL={sell_count} | Tín hiệu gốc: {original_signal}")
+            self.log(f"📊 CÂN BẰNG TÍN HIỆU: {buy_count} LONG, {sell_count} SHORT | Tín hiệu gốc: {original_signal}")
             
-            # 🎯 SỬA LOGIC: ĐIỀU CHỈNH TÍN HIỆU THEO CÂN BẰNG
-            # Nếu BUY nhiều và tín hiệu là BUY → chuyển thành SELL
+            # 🎯 ĐIỀU CHỈNH TÍN HIỆU THEO TẤT CẢ VỊ THẾ
             if original_signal == "BUY" and buy_ratio > 0.6:
-                self.log(f"⚖️ ĐIỀU CHỈNH: BUY nhiều ({buy_ratio:.1%}) + tín hiệu BUY → CHUYỂN THÀNH SELL")
+                self.log(f"⚖️ ĐIỀU CHỈNH: Nhiều LONG ({buy_ratio:.1%}) + tín hiệu BUY → CHUYỂN SHORT")
                 return "SELL"
-            # Nếu SELL nhiều và tín hiệu là SELL → chuyển thành BUY
             elif original_signal == "SELL" and sell_ratio > 0.6:
-                self.log(f"⚖️ ĐIỀU CHỈNH: SELL nhiều ({sell_ratio:.1%}) + tín hiệu SELL → CHUYỂN THÀNH BUY")
+                self.log(f"⚖️ ĐIỀU CHỈNH: Nhiều SHORT ({sell_ratio:.1%}) + tín hiệu SELL → CHUYỂN LONG")
                 return "BUY"
-            # Nếu chênh lệch vừa phải, vẫn điều chỉnh nhưng ưu tiên hơn
             elif original_signal == "BUY" and buy_ratio > sell_ratio + 0.2:
-                self.log(f"⚖️ ĐIỀU CHỈNH: BUY nhiều hơn SELL → ƯU TIÊN SELL")
+                self.log(f"⚖️ ĐIỀU CHỈNH: LONG nhiều hơn SHORT → ƯU TIÊN SHORT")
                 return "SELL"
             elif original_signal == "SELL" and sell_ratio > buy_ratio + 0.2:
-                self.log(f"⚖️ ĐIỀU CHỈNH: SELL nhiều hơn BUY → ƯU TIÊN BUY")
+                self.log(f"⚖️ ĐIỀU CHỈNH: SHORT nhiều hơn LONG → ƯU TIÊN LONG")
                 return "BUY"
             else:
                 self.log(f"⚖️ GIỮ NGUYÊN: Tín hiệu {original_signal} phù hợp với cân bằng")
                 return original_signal
             
         except Exception as e:
-            self.log(f"❌ Lỗi cân bằng tín hiệu: {str(e)}")
+            self.log(f"❌ Lỗi cân bằng với vị thế Binance: {str(e)}")
             return original_signal
-
     def check_position_status(self):
         if not self.symbol:
             return
@@ -1574,41 +1584,87 @@ class BotManager:
             self.log(f"✅ Kết nối Binance thành công! Số dư: {balance:.2f} USDT")
 
     def get_position_summary(self):
-        """Lấy thống kê tổng quan vị thế toàn hệ thống"""
+        """Lấy thống kê tổng quan - BAO GỒM TẤT CẢ VỊ THẾ BINANCE"""
         try:
-            buy_count = 0
-            sell_count = 0
-            open_positions = []
+            # 🎯 Lấy tất cả vị thế từ Binance
+            all_positions = get_positions(api_key=self.api_key, api_secret=self.api_secret)
             
-            bot_manager = getattr(self, '_bot_manager', None)
-            if bot_manager and hasattr(bot_manager, 'bots'):
-                for bot_id, bot in bot_manager.bots.items():
-                    if bot.position_open:
-                        if bot.side == "BUY":
-                            buy_count += 1
-                        elif bot.side == "SELL":
-                            sell_count += 1
-                        open_positions.append(f"{bot.symbol}({bot.side})")
+            binance_buy_count = 0
+            binance_sell_count = 0
+            binance_positions = []
             
-            total = buy_count + sell_count
-            if total > 0:
-                buy_ratio = buy_count / total
-                sell_ratio = sell_count / total
+            for pos in all_positions:
+                position_amt = float(pos.get('positionAmt', 0))
+                if position_amt != 0:
+                    symbol = pos.get('symbol', 'UNKNOWN')
+                    if position_amt > 0:
+                        binance_buy_count += 1
+                        binance_positions.append(f"{symbol}(LONG)")
+                    else:
+                        binance_sell_count += 1
+                        binance_positions.append(f"{symbol}(SHORT)")
+            
+            # Thống kê bot
+            bot_buy_count = 0
+            bot_sell_count = 0
+            searching_bots = 0
+            waiting_bots = 0
+            bot_positions = []
+            
+            for bot_id, bot in self.bots.items():
+                if bot.position_open:
+                    if bot.side == "BUY":
+                        bot_buy_count += 1
+                    elif bot.side == "SELL":
+                        bot_sell_count += 1
+                    bot_positions.append(f"{bot.symbol}({bot.side})")
+                else:
+                    if bot.status == "searching":
+                        searching_bots += 1
+                    elif bot.status == "waiting":
+                        waiting_bots += 1
+            
+            total_binance = binance_buy_count + binance_sell_count
+            total_bots = len(self.bots)
+            total_bot_open = bot_buy_count + bot_sell_count
+            
+            summary = (
+                f"📊 **THỐNG KÊ TOÀN HỆ THỐNG**\n\n"
+                f"🤖 **BOT**: {total_bots} bots\n"
+                f"   🔍 Đang tìm coin: {searching_bots}\n"
+                f"   🟡 Đang chờ: {waiting_bots}\n"
+                f"   📈 Đang mở: {total_bot_open} vị thế\n\n"
+            )
+            
+            if total_binance > 0:
+                binance_buy_ratio = binance_buy_count / total_binance
+                binance_sell_ratio = binance_sell_count / total_binance
                 
-                summary = (
-                    f"📊 **THỐNG KÊ VỊ THẾ TOÀN HỆ THỐNG**\n"
-                    f"🟢 BUY: {buy_count} vị thế ({buy_ratio:.1%})\n"
-                    f"🔴 SELL: {sell_count} vị thế ({sell_ratio:.1%})\n"
-                    f"📈 Tổng: {total} vị thế đang mở\n"
+                summary += (
+                    f"💰 **TẤT CẢ VỊ THẾ BINANCE**: {total_binance}\n"
+                    f"   🟢 LONG: {binance_buy_count} ({binance_buy_ratio:.1%})\n"
+                    f"   🔴 SHORT: {binance_sell_count} ({binance_sell_ratio:.1%})\n"
                 )
                 
-                if open_positions:
-                    summary += f"🔗 Các vị thế: {', '.join(open_positions)}"
+                if binance_positions:
+                    if len(binance_positions) > 6:
+                        summary += f"   🔗 {', '.join(binance_positions[:6])} + {len(binance_positions) - 6} more...\n"
+                    else:
+                        summary += f"   🔗 {', '.join(binance_positions)}\n"
                 
-                return summary
+                # Đề xuất cân bằng
+                if binance_buy_ratio > 0.6:
+                    summary += f"\n⚖️ **ĐỀ XUẤT**: Nhiều LONG → ƯU TIÊN TÌM SHORT"
+                elif binance_sell_ratio > 0.6:
+                    summary += f"\n⚖️ **ĐỀ XUẤT**: Nhiều SHORT → ƯU TIÊN TÌM LONG"
+                else:
+                    summary += f"\n⚖️ **TRẠNG THÁI**: Cân bằng tốt"
+                    
             else:
-                return "📊 Không có vị thế nào đang mở"
+                summary += f"💰 **TẤT CẢ VỊ THẾ BINANCE**: Không có vị thế nào\n"
                 
+            return summary
+                    
         except Exception as e:
             return f"❌ Lỗi thống kê: {str(e)}"
     def log(self, message):
@@ -1730,6 +1786,25 @@ class BotManager:
         self.running = False
         self.log("🔴 Hệ thống đã dừng")
 
+    def check_binance_positions(self):
+        """Kiểm tra nhanh vị thế Binance"""
+        try:
+            positions = get_positions(api_key=self.api_key, api_secret=self.api_secret)
+            buy_count = 0
+            sell_count = 0
+            
+            for pos in positions:
+                position_amt = float(pos.get('positionAmt', 0))
+                if position_amt != 0:
+                    if position_amt > 0:
+                        buy_count += 1
+                    else:
+                        sell_count += 1
+            
+            return buy_count, sell_count
+        except Exception as e:
+            logger.error(f"❌ Lỗi kiểm tra vị thế Binance: {e}")
+            return 0, 0
     def _telegram_listener(self):
         last_update_id = 0
         
