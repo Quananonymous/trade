@@ -64,6 +64,7 @@ def signed_request(url_path: str, params: dict, api_key: str, secret_key: str, m
         return None
 
 def get_balance(api_key: str, api_secret: str) -> float:
+    """Lấy số dư KHẢ DỤNG (availableBalance)"""
     try:
         ts = int(time.time() * 1000)
         url_path = "/fapi/v2/balance"
@@ -72,17 +73,17 @@ def get_balance(api_key: str, api_secret: str) -> float:
         if data:
             for b in data:
                 if b.get('asset') == 'USDT':
-                    # THAY ĐỔI: Lấy availableBalance thay vì balance
                     available_balance = float(b.get('availableBalance', 0))
                     total_balance = float(b.get('balance', 0))
                     logger.info(f"💰 Số dư khả dụng: {available_balance:.2f} USDT | Tổng: {total_balance:.2f} USDT")
-                    return available_balance  # ← QUAN TRỌNG: Trả về số khả dụng
+                    return available_balance
         return 0.0
     except Exception as e:
         logger.error(f"get_balance error: {e}")
         return 0.0
 
 def get_detailed_balance(api_key: str, api_secret: str) -> Dict[str, float]:
+    """Lấy chi tiết số dư"""
     try:
         ts = int(time.time() * 1000)
         url_path = "/fapi/v2/balance"
@@ -94,12 +95,14 @@ def get_detailed_balance(api_key: str, api_secret: str) -> Dict[str, float]:
                     return {
                         'available': float(b.get('availableBalance', 0)),
                         'total': float(b.get('balance', 0)),
-                        'unrealized_pnl': float(b.get('crossUnPnl', 0))
+                        'unrealized_pnl': float(b.get('crossUnPnl', 0)),
+                        'margin': float(b.get('crossWalletBalance', 0))
                     }
         return {}
     except Exception as e:
         logger.error(f"get_detailed_balance error: {e}")
         return {}
+
 def get_current_price(symbol: str) -> float:
     """Lấy giá hiện tại"""
     try:
@@ -242,56 +245,6 @@ def calc_ema(prices: list, period: int) -> Optional[float]:
         ema = price * k + ema * (1 - k)
         
     return float(ema)
-
-def atr_last(highs: list, lows: list, closes: list, period: int = 14, return_pct: bool = True) -> Optional[float]:
-    """Tính ATR"""
-    n = len(closes)
-    if min(len(highs), len(lows), len(closes)) < period+1:
-        return None
-        
-    trs = []
-    for i in range(1, n):
-        tr = max(highs[i]-lows[i], abs(highs[i]-closes[i-1]), abs(lows[i]-closes[i-1]))
-        trs.append(tr)
-        
-    atr = sum(trs[:period]) / period
-    for i in range(period, len(trs)):
-        atr = (atr*(period-1) + trs[i]) / period
-        
-    if return_pct and closes[-1] > 0:
-        return float(atr / closes[-1] * 100.0)
-    return float(atr)
-
-def adx_last(highs: list, lows: list, closes: list, period: int = 14) -> Tuple[Optional[float], Optional[float], Optional[float]]:
-    """Tính ADX, +DI, -DI"""
-    n = len(closes)
-    if min(len(highs), len(lows), len(closes)) < period+1:
-        return None, None, None
-        
-    plus_dm, minus_dm, trs = [], [], []
-    for i in range(1, n):
-        up = highs[i]-highs[i-1]
-        down = lows[i-1]-lows[i]
-        plus_dm.append(up if (up>down and up>0) else 0.0)
-        minus_dm.append(down if (down>up and down>0) else 0.0)
-        tr = max(highs[i]-lows[i], abs(highs[i]-closes[i-1]), abs(lows[i]-closes[i-1]))
-        trs.append(tr)
-
-    def wilder(arr):
-        a = sum(arr[:period]) / period
-        for x in arr[period:]:
-            a = (a*(period-1) + x) / period
-        return a
-
-    atr = wilder(trs)
-    if atr == 0:
-        return None, None, None
-        
-    plus_di = 100 * (wilder(plus_dm) / atr)
-    minus_di = 100 * (wilder(minus_dm) / atr)
-    dx = 100 * abs(plus_di - minus_di) / max(plus_di + minus_di, 1e-9)
-    adx = dx
-    return float(adx), float(plus_di), float(minus_di)
 
 # ============================ TELEGRAM MANAGER =======================
 def send_telegram(message: str, chat_id: Optional[str] = None, reply_markup=None,
@@ -761,15 +714,7 @@ class BaseBot:
                             return
 
             if current_coin_count < 2:
-                new_symbols = get_qualified_symbols(
-                    self.api_key,
-                    self.api_secret,
-                    self.strategy_name,
-                    self.lev,
-                    max_candidates=12,
-                    final_limit=1,
-                    strategy_key=self.config_key
-                )
+                new_symbols = self._get_qualified_symbols()
                 
                 if new_symbols:
                     primary = new_symbols[0]
@@ -796,6 +741,35 @@ class BaseBot:
                 
         except Exception as e:
             self.log(f"❌ Lỗi tìm coin mới: {e}")
+
+    def _get_qualified_symbols(self) -> List[str]:
+        """Tìm coin phù hợp cho bot động"""
+        try:
+            all_symbols = get_all_usdt_pairs(limit=30)
+            qualified = []
+            
+            for symbol in all_symbols:
+                if (symbol != self.symbol and 
+                    not self.coin_manager.is_in_cooldown(symbol) and
+                    self.coin_manager.can_add_more_coins(self.strategy_name, self.config_key)):
+                    
+                    # Kiểm tra volume
+                    klines = get_klines(symbol, "5m", 50)
+                    if klines:
+                        closes = klines[3]
+                        if len(closes) > 20:
+                            volatility = np.std(closes[-20:]) / np.mean(closes[-20:]) * 100
+                            if 2 <= volatility <= 10:
+                                qualified.append(symbol)
+                                
+                                if len(qualified) >= 2:
+                                    break
+            
+            return qualified[:2]
+            
+        except Exception as e:
+            self.log(f"❌ Lỗi tìm symbols: {e}")
+            return []
 
     def _restart_websocket_for_new_coin(self):
         try:
@@ -935,6 +909,51 @@ class Trend_Following_Bot(BaseBot):
         except Exception as e:
             return None
 
+class Scalping_Bot(BaseBot):
+    def __init__(self, symbol, lev, percent, tp, sl, ws_manager, api_key, api_secret, 
+                 telegram_bot_token, telegram_chat_id, config_key=None, dynamic_mode=False):
+        super().__init__(symbol, lev, percent, tp, sl, ws_manager, api_key, api_secret, 
+                        telegram_bot_token, telegram_chat_id, "Scalping", config_key, dynamic_mode)
+
+    def get_signal(self):
+        try:
+            if len(self.prices) < 20:
+                return None
+
+            rsi = calc_rsi(self.prices, 7)
+            if rsi is None:
+                return None
+
+            if rsi < 25:
+                return "BUY"
+            elif rsi > 75:
+                return "SELL"
+
+            return None
+
+        except Exception as e:
+            return None
+
+class Safe_Grid_Bot(BaseBot):
+    def __init__(self, symbol, lev, percent, tp, sl, ws_manager, api_key, api_secret, 
+                 telegram_bot_token, telegram_chat_id, grid_levels=5, config_key=None, dynamic_mode=False):
+        super().__init__(symbol, lev, percent, tp, sl, ws_manager, api_key, api_secret, 
+                        telegram_bot_token, telegram_chat_id, "Safe Grid", config_key, dynamic_mode)
+        self.grid_levels = grid_levels
+        self.orders_placed = 0
+
+    def get_signal(self):
+        try:
+            if self.orders_placed < self.grid_levels:
+                self.orders_placed += 1
+                if self.orders_placed % 2 == 1:
+                    return "BUY"
+                else:
+                    return "SELL"
+            return None
+        except Exception as e:
+            return None
+
 class SmartDynamicBot(BaseBot):
     def __init__(self, symbol, lev, percent, tp, sl, ws_manager, api_key, api_secret, 
                  telegram_bot_token, telegram_chat_id, config_key=None, dynamic_mode=True):
@@ -972,80 +991,6 @@ class SmartDynamicBot(BaseBot):
         except Exception as e:
             self.log(f"❌ Lỗi Smart Dynamic signal: {str(e)}")
             return None
-
-# ============================ SCANNER ================================
-def get_qualified_symbols(api_key: str, api_secret: str, strategy_type: str, leverage: int,
-                          threshold: Optional[float] = None, max_candidates: int = 20, 
-                          final_limit: int = 2, strategy_key: Optional[str] = None) -> List[str]:
-    try:
-        test_balance = get_balance(api_key, api_secret)
-        if test_balance == 0:
-            logger.error("❌ KHÔNG THỂ KẾT NỐI BINANCE")
-            return []
-            
-        coin_manager = CoinManager()
-        all_symbols = get_all_usdt_pairs(limit=50)
-        if not all_symbols:
-            return []
-            
-        url = f"{BASE_FAPI}/fapi/v1/ticker/24hr"
-        all_tickers = binance_api_request(url)
-        if not all_tickers:
-            return []
-            
-        tickmap = {t['symbol']: t for t in all_tickers if 'symbol' in t}
-        scored = []
-        
-        for sym in all_symbols:
-            if sym not in tickmap:
-                continue
-            if strategy_key and coin_manager.has_same_config_bot(sym, strategy_key):
-                continue
-            if coin_manager.is_in_cooldown(sym):
-                continue
-                
-            t = tickmap[sym]
-            try:
-                qvol = float(t.get('quoteVolume', 0.0) or 0.0)
-                if qvol < 1_000_000:
-                    continue
-                    
-                k5 = get_klines(sym, "5m", 100)
-                if not k5:
-                    continue
-                    
-                # Đơn giản hóa scoring
-                change_24h = abs(float(t.get('priceChangePercent', 0.0) or 0.0))
-                score = change_24h
-                
-                if strategy_type == "Reverse 24h" and threshold is not None:
-                    if change_24h < threshold:
-                        continue
-                        
-                scored.append((score, sym))
-            except Exception:
-                continue
-
-        top = nlargest(max_candidates, scored, key=lambda x: x[0])
-        final_syms: List[str] = []
-        
-        for score, sym in top:
-            try:
-                if not set_leverage(sym, leverage, api_key, api_secret):
-                    continue
-                final_syms.append(sym)
-                logger.info(f"✅ {sym}: score={score:.2f}")
-                if len(final_syms) >= final_limit:
-                    break
-            except Exception:
-                continue
-
-        logger.info(f"🎯 {strategy_type}: cuối cùng {len(final_syms)} coin: {final_syms}")
-        return final_syms[:final_limit]
-        
-    except Exception as e:
-        logger.error(f"❌ Lỗi get_qualified_symbols: {str(e)}")
-        return []
 
 # ============================ BOT MANAGER ==================
 class BotManager:
@@ -1115,6 +1060,8 @@ class BotManager:
                 "EMA Crossover": EMA_Crossover_Bot,
                 "Reverse 24h": Reverse_24h_Bot,
                 "Trend Following": Trend_Following_Bot,
+                "Scalping": Scalping_Bot,
+                "Safe Grid": Safe_Grid_Bot,
                 "Smart Dynamic": SmartDynamicBot
             }.get(strategy_type)
             
@@ -1129,6 +1076,13 @@ class BotManager:
                 bot = bot_class(symbol, lev, percent, tp, sl, self.ws_manager,
                               self.api_key, self.api_secret, self.telegram_bot_token, 
                               self.telegram_chat_id, threshold, config_key, dynamic_mode)
+            elif strategy_type == "Safe Grid":
+                grid_levels = kwargs.get('grid_levels', 5)
+                dynamic_mode = kwargs.get('dynamic_mode', False)
+                config_key = kwargs.get('config_key')
+                bot = bot_class(symbol, lev, percent, tp, sl, self.ws_manager,
+                              self.api_key, self.api_secret, self.telegram_bot_token,
+                              self.telegram_chat_id, grid_levels, config_key, dynamic_mode)
             elif strategy_type == "Smart Dynamic":
                 dynamic_mode = kwargs.get('dynamic_mode', True)
                 config_key = kwargs.get('config_key')
@@ -1136,9 +1090,11 @@ class BotManager:
                               self.api_key, self.api_secret, self.telegram_bot_token, 
                               self.telegram_chat_id, config_key, dynamic_mode)
             else:
+                dynamic_mode = kwargs.get('dynamic_mode', False)
+                config_key = kwargs.get('config_key')
                 bot = bot_class(symbol, lev, percent, tp, sl, self.ws_manager,
                               self.api_key, self.api_secret, self.telegram_bot_token,
-                              self.telegram_chat_id)
+                              self.telegram_chat_id, config_key, dynamic_mode)
             
             self.bots[bot_id] = bot
             self.log(f"✅ Đã thêm bot {strategy_type}: {symbol} | ĐB: {lev}x | Vốn: {percent}% | TP/SL: {tp}%/{sl}%")
@@ -1225,7 +1181,7 @@ class BotManager:
                              create_bot_mode_keyboard(),
                              self.telegram_bot_token, self.telegram_chat_id)
             return
-    
+
         # 2. Đang chờ chọn chiến lược
         elif current_step == 'waiting_strategy':
             strategy_map = {
@@ -1251,7 +1207,7 @@ class BotManager:
                              create_strategy_keyboard(),
                              self.telegram_bot_token, self.telegram_chat_id)
             return
-    
+
         # 3. Đang chờ chọn đòn bẩy
         elif current_step == 'waiting_leverage':
             try:
@@ -1274,7 +1230,7 @@ class BotManager:
                              create_leverage_keyboard(),
                              self.telegram_bot_token, self.telegram_chat_id)
             return
-    
+
         # 4. Đang chờ chọn % số dư
         elif current_step == 'waiting_percent':
             try:
@@ -1296,7 +1252,7 @@ class BotManager:
                              create_percent_keyboard(),
                              self.telegram_bot_token, self.telegram_chat_id)
             return
-    
+
         # 5. Đang chờ chọn Take Profit
         elif current_step == 'waiting_tp':
             try:
@@ -1318,7 +1274,7 @@ class BotManager:
                              create_tp_keyboard(),
                              self.telegram_bot_token, self.telegram_chat_id)
             return
-    
+
         # 6. Đang chờ chọn Stop Loss - BƯỚC CUỐI CÙNG
         elif current_step == 'waiting_sl':
             try:
@@ -1336,7 +1292,7 @@ class BotManager:
                     
                     # Thêm bot
                     success = self.add_bot(
-                        symbol="BTCUSDT",  # Tạm thời dùng BTCUSDT, có thể thay đổi
+                        symbol="BTCUSDT",  # Tạm thời dùng BTCUSDT
                         lev=leverage, 
                         percent=percent,
                         tp=tp, 
@@ -1353,7 +1309,7 @@ class BotManager:
                             f"💰 Đòn bẩy: {leverage}x\n"
                             f"📊 % Số dư: {percent}%\n"
                             f"🎯 TP: {tp}%\n"
-                            f"🛡️ SL: {sl}%"
+                            f"🛡️ SL: {sl if sl else 0}%"
                         )
                         send_telegram(success_msg, chat_id, create_main_menu(),
                                     self.telegram_bot_token, self.telegram_chat_id)
@@ -1373,7 +1329,7 @@ class BotManager:
                              create_sl_keyboard(),
                              self.telegram_bot_token, self.telegram_chat_id)
             return
-    
+
         # ========== XỬ LÝ LỆNH KHÔNG CẦN TRẠNG THÁI ==========
         
         elif text == "➕ Thêm Bot":
@@ -1470,5 +1426,6 @@ class BotManager:
         else:
             # Nếu không nhận diện được lệnh, hiển thị menu chính
             self.send_main_menu(chat_id)
+
 # ========== KHỞI TẠO GLOBAL INSTANCES ==========
 coin_manager = CoinManager()
