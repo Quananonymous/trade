@@ -1,3 +1,4 @@
+# trading_bot_lib_optimized.py
 # =============================== IMPORTS ===============================
 import json
 import hmac
@@ -905,5 +906,3 @@ class BotManager:
         )
         
         self.telegram_manager.send_message(status_msg)
-
-# ============================ USAGE EXAMPLE ==========================
