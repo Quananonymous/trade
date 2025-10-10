@@ -70,29 +70,6 @@ def main():
             telegram_chat_id=TELEGRAM_CHAT_ID
         )
         
-        # Thêm bot mẫu (có thể xóa hoặc thay đổi)
-        print("🤖 Đang thêm bot mẫu...")
-        
-        # Bot RSI/EMA
-        manager.add_bot(
-            symbol="BTCUSDT",
-            lev=10,
-            percent=5, 
-            tp=50,
-            sl=20,
-            strategy_type="RSI/EMA Recursive"
-        )
-        
-        # Bot Reverse 24h
-        manager.add_bot(
-            symbol="ETHUSDT",
-            lev=15, 
-            percent=3,
-            tp=30,
-            sl=15,
-            strategy_type="Reverse 24h",
-            threshold=25
-        )
         
         print("🟢 Hệ thống đã sẵn sàng. Đang chạy...")
         
@@ -114,3 +91,4 @@ def main():
 
 if __name__ == "__main__":
     main()
+
