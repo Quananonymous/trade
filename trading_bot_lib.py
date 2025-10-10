@@ -1283,7 +1283,6 @@ class BaseBot:
                             current_time - self.last_trade_time > 60 and
                             current_time - self.last_close_time > self.cooldown_period):
                             
-                            self.log(f"🎯 Nhận tín hiệu {signal}, đang mở lệnh...")
                             if self.open_position(signal):
                                 self.last_trade_time = current_time
                                 self.last_signal_time = current_time
