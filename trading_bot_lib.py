@@ -1986,7 +1986,7 @@ class BotManager:
         self.max_bots = max_bots
         self.pending_symbols = []
         self.excluded_symbols = set()
-        
+        self.coin_manager = CoinManager()
         self.auto_strategies = {}
         self.last_auto_scan = 0
         self.auto_scan_interval = 600
@@ -2030,6 +2030,8 @@ class BotManager:
             
             # Bước 2: Nếu chưa đủ 2 bot cho config này, tìm bot mới NGAY
             strategy_key = strategy_config.get('strategy_key')
+            
+            # SỬA: Sử dụng self.coin_manager
             current_count = self.coin_manager.count_bots_by_config(strategy_key)
             
             if current_count < 2:  # CHỈ CẦN KIỂM TRA SỐ LƯỢNG, KHÔNG ĐỢI ACTIVE
@@ -2134,6 +2136,8 @@ class BotManager:
             
             # GỬI XÁC NHẬN TELEGRAM - BOT ĐÃ SẴN SÀNG
             config_key = strategy_config.get('strategy_key', 'default')
+            
+            # SỬA: Sử dụng self.coin_manager thay vì self.coin_manager
             current_count = self.coin_manager.count_bots_by_config(config_key)
             
             success_msg = (
@@ -2160,7 +2164,6 @@ class BotManager:
             self.log(error_msg)
             self.excluded_symbols.add(symbol)
             return False
-    
     def _display_status(self):
         """Hiển thị trạng thái hiện tại"""
         active_count = len(self.bots)
