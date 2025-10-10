@@ -30,7 +30,19 @@ def setup_logging():
     return logging.getLogger()
 
 logger = setup_logging()
-
+def get_batch_ticker_info(symbols):
+    """Lấy thông tin ticker cho nhiều coin cùng lúc"""
+    try:
+        # Binance API cho phép lấy nhiều symbol cùng lúc
+        symbol_param = '["' + '","'.join(symbols) + '"]'
+        url = f"https://fapi.binance.com/fapi/v1/ticker/24hr?symbols={symbol_param}"
+        data = binance_api_request(url)
+        if data:
+            return {item['symbol']: item for item in data}
+        return {}
+    except Exception as e:
+        logger.error(f"Lỗi lấy batch ticker: {str(e)}")
+        return {}
 # ========== HÀM TELEGRAM ==========
 def send_telegram(message, chat_id=None, reply_markup=None, bot_token=None, default_chat_id=None):
     if not bot_token:
@@ -358,8 +370,8 @@ def binance_api_request(url, method='GET', params=None, headers=None, timeout=15
     logger.error(f"Không thể thực hiện yêu cầu API sau {max_retries} lần thử")
     return None
 
-def get_all_usdt_pairs(limit=100):
-    """Lấy danh sách coin USDT với volume 24h - LOẠI BỎ BTC"""
+def get_all_usdt_pairs(limit=None):  # Thêm limit=None
+    """Lấy danh sách TẤT CẢ coin USDT với volume 24h - LOẠI BỎ BTC"""
     try:
         url = "https://fapi.binance.com/fapi/v1/exchangeInfo"
         data = binance_api_request(url)
@@ -391,7 +403,12 @@ def get_all_usdt_pairs(limit=100):
         # Sắp xếp theo volume giảm dần
         usdt_pairs.sort(key=lambda x: x[1], reverse=True)
         
-        symbols = [pair[0] for pair in usdt_pairs[:limit]]
+        # NẾU CÓ LIMIT THÌ CẮT, KHÔNG THÌ TRẢ VỀ TẤT CẢ
+        if limit:
+            symbols = [pair[0] for pair in usdt_pairs[:limit]]
+        else:
+            symbols = [pair[0] for pair in usdt_pairs]  # TRẢ VỀ TẤT CẢ
+        
         logger.info(f"✅ Lấy được {len(symbols)} coin USDT từ Binance (đã loại BTC)")
         return symbols
         
@@ -484,20 +501,36 @@ def get_24h_ticker(symbol):
         logger.error(f"Lỗi lấy ticker 24h: {str(e)}")
     return None
 
-def get_qualified_symbols(api_key, api_secret, strategy_type, leverage, threshold=None, volatility=None, grid_levels=None, max_candidates=20, final_limit=2, strategy_key=None):
-    """TÌM COIN THÔNG MINH - PHÂN LOẠI THEO CHIẾN LƯỢC - LOẠI BỎ BTC"""
+def get_qualified_symbols(api_key, api_secret, strategy_type, leverage, threshold=None, volatility=None, grid_levels=None, max_candidates=50, final_limit=2, strategy_key=None):
+    """TÌM COIN THÔNG MINH - LẤY TẤT CẢ COIN - PHÂN LOẠI THEO CHIẾN LƯỢC - LOẠI BỎ BTC"""
     try:
         coin_manager = CoinManager()
         
-        # Lấy danh sách coin có volume cao
-        all_symbols = get_all_usdt_pairs(limit=50)
+        # Lấy danh sách TẤT CẢ coin có volume cao - BỎ LIMIT
+        all_symbols = get_all_usdt_pairs(limit=None)  # LẤY TẤT CẢ COIN
         if not all_symbols:
             logger.error("❌ Không lấy được danh sách coin từ Binance")
             return []
         
-        qualified_symbols = []
-        
+        # Lọc bớt: chỉ xét coin có volume > 1M USDT để tối ưu hiệu năng
+        filtered_symbols = []
         for symbol in all_symbols:
+            ticker_info = get_24h_ticker(symbol)
+            if ticker_info and ticker_info['volume'] > 1000000:  # Volume > 1M USDT
+                filtered_symbols.append(symbol)
+            else:
+                continue
+        
+        logger.info(f"🔍 Quét {len(filtered_symbols)} coin có volume > 1M USDT")
+        
+        qualified_symbols = []
+        processed_count = 0
+        
+        for symbol in filtered_symbols:
+            processed_count += 1
+            if processed_count % 10 == 0:
+                logger.info(f"⏳ Đã xử lý {processed_count}/{len(filtered_symbols)} coin...")
+            
             # LOẠI BỎ BTC NGAY TỪ ĐẦU
             if symbol == 'BTCUSDT':
                 continue
@@ -628,12 +661,12 @@ def get_qualified_symbols(api_key, api_secret, strategy_type, leverage, threshol
                                       f"Vol: {candidate['volatility']:.1f}%, " +
                                       f"RSI: {candidate['rsi']:.1f}")
                 
-                time.sleep(0.2)
+                time.sleep(0.2)  # Tránh rate limit
             except Exception as e:
                 logger.error(f"❌ Lỗi kiểm tra {symbol}: {str(e)}")
                 continue
         
-        logger.info(f"🎯 {strategy_type}: Tìm thấy {len(final_symbols)} coin phù hợp")
+        logger.info(f"🎯 {strategy_type}: Tìm thấy {len(final_symbols)} coin phù hợp từ {len(filtered_symbols)} coin được quét")
         return final_symbols[:final_limit]
         
     except Exception as e:
