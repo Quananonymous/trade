@@ -341,57 +341,6 @@ class AIMarketAnalyzer:
             logger.error(f"❌ Lỗi dự đoán AI: {str(e)}")
             return "NEUTRAL"
 
-# Thêm hàm để train scaler với dữ liệu mẫu
-def initialize_ai_with_sample_data(self):
-    """Khởi tạo AI với dữ liệu mẫu để tránh lỗi scaler"""
-    try:
-        # Tạo dữ liệu mẫu ngẫu nhiên để fit scaler
-        import numpy as np
-        sample_features = []
-        for _ in range(100):
-            sample_feature = [
-                np.random.uniform(20, 80),  # RSI
-                np.random.uniform(100, 50000),  # EMA9
-                np.random.uniform(100, 50000),  # EMA21
-                np.random.uniform(100, 50000),  # EMA50
-                np.random.uniform(-10, 10),  # MACD
-                np.random.uniform(-10, 10),  # Signal
-                np.random.uniform(0.5, 3.0),  # Volume ratio
-                np.random.uniform(-5, 5),  # Price change 1h
-                np.random.uniform(-10, 10),  # Price change 4h
-                np.random.uniform(-20, 20),  # Price change 24h
-                np.random.uniform(1, 15),  # Volatility
-                np.random.uniform(40, 60),  # BTC dominance
-                np.random.uniform(20, 80)  # Fear greed
-            ]
-            sample_features.append(sample_feature)
-        
-        # Fit scaler với dữ liệu mẫu
-        self.scaler.fit(sample_features)
-        logger.info("✅ Đã khởi tạo scaler với dữ liệu mẫu")
-        
-        # Tạo model với dữ liệu mẫu cơ bản
-        sample_X = sample_features
-        sample_y = [1] * 100  # Tất cả NEUTRAL
-        
-        self.model.fit(sample_X, sample_y)
-        logger.info("✅ Đã khởi tạo model với dữ liệu mẫu")
-        
-    except Exception as e:
-        logger.error(f"❌ Lỗi khởi tạo AI với dữ liệu mẫu: {str(e)}")
-
-# Trong hàm __init__ của AIMarketAnalyzer, thêm:
-def __init__(self):
-    self.model = None
-    self.scaler = StandardScaler()
-    self.model_path = "ai_market_model.pkl"
-    self.scaler_path = "ai_scaler.pkl"
-    self.load_model()
-    
-    # Nếu model chưa được train, khởi tạo với dữ liệu mẫu
-    if not hasattr(self.model, 'classes_') or not hasattr(self.scaler, 'mean_'):
-        logger.info("🔄 Khởi tạo AI với dữ liệu mẫu...")
-        self.initialize_ai_with_sample_data()
     
     def calc_rsi(self, prices, period=14):
         """Tính RSI"""
