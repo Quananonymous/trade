@@ -9,13 +9,13 @@ def load_environment_config():
     """Tải cấu hình từ biến môi trường"""
     config = {
         'BINANCE_API_KEY': os.getenv('BINANCE_API_KEY'),
-        'BINANCE_API_SECRET': os.getenv('BINANCE_API_SECRET'),
+        'BINANCE_SECRET_KEY': os.getenv('BINANCE_SECRET_KEY'),
         'TELEGRAM_BOT_TOKEN': os.getenv('TELEGRAM_BOT_TOKEN'),
         'TELEGRAM_CHAT_ID': os.getenv('TELEGRAM_CHAT_ID')
     }
     
     # Kiểm tra các biến bắt buộc
-    required_vars = ['BINANCE_API_KEY', 'BINANCE_API_SECRET']
+    required_vars = ['BINANCE_API_KEY', 'BINANCE_SECRET_KEY']
     missing_vars = [var for var in required_vars if not config[var]]
     
     if missing_vars:
@@ -50,8 +50,8 @@ def check_environment_config(config):
     if not config['BINANCE_API_KEY']:
         issues.append("❌ BINANCE_API_KEY chưa được thiết lập")
     
-    if not config['BINANCE_API_SECRET']:
-        issues.append("❌ BINANCE_API_SECRET chưa được thiết lập")
+    if not config['BINANCE_SECRET_KEY']:
+        issues.append("❌ BINANCE_SECRET_KEY chưa được thiết lập")
     
     if not config['TELEGRAM_BOT_TOKEN']:
         issues.append("⚠️ TELEGRAM_BOT_TOKEN chưa được thiết lập (Telegram notifications sẽ bị tắt)")
@@ -63,13 +63,13 @@ def check_environment_config(config):
         print("\n".join(issues))
     
     # Chỉ cần Binance API để chạy, Telegram là optional
-    if not config['BINANCE_API_KEY'] or not config['BINANCE_API_SECRET']:
+    if not config['BINANCE_API_KEY'] or not config['BINANCE_SECRET_KEY']:
         print("\n📝 HƯỚNG DẪN CẤU HÌNH TRÊN RAILWAY:")
         print("1. Vào dashboard Railway của bạn")
         print("2. Chọn project → Settings → Variables")
         print("3. Thêm các biến môi trường:")
         print("   - BINANCE_API_KEY")
-        print("   - BINANCE_API_SECRET") 
+        print("   - BINANCE_SECRET_KEY") 
         print("   - TELEGRAM_BOT_TOKEN (optional)")
         print("   - TELEGRAM_CHAT_ID (optional)")
         return False
@@ -108,7 +108,7 @@ def main():
         
         bot_manager = BotManager(
             api_key=config['BINANCE_API_KEY'],
-            api_secret=config['BINANCE_API_SECRET'],
+            api_secret=config['BINANCE_SECRET_KEY'],
             telegram_bot_token=config['TELEGRAM_BOT_TOKEN'],
             telegram_chat_id=config['TELEGRAM_CHAT_ID']
         )
@@ -172,7 +172,7 @@ def quick_test():
         print("🔗 Đang kết nối Binance...")
         from trading_bot_lib import get_balance
         
-        balance = get_balance(config['BINANCE_API_KEY'], config['BINANCE_API_SECRET'])
+        balance = get_balance(config['BINANCE_API_KEY'], config['BINANCE_SECRET_KEY'])
         if balance is not None:
             print(f"✅ Kết nối Binance thành công! Số dư: {balance:.2f} USDT")
         else:
@@ -205,3 +205,4 @@ if __name__ == "__main__":
         quick_test()
     else:
         main()
+
