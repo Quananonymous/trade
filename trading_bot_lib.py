@@ -237,12 +237,13 @@ class CoinManager:
                 cls._instance.cooldown_seconds = 1200  # 20 phút
         return cls._instance
     
-    def register_coin(self, symbol, bot_id, strategy, config_key=None):
+    def register_coin(self, symbol, bot_id, strategy, config_key=None, max_coins_per_config=2):  # SỬA THÀNH 2
         with self._lock:
             if config_key not in self.config_coin_count:
                 self.config_coin_count[config_key] = 0
             
-            if self.config_coin_count.get(config_key, 0) >= 2:
+            # MỖI CONFIG CHỈ ĐƯỢC 2 COIN
+            if self.config_coin_count.get(config_key, 0) >= max_coins_per_config:
                 return False
                 
             if symbol not in self.managed_coins:
@@ -254,7 +255,6 @@ class CoinManager:
                 self.config_coin_count[config_key] = self.config_coin_count.get(config_key, 0) + 1
                 return True
             return False
-    
     def unregister_coin(self, symbol):
         with self._lock:
             if symbol in self.managed_coins:
@@ -2022,14 +2022,17 @@ class BotManager:
 
     def update_bot_list(self, strategy_config):
         """
-        Cập nhật danh sách bot - chỉ thêm bot mới khi có bot đặt lệnh
+        Cập nhật danh sách bot - THÊM BOT MỚI NGAY KHÔNG ĐỢI
         """
         try:
             # Bước 1: Kiểm tra và xử lý các bot đang active
             self._process_active_bots()
             
-            # Bước 2: Nếu chưa đủ bot và có bot đã đặt lệnh, tìm bot mới
-            if len(self.bots) < self.max_bots and self._has_active_orders():
+            # Bước 2: Nếu chưa đủ 2 bot cho config này, tìm bot mới NGAY
+            strategy_key = strategy_config.get('strategy_key')
+            current_count = self.coin_manager.count_bots_by_config(strategy_key)
+            
+            if current_count < 2:  # CHỈ CẦN KIỂM TRA SỐ LƯỢNG, KHÔNG ĐỢI ACTIVE
                 new_symbol = self._find_new_symbol(strategy_config)
                 if new_symbol:
                     self._add_new_bot(new_symbol, strategy_config)
@@ -2084,48 +2087,79 @@ class BotManager:
     
     def _add_new_bot(self, symbol, strategy_config):
         """
-        Thêm bot mới vào hệ thống
+        Thêm bot mới vào hệ thống - VỚI XÁC NHẬN TELEGRAM
         """
         try:
-            if symbol not in [bot.symbol for bot in self.bots.values()] and symbol not in self.excluded_symbols:
-                # Tạo bot mới dựa trên chiến lược
-                strategy_type = strategy_config.get('strategy_type', 'Smart Dynamic')
-                leverage = strategy_config.get('leverage', 10)
-                percent = strategy_config.get('percent', 5)
-                tp = strategy_config.get('tp', 100)
-                sl = strategy_config.get('sl', 50)
-                
-                bot_class = {
-                    "Reverse 24h": Reverse_24h_Bot,
-                    "Scalping": Scalping_Bot,
-                    "Safe Grid": Safe_Grid_Bot,
-                    "Trend Following": Trend_Following_Bot,
-                    "Smart Dynamic": SmartDynamicBot
-                }.get(strategy_type, SmartDynamicBot)
-                
-                if strategy_type == "Reverse 24h":
-                    threshold = strategy_config.get('threshold', 30)
-                    bot = bot_class(symbol, leverage, percent, tp, sl, self.ws_manager,
-                                  self.api_key, self.api_secret, self.telegram_bot_token, 
-                                  self.telegram_chat_id, threshold)
-                elif strategy_type == "Safe Grid":
-                    grid_levels = strategy_config.get('grid_levels', 5)
-                    bot = bot_class(symbol, leverage, percent, tp, sl, self.ws_manager,
-                                  self.api_key, self.api_secret, self.telegram_bot_token,
-                                  self.telegram_chat_id, grid_levels)
-                else:
-                    bot = bot_class(symbol, leverage, percent, tp, sl, self.ws_manager,
-                                  self.api_key, self.api_secret, self.telegram_bot_token,
-                                  self.telegram_chat_id)
-                
-                bot_id = f"{symbol}_{strategy_type}"
-                self.bots[bot_id] = bot
-                self.excluded_symbols.add(symbol)
-                self.log(f"✅ Đã thêm bot mới: {symbol} - {strategy_type}")
-                
-        except Exception as e:
-            self.log(f"Lỗi khi thêm bot {symbol}: {e}")
+            # Kiểm tra symbol không trùng
+            existing_symbols = [bot.symbol for bot in self.bots.values()]
+            if symbol in existing_symbols or symbol in self.excluded_symbols:
+                return False
+    
+            # Tạo bot mới dựa trên chiến lược
+            strategy_type = strategy_config.get('strategy_type', 'Smart Dynamic')
+            leverage = strategy_config.get('leverage', 10)
+            percent = strategy_config.get('percent', 5)
+            tp = strategy_config.get('tp', 100)
+            sl = strategy_config.get('sl', 50)
+            
+            bot_class = {
+                "Reverse 24h": Reverse_24h_Bot,
+                "Scalping": Scalping_Bot,
+                "Safe Grid": Safe_Grid_Bot,
+                "Trend Following": Trend_Following_Bot,
+                "Smart Dynamic": SmartDynamicBot,
+                "RSI/EMA Recursive": RSI_EMA_Bot,
+                "EMA Crossover": EMA_Crossover_Bot
+            }.get(strategy_type, SmartDynamicBot)
+            
+            # Tạo bot với tham số phù hợp
+            if strategy_type == "Reverse 24h":
+                threshold = strategy_config.get('threshold', 30)
+                bot = bot_class(symbol, leverage, percent, tp, sl, self.ws_manager,
+                              self.api_key, self.api_secret, self.telegram_bot_token, 
+                              self.telegram_chat_id, threshold)
+            elif strategy_type == "Safe Grid":
+                grid_levels = strategy_config.get('grid_levels', 5)
+                bot = bot_class(symbol, leverage, percent, tp, sl, self.ws_manager,
+                              self.api_key, self.api_secret, self.telegram_bot_token,
+                              self.telegram_chat_id, grid_levels)
+            else:
+                bot = bot_class(symbol, leverage, percent, tp, sl, self.ws_manager,
+                              self.api_key, self.api_secret, self.telegram_bot_token,
+                              self.telegram_chat_id)
+            
+            bot_id = f"{symbol}_{strategy_type}"
+            self.bots[bot_id] = bot
             self.excluded_symbols.add(symbol)
+            
+            # GỬI XÁC NHẬN TELEGRAM - BOT ĐÃ SẴN SÀNG
+            config_key = strategy_config.get('strategy_key', 'default')
+            current_count = self.coin_manager.count_bots_by_config(config_key)
+            
+            success_msg = (
+                f"✅ <b>BOT #{current_count} ĐÃ SẴN SÀNG</b>\n\n"
+                f"🏷️ Symbol: {symbol}\n"
+                f"🎯 Chiến lược: {strategy_type}\n"
+                f"💰 Đòn bẩy: {leverage}x\n"
+                f"📊 Vốn: {percent}%\n"
+                f"🎯 TP: {tp}%\n"
+                f"🛡️ SL: {sl}%\n\n"
+                f"⏳ Đang tìm coin tiếp theo..."
+            )
+            
+            # Gửi tin nhắn xác nhận
+            send_telegram(success_msg, 
+                         bot_token=self.telegram_bot_token, 
+                         default_chat_id=self.telegram_chat_id)
+            
+            self.log(f"✅ Đã thêm bot mới: {symbol} - {strategy_type}")
+            return True
+            
+        except Exception as e:
+            error_msg = f"❌ Lỗi khi thêm bot {symbol}: {str(e)}"
+            self.log(error_msg)
+            self.excluded_symbols.add(symbol)
+            return False
     
     def _display_status(self):
         """Hiển thị trạng thái hiện tại"""
@@ -2564,7 +2598,7 @@ class BotManager:
                     self.user_states.pop(chat_id, None)
                     self.send_main_menu(chat_id)
                 return
-
+    
             elif current_step == 'waiting_strategy':
                 strategy_map = {
                     '🤖 RSI/EMA Recursive': 'RSI/EMA Recursive',
@@ -2589,7 +2623,7 @@ class BotManager:
                     self.user_states.pop(chat_id, None)
                     self.send_main_menu(chat_id)
                 return
-
+    
             elif current_step == 'waiting_leverage':
                 if text.endswith('x') and text[:-1].isdigit():
                     user_state['leverage'] = int(text[:-1])
@@ -2604,7 +2638,7 @@ class BotManager:
                     self.user_states.pop(chat_id, None)
                     self.send_main_menu(chat_id)
                 return
-
+    
             elif current_step == 'waiting_percent':
                 if text.isdigit():
                     user_state['percent'] = int(text)
@@ -2619,7 +2653,7 @@ class BotManager:
                     self.user_states.pop(chat_id, None)
                     self.send_main_menu(chat_id)
                 return
-
+    
             elif current_step == 'waiting_tp':
                 if text.isdigit():
                     user_state['tp'] = int(text)
@@ -2634,7 +2668,7 @@ class BotManager:
                     self.user_states.pop(chat_id, None)
                     self.send_main_menu(chat_id)
                 return
-
+    
             elif current_step == 'waiting_sl':
                 if text.isdigit():
                     user_state['sl'] = int(text)
@@ -2648,7 +2682,7 @@ class BotManager:
                     bot_mode = user_state.get('bot_mode', 'static')
                     
                     success = False
-                    if bot_mode == 'static' and strategy in ['RSI/EMA Recursive', 'EMA Crossover']:
+                    if bot_mode == 'static' and strategy in ['RSI/EMA Recursive', 'EMA Crossover', 'Reverse 24h']:
                         user_state['step'] = 'waiting_symbol'
                         send_telegram(
                             f"✅ Cấu hình hoàn tất!\n\nChiến lược: {strategy}\nĐòn bẩy: {lev}x\n% số dư: {percent}%\nTP: {tp}% | SL: {sl}%\n\nChọn coin:",
@@ -2658,9 +2692,9 @@ class BotManager:
                         )
                         return
                     else:
-                        # BOT ĐỘNG - SỬ DỤNG CƠ CHẾ MỚI
+                        # BOT ĐỘNG - TỰ ĐỘNG TÌM COIN
                         success = self.add_bot(
-                            symbol=None,  # Bot động tự tìm coin
+                            symbol=None,
                             lev=lev,
                             percent=percent,
                             tp=tp,
@@ -2699,7 +2733,7 @@ class BotManager:
                     self.user_states.pop(chat_id, None)
                     self.send_main_menu(chat_id)
                 return
-
+    
             elif current_step == 'waiting_symbol':
                 if text != '❌ Hủy bỏ':
                     # TẠO BOT TĨNH VỚI COIN CỤ THỂ
@@ -2741,7 +2775,7 @@ class BotManager:
                 
                 self.user_states.pop(chat_id, None)
                 return
-
+    
         # XỬ LÝ CÁC LỆNH CHÍNH
         if text == "➕ Thêm Bot":
             self.user_states[chat_id] = {'step': 'waiting_bot_mode'}
@@ -2751,15 +2785,21 @@ class BotManager:
                             bot_token=self.telegram_bot_token, default_chat_id=self.telegram_chat_id)
                 return
             
-            send_telegram(
-                f"🎯 <b>CHỌN CHẾ ĐỘ BOT</b>\n\n"
-                f"💰 Số dư hiện có: <b>{balance:.2f} USDT</b>\n\n"
-                f"🤖 <b>Bot Tĩnh:</b>\n• Giao dịch coin CỐ ĐỊNH\n• Bạn chọn coin cụ thể\n\n"
-                f"🔄 <b>Bot Động:</b>\n• TỰ ĐỘNG tìm coin tốt nhất\n• Tự tìm coin mới sau khi đóng lệnh",
-                chat_id,
-                create_bot_mode_keyboard(),
-                self.telegram_bot_token, self.telegram_chat_id
+            # Thêm thông tin về bot hiện tại
+            current_bot_count = len(self.bots)
+            ready_count = len([b for b in self.bots.values() 
+                              if b.check_status() == "waiting" and not b.position_open])
+            
+            info_msg = (
+                f"🎯 <b>THÊM BOT MỚI</b>\n\n"
+                f"🤖 Hiện có: {current_bot_count}/{self.max_bots} bot\n"
+                f"🟢 Sẵn sàng: {ready_count} bot\n"
+                f"💰 Số dư: <b>{balance:.2f} USDT</b>\n\n"
+                f"Chọn chế độ bot:"
             )
+            
+            send_telegram(info_msg, chat_id, create_bot_mode_keyboard(),
+                         bot_token=self.telegram_bot_token, default_chat_id=self.telegram_chat_id)
         
         elif text == "📊 Danh sách Bot":
             if not self.bots:
@@ -2767,19 +2807,90 @@ class BotManager:
                             bot_token=self.telegram_bot_token, default_chat_id=self.telegram_chat_id)
             else:
                 message = "🤖 <b>DANH SÁCH BOT ĐANG CHẠY</b>\n\n"
-                dynamic_bots = 0
-                for bot_id, bot in self.bots.items():
-                    status = "🟢 Mở" if bot.status == "open" else "🟡 Chờ"
-                    mode = "Tĩnh"
-                    if hasattr(bot, 'config_key') and bot.config_key:
-                        mode = "Động"
-                        dynamic_bots += 1
-                    
-                    message += f"🔹 {bot_id} | {status} | {mode} | ĐB: {bot.lev}x\n"
                 
-                message += f"\n📊 Tổng số: {len(self.bots)}/{self.max_bots} bot | 🔄 Động: {dynamic_bots}"
+                # Phân loại bot theo trạng thái
+                waiting_bots = []
+                active_bots = []
+                other_bots = []
+                
+                for bot_id, bot in self.bots.items():
+                    status = bot.check_status()
+                    if status == "waiting" and not bot.position_open:
+                        waiting_bots.append((bot_id, bot))
+                    elif status == "active" and bot.position_open:
+                        active_bots.append((bot_id, bot))
+                    else:
+                        other_bots.append((bot_id, bot))
+                
+                # Hiển thị bot đang chờ (sẵn sàng)
+                if waiting_bots:
+                    message += "🟢 <b>BOT SẴN SÀNG VÀO LỆNH</b>\n"
+                    for bot_id, bot in waiting_bots:
+                        message += f"✅ {bot_id}\n"
+                    message += "\n"
+                
+                # Hiển thị bot đang active
+                if active_bots:
+                    message += "🟡 <b>BOT ĐANG CÓ VỊ THẾ</b>\n"
+                    for bot_id, bot in active_bots:
+                        pnl = "N/A"
+                        if bot.entry > 0:
+                            current_price = get_current_price(bot.symbol)
+                            if bot.side == "BUY":
+                                pnl = f"{((current_price - bot.entry) / bot.entry * 100):.2f}%"
+                            else:
+                                pnl = f"{((bot.entry - current_price) / bot.entry * 100):.2f}%"
+                        message += f"📈 {bot_id} | PnL: {pnl}\n"
+                    message += "\n"
+                
+                # Hiển thị bot khác
+                if other_bots:
+                    message += "⚪ <b>BOT KHÁC</b>\n"
+                    for bot_id, bot in other_bots:
+                        status = bot.check_status()
+                        message += f"🔹 {bot_id} | {status}\n"
+                
+                # Thống kê
+                total_bots = len(self.bots)
+                ready_count = len(waiting_bots)
+                active_count = len(active_bots)
+                
+                message += f"\n📊 <b>TỔNG SỐ: {total_bots}/{self.max_bots}</b>\n"
+                message += f"🟢 Sẵn sàng: {ready_count} | 🟡 Active: {active_count}"
+                
                 send_telegram(message, chat_id,
                             bot_token=self.telegram_bot_token, default_chat_id=self.telegram_chat_id)
+        
+        elif text == "🚀 Bot Sẵn Sàng":
+            """LỆNH MỚI: Chỉ hiển thị bot đã sẵn sàng vào lệnh"""
+            ready_bots = []
+            for bot_id, bot in self.bots.items():
+                status = bot.check_status()
+                if status == "waiting" and not bot.position_open:
+                    ready_bots.append(bot_id)
+            
+            if ready_bots:
+                message = "🚀 <b>BOT ĐÃ SẴN SÀNG VÀO LỆNH</b>\n\n"
+                for i, bot_id in enumerate(ready_bots, 1):
+                    message += f"#{i} ✅ {bot_id}\n"
+                
+                message += f"\n🎯 Tổng: {len(ready_bots)} bot sẵn sàng"
+                
+                # Thêm nút hành động
+                keyboard = {
+                    "keyboard": [
+                        [{"text": "➕ Thêm Bot Mới"}, {"text": "📊 Danh sách Bot"}],
+                        [{"text": "💰 Số dư"}, {"text": "📈 Vị thế"}]
+                    ],
+                    "resize_keyboard": True,
+                    "one_time_keyboard": False
+                }
+                
+                send_telegram(message, chat_id, keyboard,
+                             bot_token=self.telegram_bot_token, default_chat_id=self.telegram_chat_id)
+            else:
+                send_telegram("⏳ Chưa có bot nào sẵn sàng vào lệnh", chat_id,
+                             bot_token=self.telegram_bot_token, default_chat_id=self.telegram_chat_id)
         
         elif text == "⛔ Dừng Bot":
             if not self.bots:
@@ -2907,10 +3018,14 @@ class BotManager:
             dynamic_bots_count = sum(1 for bot in self.bots.values() 
                                    if hasattr(bot, 'config_key') and bot.config_key)
             
+            ready_count = len([b for b in self.bots.values() 
+                              if b.check_status() == "waiting" and not b.position_open])
+            
             config_info = (
                 "⚙️ <b>CẤU HÌNH HỆ THỐNG NÂNG CAO</b>\n\n"
                 f"🔑 Binance API: {api_status}\n"
                 f"🤖 Tổng số bot: {len(self.bots)}/{self.max_bots}\n"
+                f"🟢 Bot sẵn sàng: {ready_count}\n"
                 f"🔄 Bot động: {dynamic_bots_count}\n"
                 f"📊 Chiến lược: {len(set(bot.strategy_name for bot in self.bots.values()))}\n"
                 f"🔄 Auto scan: {len(self.auto_strategies)} cấu hình\n"
@@ -2921,7 +3036,7 @@ class BotManager:
             send_telegram(config_info, chat_id,
                         bot_token=self.telegram_bot_token, default_chat_id=self.telegram_chat_id)
         
-        elif text:
+        else:
             self.send_main_menu(chat_id)
 
 # ========== KHỞI TẠO GLOBAL INSTANCES ==========
