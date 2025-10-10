@@ -2197,25 +2197,28 @@ class BotManager:
             self.log(f"   - {bot_id}: {status}")
 
     def scan_and_allocate_bots(self, strategy_name, allocation_rules):
-        """
-        Duyệt bot theo yêu cầu chiến lược và phân bổ vào list
-        
-        Args:
-            strategy_name: Tên chiến lược
-            allocation_rules: Quy tắc phân bổ
-        """
         try:
             # Lấy config chiến lược
             strategy_config = self._get_strategy_config(strategy_name, allocation_rules)
+            strategy_key = strategy_config.get('strategy_key', f"{strategy_name}_default")
+            
+            # Kiểm tra số bot hiện tại CHO CHIẾN LƯỢC NÀY
+            current_bots_for_strategy = self.coin_manager.count_bots_by_config(strategy_key)
+            
+            # Nếu đã đủ 2 bot cho chiến lược này thì dừng
+            if current_bots_for_strategy >= 2:
+                self.log(f"✅ Đã đủ 2 bot cho chiến lược {strategy_name} - Không tìm thêm")
+                return
             
             # Duyệt theo khối lượng giảm dần từ Binance
             high_volume_symbols = get_all_usdt_pairs(limit=500)
             
             allocated_count = 0
+            max_bots_to_add = 2 - current_bots_for_strategy  # Số bot còn có thể thêm
             
             for symbol in high_volume_symbols:
-                # Kiểm tra nếu đã đủ số lượng bot
-                if len(self.bots) >= self.max_bots:
+                # Kiểm tra nếu đã đủ số lượng bot CHO CHIẾN LƯỢC NÀY
+                if allocated_count >= max_bots_to_add:
                     break
                     
                 # Kiểm tra symbol không trùng lặp
@@ -2225,13 +2228,14 @@ class BotManager:
                 # Kiểm tra điều kiện chiến lược
                 if self._meets_strategy_requirements(symbol, strategy_config, allocation_rules):
                     # Thêm bot mới
-                    self._add_new_bot(symbol, strategy_config)
-                    allocated_count += 1
-                    
-                    # Chờ bot này đặt lệnh trước khi tiếp tục
-                    time.sleep(2)  # Delay ngắn để tránh rate limit
-                    
-            self.log(f"✅ Đã phân bổ {allocated_count} bot theo chiến lược {strategy_name}")
+                    success = self._add_new_bot(symbol, strategy_config)
+                    if success:
+                        allocated_count += 1
+                        
+                        # Chờ bot này đặt lệnh trước khi tiếp tục
+                        time.sleep(2)  # Delay ngắn để tránh rate limit
+            
+            self.log(f"🎯 Chiến lược {strategy_name}: Đã phân bổ {allocated_count} bot mới (Tổng: {current_bots_for_strategy + allocated_count}/2)")
             
         except Exception as e:
             self.log(f"Lỗi khi scan và allocate bots: {e}")
