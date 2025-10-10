@@ -2112,7 +2112,7 @@ class BotManager:
     
     def _add_new_bot(self, symbol, strategy_config):
         """
-        Thêm bot mới vào hệ thống - VỚI XÁC NHẬN TELEGRAM
+        Thêm bot mới vào hệ thống - KHÔNG CHỜ ĐỢI
         """
         try:
             # Kiểm tra symbol không trùng
@@ -2157,29 +2157,27 @@ class BotManager:
             self.bots[bot_id] = bot
             self.excluded_symbols.add(symbol)
             
-            # GỬI XÁC NHẬN TELEGRAM - BOT ĐÃ SẴN SÀNG
+            # GỬI THÔNG BÁO NHANH - KHÔNG CHỜ
             config_key = strategy_config.get('strategy_key', 'default')
-            
-            # SỬA: Sử dụng self.coin_manager thay vì self.coin_manager
             current_count = self.coin_manager.count_bots_by_config(config_key)
             
             success_msg = (
-                f"✅ <b>BOT #{current_count} ĐÃ SẴN SÀNG</b>\n\n"
+                f"✅ <b>BOT #{current_count} ĐÃ ĐƯỢC TẠO</b>\n\n"
                 f"🏷️ Symbol: {symbol}\n"
                 f"🎯 Chiến lược: {strategy_type}\n"
                 f"💰 Đòn bẩy: {leverage}x\n"
                 f"📊 Vốn: {percent}%\n"
                 f"🎯 TP: {tp}%\n"
                 f"🛡️ SL: {sl}%\n\n"
-                f"⏳ Đang tìm coin tiếp theo..."
+                f"🤖 Bot sẽ tự động tìm tín hiệu..."
             )
             
-            # Gửi tin nhắn xác nhận
+            # Gửi tin nhắn xác nhận NGAY LẬP TỨC
             send_telegram(success_msg, 
                          bot_token=self.telegram_bot_token, 
                          default_chat_id=self.telegram_chat_id)
             
-            self.log(f"✅ Đã thêm bot mới: {symbol} - {strategy_type}")
+            self.log(f"✅ Đã thêm bot: {symbol} - {strategy_type}")
             return True
             
         except Exception as e:
@@ -2227,15 +2225,10 @@ class BotManager:
                 
                 # Kiểm tra điều kiện chiến lược
                 if self._meets_strategy_requirements(symbol, strategy_config, allocation_rules):
-                    # Thêm bot mới
+                    # Thêm bot mới - KHÔNG CHỜ ĐỢI
                     success = self._add_new_bot(symbol, strategy_config)
                     if success:
                         allocated_count += 1
-                        
-                        # Chờ bot này đặt lệnh trước khi tiếp tục
-                        time.sleep(2)  # Delay ngắn để tránh rate limit
-            
-            self.log(f"🎯 Chiến lược {strategy_name}: Đã phân bổ {allocated_count} bot mới (Tổng: {current_bots_for_strategy + allocated_count}/2)")
             
         except Exception as e:
             self.log(f"Lỗi khi scan và allocate bots: {e}")
