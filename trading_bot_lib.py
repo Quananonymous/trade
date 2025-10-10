@@ -1971,7 +1971,7 @@ class SmartDynamicBot(BaseBot):
 
 # ========== BOT MANAGER HOÀN CHỈNH VỚI CƠ CHẾ TÌM BOT THÔNG MINH ==========
 class BotManager:
-    def __init__(self, api_key=None, api_secret=None, telegram_bot_token=None, telegram_chat_id=None, max_bots=5):
+    def __init__(self, api_key=None, api_secret=None, telegram_bot_token=None, telegram_chat_id=None, max_bots=10):
         self.ws_manager = WebSocketManager()
         self.bots = {}
         self.running = True
@@ -2024,22 +2024,49 @@ class BotManager:
             # Bước 1: Kiểm tra và xử lý các bot đang active
             self._process_active_bots()
             
-            # Bước 2: Nếu chưa đủ 2 bot cho config này, tìm bot mới NGAY
+            # Bước 2: Kiểm tra số lượng bot hiện tại cho config này
             strategy_key = strategy_config.get('strategy_key')
-            
-            # SỬA: Sử dụng self.coin_manager
             current_count = self.coin_manager.count_bots_by_config(strategy_key)
             
-            if current_count < 2:  # CHỈ CẦN KIỂM TRA SỐ LƯỢNG, KHÔNG ĐỢI ACTIVE
+            if current_count < 2:  # CHƯA ĐỦ 2 BOT - TÌM BOT MỚI
                 new_symbol = self._find_new_symbol(strategy_config)
                 if new_symbol:
                     self._add_new_bot(new_symbol, strategy_config)
+                    self.log(f"✅ Đã thêm bot mới: {new_symbol} | Số lượng: {current_count + 1}/2")
+            else:
+                self._check_bot_quality(strategy_key)
             
             # Bước 3: Hiển thị trạng thái
             self._display_status()
             
         except Exception as e:
             self.log(f"Lỗi khi cập nhật bot list: {e}")
+    
+    def _check_bot_quality(self, strategy_key):
+        """
+        Kiểm tra chất lượng các bot hiện tại và thay thế nếu cần
+        """
+        try:
+            bots_to_check = []
+            
+            # Tìm tất cả bot thuộc config này
+            for bot_id, bot in self.bots.items():
+                if hasattr(bot, 'config_key') and bot.config_key == strategy_key:
+                    bots_to_check.append((bot_id, bot))
+            
+            # Kiểm tra từng bot
+            for bot_id, bot in bots_to_check:
+                # Kiểm tra nếu bot không có tín hiệu trong thời gian dài
+                current_time = time.time()
+                time_since_last_signal = current_time - getattr(bot, 'last_signal_time', 0)
+                
+                # Nếu bot không có tín hiệu trong 1 giờ, có thể thay thế
+                if time_since_last_signal > 3600:  # 1 giờ
+                    self.log(f"🔄 Bot {bot.symbol} không có tín hiệu trong 1h - Cân nhắc thay thế")
+                    # Có thể thêm logic để tìm coin tốt hơn và thay thế
+                    
+        except Exception as e:
+            self.log(f"Lỗi kiểm tra chất lượng bot: {e}")
     
     def _process_active_bots(self):
         """Xử lý các bot đang active"""
