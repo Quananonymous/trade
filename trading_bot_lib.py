@@ -1256,15 +1256,15 @@ class BotManager:
             if not detailed_balance:
                 send_telegram("❌ Lỗi kết nối Binance", chat_id,
                             bot_token=self.telegram_bot_token, default_chat_id=self.telegram_chat_id)
-    else:
-        message = (
-            f"💰 <b>CHI TIẾT SỐ DƯ</b>\n\n"
-            f"🟢 <b>Khả dụng:</b> {detailed_balance['available']:.2f} USDT\n"
-            f"📊 <b>Tổng số dư:</b> {detailed_balance['total']:.2f} USDT\n"
-            f"📈 <b>Lợi nhuận chưa thực hiện:</b> {detailed_balance['unrealized_pnl']:.2f} USDT"
-        )
-        send_telegram(message, chat_id,
-                    bot_token=self.telegram_bot_token, default_chat_id=self.telegram_chat_id)
+            else:
+                message = (
+                    f"💰 <b>CHI TIẾT SỐ DƯ</b>\n\n"
+                    f"🟢 <b>Khả dụng:</b> {detailed_balance['available']:.2f} USDT\n"
+                    f"📊 <b>Tổng số dư:</b> {detailed_balance['total']:.2f} USDT\n"
+                    f"📈 <b>Lợi nhuận chưa thực hiện:</b> {detailed_balance['unrealized_pnl']:.2f} USDT"
+                )
+                send_telegram(message, chat_id,
+                            bot_token=self.telegram_bot_token, default_chat_id=self.telegram_chat_id)
         
         elif text == "📈 Vị thế":
             positions = get_positions(self.api_key, self.api_secret)
