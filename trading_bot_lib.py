@@ -240,12 +240,18 @@ def create_bot_count_keyboard():
 class AIMarketAnalyzer:
     """AI PHÂN TÍCH THỊ TRƯỜNG & ĐỀ XUẤT HƯỚNG GIAO DỊCH"""
     
+    # Trong hàm __init__ của AIMarketAnalyzer, thêm:
     def __init__(self):
         self.model = None
         self.scaler = StandardScaler()
         self.model_path = "ai_market_model.pkl"
         self.scaler_path = "ai_scaler.pkl"
         self.load_model()
+        
+        # Nếu model chưa được train, khởi tạo với dữ liệu mẫu
+        if not hasattr(self.model, 'classes_') or not hasattr(self.scaler, 'mean_'):
+            logger.info("🔄 Khởi tạo AI với dữ liệu mẫu...")
+            self.initialize_ai_with_sample_data()
         
     def load_model(self):
         """Tải mô hình AI đã train"""
@@ -332,29 +338,96 @@ class AIMarketAnalyzer:
             logger.error(f"❌ Lỗi trích xuất đặc trưng: {str(e)}")
             return None
     
-    def predict_direction(self, symbol_data, market_data):
-        """Dự đoán hướng giao dịch cho symbol"""
-        try:
-            features = self.extract_features(symbol_data, market_data)
-            if features is None:
-                return "NEUTRAL"
-            
+    # trading_bot_lib.py - SỬA LỖI AI SCALER
+
+# Trong class AIMarketAnalyzer, sửa hàm predict_direction:
+
+def predict_direction(self, symbol_data, market_data):
+    """Dự đoán hướng giao dịch cho symbol - ĐÃ SỬA LỖI SCALER"""
+    try:
+        features = self.extract_features(symbol_data, market_data)
+        if features is None:
+            return "NEUTRAL"
+        
+        # KIỂM TRA SCALER ĐÃ ĐƯỢC FIT CHƯA
+        if not hasattr(self.scaler, 'mean_'):
+            # Nếu chưa fit, sử dụng features gốc không scaled
+            logger.warning("⚠️ Scaler chưa được fit, sử dụng features gốc")
+            features_scaled = [features]
+        else:
             # Chuẩn hóa features
             features_scaled = self.scaler.transform([features])
-            
-            # Dự đoán
-            prediction = self.model.predict(features_scaled)[0]
-            confidence = np.max(self.model.predict_proba(features_scaled))
-            
-            directions = {0: "SELL", 1: "NEUTRAL", 2: "BUY"}
-            direction = directions.get(prediction, "NEUTRAL")
-            
-            logger.info(f"🤖 AI dự đoán {direction} (độ tin cậy: {confidence:.2f})")
-            return direction if confidence > 0.6 else "NEUTRAL"
-            
-        except Exception as e:
-            logger.error(f"❌ Lỗi dự đoán AI: {str(e)}")
+        
+        # Kiểm tra model đã được train chưa
+        if not hasattr(self.model, 'classes_'):
+            logger.warning("⚠️ Model chưa được train, trả về NEUTRAL")
             return "NEUTRAL"
+        
+        # Dự đoán
+        prediction = self.model.predict(features_scaled)[0]
+        confidence = np.max(self.model.predict_proba(features_scaled))
+        
+        directions = {0: "SELL", 1: "NEUTRAL", 2: "BUY"}
+        direction = directions.get(prediction, "NEUTRAL")
+        
+        logger.info(f"🤖 AI dự đoán {direction} (độ tin cậy: {confidence:.2f})")
+        return direction if confidence > 0.6 else "NEUTRAL"
+        
+    except Exception as e:
+        logger.error(f"❌ Lỗi dự đoán AI: {str(e)}")
+        return "NEUTRAL"
+
+# Thêm hàm để train scaler với dữ liệu mẫu
+def initialize_ai_with_sample_data(self):
+    """Khởi tạo AI với dữ liệu mẫu để tránh lỗi scaler"""
+    try:
+        # Tạo dữ liệu mẫu ngẫu nhiên để fit scaler
+        import numpy as np
+        sample_features = []
+        for _ in range(100):
+            sample_feature = [
+                np.random.uniform(20, 80),  # RSI
+                np.random.uniform(100, 50000),  # EMA9
+                np.random.uniform(100, 50000),  # EMA21
+                np.random.uniform(100, 50000),  # EMA50
+                np.random.uniform(-10, 10),  # MACD
+                np.random.uniform(-10, 10),  # Signal
+                np.random.uniform(0.5, 3.0),  # Volume ratio
+                np.random.uniform(-5, 5),  # Price change 1h
+                np.random.uniform(-10, 10),  # Price change 4h
+                np.random.uniform(-20, 20),  # Price change 24h
+                np.random.uniform(1, 15),  # Volatility
+                np.random.uniform(40, 60),  # BTC dominance
+                np.random.uniform(20, 80)  # Fear greed
+            ]
+            sample_features.append(sample_feature)
+        
+        # Fit scaler với dữ liệu mẫu
+        self.scaler.fit(sample_features)
+        logger.info("✅ Đã khởi tạo scaler với dữ liệu mẫu")
+        
+        # Tạo model với dữ liệu mẫu cơ bản
+        sample_X = sample_features
+        sample_y = [1] * 100  # Tất cả NEUTRAL
+        
+        self.model.fit(sample_X, sample_y)
+        logger.info("✅ Đã khởi tạo model với dữ liệu mẫu")
+        
+    except Exception as e:
+        logger.error(f"❌ Lỗi khởi tạo AI với dữ liệu mẫu: {str(e)}")
+
+# Trong hàm __init__ của AIMarketAnalyzer, thêm:
+def __init__(self):
+    self.model = None
+    self.scaler = StandardScaler()
+    self.model_path = "ai_market_model.pkl"
+    self.scaler_path = "ai_scaler.pkl"
+    self.load_model()
+    
+    # Nếu model chưa được train, khởi tạo với dữ liệu mẫu
+    if not hasattr(self.model, 'classes_') or not hasattr(self.scaler, 'mean_'):
+        logger.info("🔄 Khởi tạo AI với dữ liệu mẫu...")
+        self.initialize_ai_with_sample_data()
     
     def calc_rsi(self, prices, period=14):
         """Tính RSI"""
