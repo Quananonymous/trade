@@ -20,7 +20,7 @@ logging.basicConfig(
     format='%(asctime)s - %(levelname)s - %(module)s - %(message)s',
     handlers=[
         logging.StreamHandler(),
-        logging.FileHandler('bot_complete.log')
+        logging.FileHandler('bot_fixed.log')
     ]
 )
 logger = logging.getLogger()
