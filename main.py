@@ -40,7 +40,7 @@ DEFAULT_BOT_CONFIGS = []
 def test_binance_connection(api_key: str, api_secret: str) -> bool:
     """Kiểm tra kết nối Binance"""
     try:
-        from trading_bot_lib_optimized import get_balance_fast
+        from trading_bot_lib import get_balance_fast
         balance = get_balance_fast(api_key, api_secret)
         if balance > 0:
             logger.info(f"✅ Kết nối Binance thành công! Số dư: {balance:.2f} USDT")
@@ -179,4 +179,5 @@ def main():
 
 if __name__ == "__main__":
     main()
+
 
