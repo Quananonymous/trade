@@ -537,7 +537,7 @@ def get_qualified_symbol(strategy_config, excluded_symbols=None):
 
 def check_strategy_conditions(symbol, strategy_config):
     """
-    Kiểm tra điều kiện chiến lược cho symbol
+    Kiểm tra điều kiện chiến lược cho symbol - VỚI XỬ LÝ LỖI TOÀN DIỆN
     """
     try:
         # Lấy thông tin klines và ticker
@@ -548,44 +548,63 @@ def check_strategy_conditions(symbol, strategy_config):
             return False
             
         closes = klines[3]
-        price_change = ticker_info['price_change_percent']
-        volume = ticker_info['volume']
+        price_change = ticker_info.get('price_change_percent')
+        volume = ticker_info.get('volume')
         
+        # KIỂM TRA GIÁ TRỊ None HOẶC KHÔNG HỢP LỆ
+        if (price_change is None or volume is None or 
+            not isinstance(price_change, (int, float)) or 
+            not isinstance(volume, (int, float))):
+            return False
+            
         # Điều kiện cơ bản
-        if volume < 1000000:  # Volume tối thiểu 1M USDT
+        if volume < 1000000:
             return False
             
         # Kiểm tra theo chiến lược
         strategy_type = strategy_config.get('strategy_type', 'Smart Dynamic')
         
         if strategy_type == "Reverse 24h":
-            threshold = strategy_config.get('threshold', 25)
+            threshold = strategy_config.get('threshold', 25) or 25
             return abs(price_change) >= threshold
             
         elif strategy_type == "Scalping":
-            volatility_std = np.std(closes[-20:]) / np.mean(closes[-20:]) * 100
-            volatility_threshold = strategy_config.get('volatility', 3)
-            return (2 <= abs(price_change) <= 15 and 
-                    volatility_std >= volatility_threshold)
+            try:
+                volatility_std = np.std(closes[-20:]) / np.mean(closes[-20:]) * 100
+                volatility_threshold = strategy_config.get('volatility', 3) or 3
+                return (2 <= abs(price_change) <= 15 and 
+                        volatility_std >= volatility_threshold)
+            except:
+                return False
                     
         elif strategy_type == "Trend Following":
             if len(closes) >= 50:
-                short_trend = (closes[-1] - closes[-10]) / closes[-10] * 100
-                medium_trend = (closes[-1] - closes[-25]) / closes[-25] * 100
-                trend_strength = (abs(short_trend) + abs(medium_trend)) / 2
-                return trend_strength >= 3
+                try:
+                    short_trend = (closes[-1] - closes[-10]) / closes[-10] * 100
+                    medium_trend = (closes[-1] - closes[-25]) / closes[-25] * 100
+                    trend_strength = (abs(short_trend) + abs(medium_trend)) / 2
+                    return trend_strength >= 3
+                except:
+                    return False
+            return False
                 
         elif strategy_type == "Smart Dynamic":
-            rsi = calc_rsi(closes, 14)
-            volatility_std = np.std(closes[-20:]) / np.mean(closes[-20:]) * 100
-            return (1 <= abs(price_change) <= 12 and
-                    volatility_std >= 2 and
-                    rsi and 20 <= rsi <= 80)
+            try:
+                rsi = calc_rsi(closes, 14)
+                volatility_std = np.std(closes[-20:]) / np.mean(closes[-20:]) * 100
+                if rsi is None or volatility_std is None:
+                    return False
+                return (1 <= abs(price_change) <= 12 and
+                        volatility_std >= 2 and
+                        20 <= rsi <= 80)
+            except:
+                return False
         
-        return True
+        return False  # Mặc định trả về False nếu không khớp chiến lược nào
         
     except Exception as e:
-        logger.error(f"Lỗi kiểm tra điều kiện {symbol}: {e}")
+        # LOG NHẸ NHÀNG HƠN - CHỈ LOG LẦN ĐẦU
+        logger.debug(f"Lỗi kiểm tra điều kiện {symbol}: {str(e)}")
         return False
 
 def get_qualified_symbols(api_key, api_secret, strategy_type, leverage, threshold=None, volatility=None, grid_levels=None, max_candidates=50, final_limit=2, strategy_key=None):
