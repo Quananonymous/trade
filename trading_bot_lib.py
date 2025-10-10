@@ -1145,7 +1145,6 @@ class BaseBot:
         self.status = "waiting"
         self.side = ""
         self.qty = 0
-        self.entry = 0
         self.prices = deque(maxlen=200)  # Dùng deque để giới hạn bộ nhớ
         self.highs = deque(maxlen=200)
         self.lows = deque(maxlen=200)
@@ -1159,6 +1158,8 @@ class BaseBot:
         self._last_find_attempt = 0
         self.last_position_check = 0
         self.last_error_log_time = 0
+        self.entry_price = 0  # THÊM DÒNG NÀY
+        self.entry = 0  # Attribute hiện có
         
         self.cooldown_period = 300
         self.position_check_interval = 30
