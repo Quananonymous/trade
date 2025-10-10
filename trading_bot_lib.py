@@ -1,4 +1,4 @@
-# trading_bot_lib.py - AI TRADING BOT ĐỈNH CAO THẾ GIỚI
+# trading_bot_lib.py - AI TRADING BOT
 import json
 import hmac
 import hashlib
@@ -32,12 +32,12 @@ logger = setup_logging()
 # ========== HÀM TELEGRAM ==========
 def send_telegram(message, chat_id=None, reply_markup=None, bot_token=None, default_chat_id=None):
     if not bot_token:
-        logger.warning("Telegram Bot Token chưa được thiết lập")
+        logger.warning("Telegram Bot Token chua duoc thiet lap")
         return
     
     chat_id = chat_id or default_chat_id
     if not chat_id:
-        logger.warning("Telegram Chat ID chưa được thiết lập")
+        logger.warning("Telegram Chat ID chua duoc thiet lap")
         return
     
     url = f"https://api.telegram.org/bot{bot_token}/sendMessage"
@@ -53,15 +53,15 @@ def send_telegram(message, chat_id=None, reply_markup=None, bot_token=None, defa
     try:
         response = requests.post(url, json=payload, timeout=15)
         if response.status_code != 200:
-            logger.error(f"Lỗi Telegram ({response.status_code}): {response.text}")
+            logger.error(f"Loi Telegram ({response.status_code}): {response.text}")
     except Exception as e:
-        logger.error(f"Lỗi kết nối Telegram: {str(e)}")
+        logger.error(f"Loi ket noi Telegram: {str(e)}")
 
 # ========== MENU TELEGRAM ==========
 def create_main_menu():
     return {
         "keyboard": [
-            [{"text": "Danh sách Bot"}],
+            [{"text": "Danh sach Bot"}],
             [{"text": "Them Bot"}, {"text": "Dung Bot"}],
             [{"text": "So du"}, {"text": "Vi the"}],
             [{"text": "Cau hinh"}, {"text": "Chien luoc AI"}]
@@ -83,8 +83,6 @@ def create_strategy_keyboard():
 
 # ========== AI TRADING ENGINE ==========
 class AITradingEngine:
-    """CORE AI ENGINE - Kết hợp 5 AI hàng đầu thế giới"""
-    
     def __init__(self):
         self.models = {
             'deepmind': self._deepmind_alphatrade,
@@ -94,7 +92,6 @@ class AITradingEngine:
             'stanford': self._stanford_rl_trader
         }
         
-        # Adaptive weights based on market conditions
         self.model_weights = {
             'deepmind': 0.25,
             'openai': 0.20,
@@ -107,29 +104,24 @@ class AITradingEngine:
         self.volatility_regime = "MEDIUM"
         
     def analyze_market_regime(self, prices):
-        """Phân tích regime thị trường để điều chỉnh AI weights"""
         if len(prices) < 50:
             return
             
         returns = np.diff(prices) / prices[:-1]
         volatility = np.std(returns) * 100
         
-        # Xác định regime
         if volatility > 8.0:
             self.volatility_regime = "HIGH"
-            # Tăng weight cho AI ổn định trong biến động cao
             self.model_weights['deepmind'] = 0.30
             self.model_weights['nvidia'] = 0.30
             self.model_weights['openai'] = 0.15
         elif volatility < 2.0:
             self.volatility_regime = "LOW" 
-            # Tăng weight cho AI tìm kiếm cơ hội trong sideway
             self.model_weights['openai'] = 0.25
             self.model_weights['mit'] = 0.20
             self.model_weights['stanford'] = 0.20
         else:
             self.volatility_regime = "MEDIUM"
-            # Reset về weights mặc định
             self.model_weights = {
                 'deepmind': 0.25,
                 'openai': 0.20,
@@ -139,59 +131,28 @@ class AITradingEngine:
             }
     
     def get_ai_signal(self, symbol, prices, volume_data=None, market_data=None):
-        """
-        Lấy tín hiệu từ hệ thống AI fusion
-        """
         try:
             if len(prices) < 100:
                 return None, 0
                 
-            # Phân tích market regime
             self.analyze_market_regime(prices)
             
-            # Thu thập tín hiệu từ tất cả AI models
             signals = []
             confidences = []
             
-            # 1. DeepMind AlphaTrade
-            deepmind_signal, deepmind_conf = self.models['deepmind'](prices, symbol)
-            if deepmind_signal:
-                signals.append(deepmind_signal)
-                confidences.append(deepmind_conf * self.model_weights['deepmind'])
-            
-            # 2. OpenAI Quant
-            openai_signal, openai_conf = self.models['openai'](prices, symbol)
-            if openai_signal:
-                signals.append(openai_signal)
-                confidences.append(openai_conf * self.model_weights['openai'])
-            
-            # 3. NVIDIA Trading AI
-            nvidia_signal, nvidia_conf = self.models['nvidia'](prices, symbol)
-            if nvidia_signal:
-                signals.append(nvidia_signal)
-                confidences.append(nvidia_conf * self.model_weights['nvidia'])
-            
-            # 4. MIT Deep Learning
-            mit_signal, mit_conf = self.models['mit'](prices, symbol)
-            if mit_signal:
-                signals.append(mit_signal)
-                confidences.append(mit_conf * self.model_weights['mit'])
-            
-            # 5. Stanford RL Trader
-            stanford_signal, stanford_conf = self.models['stanford'](prices, symbol)
-            if stanford_signal:
-                signals.append(stanford_signal)
-                confidences.append(stanford_conf * self.model_weights['stanford'])
+            for model_name, model_func in self.models.items():
+                signal, confidence = model_func(prices, symbol)
+                if signal:
+                    signals.append(signal)
+                    confidences.append(confidence * self.model_weights[model_name])
             
             if not signals:
                 return None, 0
             
-            # Tính toán tín hiệu tổng hợp
             buy_count = signals.count("BUY")
             sell_count = signals.count("SELL")
             total_confidence = sum(confidences)
             
-            # Quyết định cuối cùng
             if buy_count > sell_count and total_confidence > 0.6:
                 return "BUY", total_confidence
             elif sell_count > buy_count and total_confidence > 0.6:
@@ -200,26 +161,19 @@ class AITradingEngine:
                 return None, total_confidence
                 
         except Exception as e:
-            logger.error(f"Lỗi AI Engine: {str(e)}")
+            logger.error(f"Loi AI Engine: {str(e)}")
             return None, 0
 
     def _deepmind_alphatrade(self, prices, symbol):
-        """
-        DeepMind AlphaTrade - Mô phỏng thuật toán reinforcement learning tiên tiến
-        """
         try:
             if len(prices) < 80:
                 return None, 0
                 
-            # AlphaTrade: Multi-timeframe momentum analysis
             short_momentum = self._calculate_momentum(prices[-20:])
             medium_momentum = self._calculate_momentum(prices[-50:])
             long_momentum = self._calculate_momentum(prices[-80:])
-            
-            # Volume profile analysis (simulated)
             volume_strength = self._simulate_volume_analysis(prices)
             
-            # Deep Q-Learning inspired decision
             state_value = (
                 short_momentum * 0.4 +
                 medium_momentum * 0.35 + 
@@ -240,14 +194,10 @@ class AITradingEngine:
             return None, 0
 
     def _openai_quant(self, prices, symbol):
-        """
-        OpenAI Quant - Mô phỏng transformer-based price prediction
-        """
         try:
             if len(prices) < 60:
                 return None, 0
                 
-            # Transformer-style sequence attention
             sequences = []
             for i in range(len(prices)-30):
                 seq = prices[i:i+30]
@@ -256,7 +206,6 @@ class AITradingEngine:
             if not sequences:
                 return None, 0
                 
-            # Attention mechanism simulation
             current_seq = prices[-30:]
             attention_weights = []
             
@@ -268,12 +217,9 @@ class AITradingEngine:
             
             if attention_weights:
                 avg_attention = np.mean(attention_weights)
-                
-                # Pattern prediction
                 recent_trend = (current_seq[-1] - current_seq[0]) / current_seq[0]
                 volatility = np.std(current_seq) / np.mean(current_seq)
                 
-                # GPT-style prediction
                 prediction_score = avg_attention * 0.6 + recent_trend * 0.3 - volatility * 0.1
                 confidence = min(abs(prediction_score) * 3, 0.9)
                 
@@ -288,14 +234,10 @@ class AITradingEngine:
             return None, 0
 
     def _nvidia_trading_ai(self, prices, symbol):
-        """
-        NVIDIA Trading AI - Mô phỏng GAN và neural networks
-        """
         try:
             if len(prices) < 70:
                 return None, 0
                 
-            # GAN-inspired pattern generation and discrimination
             real_patterns = []
             for i in range(len(prices)-25):
                 pattern = prices[i:i+25]
@@ -304,13 +246,11 @@ class AITradingEngine:
             if not real_patterns:
                 return None, 0
             
-            # Discriminator: Phân biệt pattern chất lượng
             current_pattern = prices[-25:]
             pattern_quality_scores = []
             
             for pattern in real_patterns[-15:]:
                 if len(pattern) == len(current_pattern):
-                    # Tính độ "thực" của pattern
                     mean_similarity = 1 - abs(np.mean(pattern) - np.mean(current_pattern)) / np.mean(current_pattern)
                     std_similarity = 1 - abs(np.std(pattern) - np.std(current_pattern)) / np.std(current_pattern)
                     trend_similarity = 1 - abs(
@@ -322,8 +262,6 @@ class AITradingEngine:
             
             if pattern_quality_scores:
                 avg_quality = np.mean(pattern_quality_scores)
-                
-                # Neural network inference
                 current_trend = (current_pattern[-1] - current_pattern[0]) / current_pattern[0]
                 pattern_strength = avg_quality * current_trend
                 
@@ -340,29 +278,21 @@ class AITradingEngine:
             return None, 0
 
     def _mit_deep_learning(self, prices, symbol):
-        """
-        MIT Deep Learning - Temporal convolution và advanced feature extraction
-        """
         try:
             if len(prices) < 90:
                 return None, 0
                 
-            # Temporal convolution simulation
             features = []
             
-            # Multi-scale feature extraction
             for window in [10, 20, 30, 50]:
                 if len(prices) >= window:
                     window_data = prices[-window:]
                     
-                    # Feature 1: Normalized momentum
                     momentum = (window_data[-1] - window_data[0]) / window_data[0]
                     
-                    # Feature 2: Volatility adjusted return
                     returns = np.diff(window_data) / window_data[:-1]
                     vol_adj_return = np.mean(returns) / (np.std(returns) + 1e-8)
                     
-                    # Feature 3: Price acceleration
                     if len(window_data) >= 3:
                         accel = (window_data[-1] - 2*window_data[-2] + window_data[-3]) / window_data[-3]
                     else:
@@ -373,7 +303,6 @@ class AITradingEngine:
             if not features:
                 return None, 0
                 
-            # Neural network decision (simplified)
             feature_weights = np.array([0.3, 0.25, 0.2, 0.15, 0.1])[:len(features)]
             feature_weights = feature_weights / np.sum(feature_weights)
             
@@ -392,32 +321,23 @@ class AITradingEngine:
             return None, 0
 
     def _stanford_rl_trader(self, prices, symbol):
-        """
-        Stanford RL Trader - Reinforcement learning với risk-aware policy
-        """
         try:
             if len(prices) < 55:
                 return None, 0
                 
-            # Reinforcement learning state representation
             state_features = []
             
-            # Price-based features
             recent_prices = prices[-20:]
             price_trend = (recent_prices[-1] - recent_prices[0]) / recent_prices[0]
             
-            # Volatility features
             returns = np.diff(recent_prices) / recent_prices[:-1]
             volatility = np.std(returns)
             
-            # Risk-adjusted features
             sharpe_ratio = np.mean(returns) / (volatility + 1e-8) if volatility > 0 else 0
             
-            # Market regime features
             long_term_trend = (prices[-1] - prices[-55]) / prices[-55]
             regime_stability = 1 - abs(long_term_trend)
             
-            # RL Policy decision
             policy_score = (
                 price_trend * 0.4 +
                 sharpe_ratio * 0.3 +
@@ -425,7 +345,6 @@ class AITradingEngine:
                 volatility * 0.1
             )
             
-            # Risk-aware confidence
             base_confidence = min(abs(policy_score) * 2.2, 0.85)
             risk_adjusted_confidence = base_confidence * (1 - volatility * 2)
             
@@ -440,26 +359,20 @@ class AITradingEngine:
             return None, 0
 
     def _calculate_momentum(self, prices):
-        """Tính momentum cho chuỗi giá"""
         if len(prices) < 2:
             return 0
         returns = np.diff(prices) / prices[:-1]
         return np.mean(returns) * 100
 
     def _simulate_volume_analysis(self, prices):
-        """Mô phỏng phân tích volume (trong thực tế cần dữ liệu volume thực)"""
-        # Giả lập volume analysis dựa trên price movement
         if len(prices) < 10:
             return 0.5
             
         recent_volatility = np.std(prices[-10:]) / np.mean(prices[-10:])
-        # Giả định: high volatility thường đi kèm high volume
         return min(recent_volatility * 10, 1.0)
 
 # ========== AI TRADING BOT ==========
 class AITradingBot:
-    """AI TRADING BOT - Kết hợp 5 AI hàng đầu thế giới"""
-    
     def __init__(self, symbol, leverage, percent, tp, sl, api_key, api_secret, 
                  telegram_bot_token, telegram_chat_id, strategy_name="AI Fusion"):
         
@@ -474,10 +387,8 @@ class AITradingBot:
         self.telegram_chat_id = telegram_chat_id
         self.strategy_name = strategy_name
         
-        # AI Engine
         self.ai_engine = AITradingEngine()
         
-        # Trading state
         self.status = "waiting"
         self.position_open = False
         self.side = ""
@@ -485,11 +396,9 @@ class AITradingBot:
         self.quantity = 0
         self.prices = []
         
-        # Risk management
         self.max_position_size = percent
-        self.risk_per_trade = 0.02  # 2% risk per trade
+        self.risk_per_trade = 0.02
         
-        # Performance tracking
         self.trade_history = []
         self.total_pnl = 0
         
@@ -500,7 +409,6 @@ class AITradingBot:
         self.log(f"AI Trading Bot khoi dong | {self.symbol} | DB: {leverage}x | Von: {percent}%")
 
     def log(self, message):
-        """Ghi log và gửi Telegram"""
         logger.info(f"[{self.symbol} - {self.strategy_name}] {message}")
         if self.telegram_bot_token and self.telegram_chat_id:
             send_telegram(f"<b>{self.symbol}</b> ({self.strategy_name}): {message}", 
@@ -508,7 +416,6 @@ class AITradingBot:
                          default_chat_id=self.telegram_chat_id)
 
     def get_current_price(self):
-        """Lấy giá hiện tại từ Binance"""
         try:
             url = f"https://fapi.binance.com/fapi/v1/ticker/price?symbol={self.symbol}"
             response = requests.get(url, timeout=10)
@@ -520,7 +427,6 @@ class AITradingBot:
         return 0
 
     def get_balance(self):
-        """Lấy số dư tài khoản"""
         try:
             ts = int(time.time() * 1000)
             params = {"timestamp": ts}
@@ -540,7 +446,6 @@ class AITradingBot:
         return 0
 
     def place_order(self, side, quantity):
-        """Đặt lệnh giao dịch"""
         try:
             ts = int(time.time() * 1000)
             params = {
@@ -564,7 +469,6 @@ class AITradingBot:
         return None
 
     def check_position(self):
-        """Kiểm tra vị thế hiện tại"""
         try:
             ts = int(time.time() * 1000)
             params = {"timestamp": ts}
@@ -585,7 +489,6 @@ class AITradingBot:
                             self.quantity = position_amt
                             self.entry_price = float(pos.get('entryPrice', 0))
                             return True
-                # Reset nếu không có position
                 self.position_open = False
                 self.side = ""
                 self.quantity = 0
@@ -595,7 +498,6 @@ class AITradingBot:
         return False
 
     def calculate_position_size(self):
-        """Tính toán khối lượng position theo risk management"""
         balance = self.get_balance()
         if balance <= 0:
             return 0
@@ -604,17 +506,14 @@ class AITradingBot:
         if current_price <= 0:
             return 0
             
-        # Tính position size theo % số dư và risk management
         usd_amount = balance * (self.percent / 100)
         position_size = (usd_amount * self.leverage) / current_price
         
-        # Làm tròn theo lot size của Binance
-        position_size = math.floor(position_size * 100) / 100  # Giả sử step size 0.01
+        position_size = math.floor(position_size * 100) / 100
         
         return position_size if position_size > 0 else 0
 
     def execute_trade(self, signal):
-        """Thực hiện giao dịch theo tín hiệu AI"""
         if self.position_open:
             self.log(f"Da co vi the {self.side}, bo qua tin hieu {signal}")
             return False
@@ -624,7 +523,6 @@ class AITradingBot:
             self.log("Khoi luong position khong hop le")
             return False
 
-        # Đặt lệnh
         result = self.place_order(signal, position_size)
         if result and 'orderId' in result:
             self.position_open = True
@@ -648,7 +546,6 @@ class AITradingBot:
             return False
 
     def check_exit_conditions(self):
-        """Kiểm tra điều kiện thoát lệnh"""
         if not self.position_open:
             return
             
@@ -656,7 +553,6 @@ class AITradingBot:
         if current_price <= 0:
             return
             
-        # Tính PnL
         if self.side == "BUY":
             pnl = (current_price - self.entry_price) * self.quantity
         else:
@@ -668,14 +564,12 @@ class AITradingBot:
             
         roi = (pnl / invested) * 100
 
-        # Kiểm tra TP/SL
         if roi >= self.tp:
             self.close_position(f"Dat TP {self.tp}% (ROI: {roi:.2f}%)")
         elif roi <= -self.sl:
             self.close_position(f"Dat SL {self.sl}% (ROI: {roi:.2f}%)")
 
     def close_position(self, reason=""):
-        """Đóng vị thế hiện tại"""
         if not self.position_open:
             return False
             
@@ -686,7 +580,6 @@ class AITradingBot:
         if result and 'orderId' in result:
             current_price = self.get_current_price()
             
-            # Tính PnL cuối cùng
             if self.side == "BUY":
                 final_pnl = (current_price - self.entry_price) * self.quantity
             else:
@@ -704,7 +597,6 @@ class AITradingBot:
             )
             self.log(message)
             
-            # Reset position
             self.position_open = False
             self.side = ""
             self.quantity = 0
@@ -716,20 +608,16 @@ class AITradingBot:
             return False
 
     def _run(self):
-        """Vòng lặp chính của bot"""
         while not self._stop:
             try:
-                # Cập nhật giá
                 current_price = self.get_current_price()
                 if current_price > 0:
                     self.prices.append(current_price)
-                    if len(self.prices) > 200:  # Giữ 200 giá gần nhất
+                    if len(self.prices) > 200:
                         self.prices = self.prices[-200:]
                 
-                # Kiểm tra vị thế
                 self.check_position()
                 
-                # Nếu chưa có position, tìm tín hiệu AI
                 if not self.position_open and len(self.prices) >= 100:
                     signal, confidence = self.ai_engine.get_ai_signal(self.symbol, self.prices)
                     
@@ -737,25 +625,21 @@ class AITradingBot:
                         self.log(f"AI Signal: {signal} | Confidence: {confidence:.2f} | Regime: {self.ai_engine.volatility_regime}")
                         self.execute_trade(signal)
                 
-                # Kiểm tra điều kiện thoát lệnh
                 if self.position_open:
                     self.check_exit_conditions()
                 
-                time.sleep(5)  # Chờ 5 giây giữa các lần check
+                time.sleep(5)
                 
             except Exception as e:
                 self.log(f"Loi he thong: {str(e)}")
                 time.sleep(10)
 
     def stop(self):
-        """Dừng bot"""
         self._stop = True
         self.log("Bot AI da dung")
 
 # ========== AI BOT MANAGER ==========
 class AIBotManager:
-    """Quản lý multiple AI trading bots"""
-    
     def __init__(self, api_key, api_secret, telegram_bot_token, telegram_chat_id):
         self.api_key = api_key
         self.api_secret = api_secret
@@ -765,10 +649,9 @@ class AIBotManager:
         self.bots = {}
         self.running = True
         
-        # AI Strategy configurations
         self.ai_strategies = {
             "DeepMind AlphaTrade": {
-                "description": "DeepMind RL - Reinforcement Learning tiên tiến",
+                "description": "DeepMind RL - Reinforcement Learning tien tien",
                 "risk_profile": "MEDIUM"
             },
             "OpenAI Quant": {
@@ -791,7 +674,6 @@ class AIBotManager:
         
         self.log("AI Trading System khoi dong - 5 AI Hang Dau The Gioi")
         
-        # Start Telegram listener
         self.telegram_thread = threading.Thread(target=self._telegram_listener, daemon=True)
         self.telegram_thread.start()
         
@@ -820,7 +702,6 @@ class AIBotManager:
                      default_chat_id=self.telegram_chat_id)
 
     def add_bot(self, symbol, leverage, percent, tp, sl, strategy_name):
-        """Thêm bot AI mới"""
         bot_id = f"{symbol}_{strategy_name}"
         
         if bot_id in self.bots:
@@ -850,7 +731,6 @@ class AIBotManager:
             return False
 
     def stop_bot(self, bot_id):
-        """Dừng bot"""
         if bot_id in self.bots:
             self.bots[bot_id].stop()
             del self.bots[bot_id]
@@ -859,14 +739,12 @@ class AIBotManager:
         return False
 
     def stop_all(self):
-        """Dừng tất cả bots"""
         for bot_id in list(self.bots.keys()):
             self.stop_bot(bot_id)
         self.running = False
         self.log("He thong AI da dung")
 
     def _telegram_listener(self):
-        """Lắng nghe tin nhắn Telegram"""
         last_update_id = 0
         
         while self.running and self.telegram_bot_token:
@@ -895,7 +773,6 @@ class AIBotManager:
                 time.sleep(10)
 
     def _handle_telegram_message(self, chat_id, text):
-        """Xử lý tin nhắn Telegram"""
         if text == "Them Bot":
             self._start_bot_creation(chat_id)
         elif text == "Danh sach Bot":
@@ -914,7 +791,6 @@ class AIBotManager:
             self.send_main_menu(chat_id)
 
     def _start_bot_creation(self, chat_id):
-        """Bắt đầu quy trình tạo bot"""
         balance = self._get_balance()
         if balance is None:
             send_telegram("Loi ket noi Binance!", chat_id,
@@ -932,7 +808,6 @@ class AIBotManager:
         )
 
     def _list_bots(self, chat_id):
-        """Hiển thị danh sách bot"""
         if not self.bots:
             send_telegram("Khong co bot nao dang chay", chat_id,
                          bot_token=self.telegram_bot_token,
@@ -950,7 +825,6 @@ class AIBotManager:
                          default_chat_id=self.telegram_chat_id)
 
     def _stop_bot_menu(self, chat_id):
-        """Hiển thị menu dừng bot"""
         if not self.bots:
             send_telegram("Khong co bot nao dang chay", chat_id,
                          bot_token=self.telegram_bot_token,
@@ -966,7 +840,6 @@ class AIBotManager:
                          default_chat_id=self.telegram_chat_id)
 
     def _get_balance(self):
-        """Lấy số dư từ Binance"""
         try:
             ts = int(time.time() * 1000)
             params = {"timestamp": ts}
@@ -986,7 +859,6 @@ class AIBotManager:
         return None
 
     def _show_balance(self, chat_id):
-        """Hiển thị số dư"""
         balance = self._get_balance()
         if balance is None:
             send_telegram("Loi lay so du!", chat_id,
@@ -998,7 +870,6 @@ class AIBotManager:
                          default_chat_id=self.telegram_chat_id)
 
     def _show_strategies(self, chat_id):
-        """Hiển thị thông tin chiến lược AI"""
         strategies_info = (
             "5 AI TRADING HANG DAU THE GIOI\n\n"
             
