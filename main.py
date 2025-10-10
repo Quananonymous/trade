@@ -1,13 +1,15 @@
 # main.py
-from trading_bot_lib import BotManager
 import os
 import json
 import time
 import logging
 
-# Thiết lập logging
-logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(levelname)s - %(message)s')
-logger = logging.getLogger()
+# Import đúng class từ thư viện
+try:
+    from trading_bot_lib import AIBotManager
+except ImportError:
+    print("❌ Không thể import module trading_bot_lib. Đảm bảo file tồn tại và tên đúng.")
+    exit(1)
 
 # Lấy cấu hình từ biến môi trường
 BINANCE_API_KEY = os.getenv('BINANCE_API_KEY', '')
@@ -21,57 +23,51 @@ print(f"BINANCE_SECRET_KEY: {'***' if BINANCE_SECRET_KEY else 'Không có'}")
 print(f"TELEGRAM_BOT_TOKEN: {'***' if TELEGRAM_BOT_TOKEN else 'Không có'}")
 print(f"TELEGRAM_CHAT_ID: {TELEGRAM_CHAT_ID if TELEGRAM_CHAT_ID else 'Không có'}")
 
-def test_connections():
-    """Kiểm tra kết nối API và Telegram"""
-    from trading_bot_lib import get_balance, send_telegram
-    
-    # Test Binance
-    if BINANCE_API_KEY and BINANCE_SECRET_KEY:
-        balance = get_balance(BINANCE_API_KEY, BINANCE_SECRET_KEY)
-        if balance > 0:
-            print(f"✅ Kết nối Binance thành công! Số dư: {balance:.2f} USDT")
-        else:
-            print("❌ Lỗi kết nối Binance")
-            return False
-    
-    # Test Telegram
-    if TELEGRAM_BOT_TOKEN and TELEGRAM_CHAT_ID:
-        try:
-            send_telegram("🤖 Bot khởi động thành công!", 
-                         TELEGRAM_CHAT_ID, 
-                         bot_token=TELEGRAM_BOT_TOKEN)
-            print("✅ Kết nối Telegram thành công!")
-        except Exception as e:
-            print(f"❌ Lỗi kết nối Telegram: {e}")
-    
-    return True
+# Cấu hình bot từ biến môi trường (dạng JSON)
+bot_config_json = os.getenv('BOT_CONFIGS', '[]')
+try:
+    BOT_CONFIGS = json.loads(bot_config_json)
+except Exception as e:
+    print(f"Lỗi phân tích cấu hình BOT_CONFIGS: {e}")
+    BOT_CONFIGS = []
 
 def main():
     # Kiểm tra cấu hình
     if not BINANCE_API_KEY or not BINANCE_SECRET_KEY:
         print("❌ Chưa cấu hình API Key và Secret Key!")
-        print("💡 Thiết lập biến môi trường:")
-        print("   - BINANCE_API_KEY")
-        print("   - BINANCE_SECRET_KEY") 
-        return
-    
-    # Kiểm tra kết nối
-    if not test_connections():
         return
     
     print("🟢 Đang khởi động hệ thống bot...")
     
+    # Khởi tạo hệ thống - sử dụng đúng class AIBotManager
     try:
-        # Khởi tạo hệ thống
-        manager = BotManager(
+        manager = AIBotManager(
             api_key=BINANCE_API_KEY,
             api_secret=BINANCE_SECRET_KEY,
             telegram_bot_token=TELEGRAM_BOT_TOKEN,
             telegram_chat_id=TELEGRAM_CHAT_ID
         )
-        
-        
-        print("🟢 Hệ thống đã sẵn sàng. Đang chạy...")
+    except Exception as e:
+        print(f"❌ Lỗi khởi tạo AIBotManager: {e}")
+        return
+    
+    # Thêm các bot từ cấu hình
+    if BOT_CONFIGS:
+        print(f"🟢 Đang khởi động {len(BOT_CONFIGS)} bot từ cấu hình...")
+        for config in BOT_CONFIGS:
+            if len(config) >= 6:
+                symbol, lev, percent, tp, sl, strategy = config[0], config[1], config[2], config[3], config[4], config[5]
+                if manager.add_bot(symbol, lev, percent, tp, sl, strategy):
+                    print(f"✅ Bot {strategy} cho {symbol} khởi động thành công")
+                else:
+                    print(f"❌ Bot {strategy} cho {symbol} khởi động thất bại")
+    else:
+        print("⚠️ Không tìm thấy cấu hình bot! Vui lòng thiết lập biến môi trường BOT_CONFIGS.")
+    
+    try:
+        print("🟢 Hệ thống AI Trading đã sẵn sàng. Đang chạy...")
+        print("🤖 5 AI Hàng Đầu: DeepMind, OpenAI, NVIDIA, MIT, Stanford")
+        print("💡 Sử dụng Telegram để điều khiển bot")
         
         # Giữ chương trình chạy
         while manager.running:
@@ -79,16 +75,16 @@ def main():
             
     except KeyboardInterrupt:
         print("\n👋 Nhận tín hiệu dừng từ người dùng...")
-        if 'manager' in locals():
-            manager.log("👋 Nhận tín hiệu dừng từ người dùng...")
+        manager.log("👋 Nhận tín hiệu dừng từ người dùng...")
     except Exception as e:
         print(f"❌ LỖI HỆ THỐNG: {str(e)}")
-        if 'manager' in locals():
-            manager.log(f"❌ LỖI HỆ THỐNG: {str(e)}")
+        import traceback
+        traceback.print_exc()
+        manager.log(f"❌ LỖI HỆ THỐNG: {str(e)}")
     finally:
-        if 'manager' in locals():
-            manager.stop_all()
+        print("🛑 Đang dừng tất cả bot...")
+        manager.stop_all()
+        print("✅ Hệ thống đã dừng hoàn toàn.")
 
 if __name__ == "__main__":
     main()
-
