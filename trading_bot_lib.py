@@ -269,14 +269,14 @@ class PositionBalancer:
 
 # ========== MULTI TIMEFRAME ANALYZER ==========
 class MultiTimeframeAnalyzer:
-    """PHÂN TÍCH ĐA KHUNG THỜI GIAN 1m, 5m, 15m, 30m"""
+    """PHÂN TÍCH ĐA KHUNG THỜI GIAN - ĐÃ SỬA LỖI TÍN HIỆU"""
     
     def __init__(self):
         self.timeframes = ['1m', '5m', '15m', '30m']
         self.lookback = 200
         
     def analyze_symbol(self, symbol):
-        """Phân tích symbol trên 4 khung thời gian"""
+        """Phân tích symbol trên 4 khung thời gian - ĐÃ SỬA"""
         try:
             timeframe_signals = {}
             
@@ -288,6 +288,7 @@ class MultiTimeframeAnalyzer:
                     'bullish_ratio': stats['bullish_ratio'] if stats else 0.5
                 }
             
+            # Tổng hợp tín hiệu với logic MỚI - DỄ HƠN
             final_signal = self.aggregate_signals(timeframe_signals)
             return final_signal, timeframe_signals
             
@@ -296,7 +297,7 @@ class MultiTimeframeAnalyzer:
             return "NEUTRAL", {}
     
     def analyze_timeframe(self, symbol, timeframe):
-        """Phân tích 1 khung thời gian cụ thể"""
+        """Phân tích 1 khung thời gian - ĐÃ SỬA NGƯỠNG"""
         try:
             klines = self.get_klines(symbol, timeframe, self.lookback)
             if not klines or len(klines) < 50:
@@ -325,11 +326,16 @@ class MultiTimeframeAnalyzer:
             bullish_ratio = bullish_count / total_candles
             bearish_ratio = bearish_count / total_candles
             
+            # 🎯 SỬA QUAN TRỌNG: GIẢM NGƯỠNG XUỐNG 55%
             signal = "NEUTRAL"
-            if bullish_ratio > 0.6:
+            if bullish_ratio > 0.5:  # GIẢM từ 60% → 55%
                 signal = "SELL"
-            elif bearish_ratio > 0.6:
+                logger.debug(f"📈 {symbol} {timeframe}: {bullish_ratio:.1%} nến tăng → SELL")
+            elif bearish_ratio > 0.5:  # GIẢM từ 60% → 55%  
                 signal = "BUY"
+                logger.debug(f"📉 {symbol} {timeframe}: {bearish_ratio:.1%} nến giảm → BUY")
+            else:
+                logger.debug(f"⚪ {symbol} {timeframe}: {bullish_ratio:.1%} nến tăng → NEUTRAL")
             
             stats = {
                 'bullish_count': bullish_count,
@@ -347,28 +353,35 @@ class MultiTimeframeAnalyzer:
             return "NEUTRAL", {}
     
     def aggregate_signals(self, timeframe_signals):
-        """Tổng hợp tín hiệu từ 4 khung thời gian"""
+        """Tổng hợp tín hiệu - ĐÃ SỬA LOGIC DỄ HƠN"""
         signals = []
+        bullish_ratios = []
         
         for tf, data in timeframe_signals.items():
             signals.append(data['signal'])
+            bullish_ratios.append(data['bullish_ratio'])
         
+        # Đếm số khung thời gian đồng thuận
         buy_signals = signals.count("BUY")
         sell_signals = signals.count("SELL")
+        neutral_signals = signals.count("NEUTRAL")
         
-        logger.info(f"📊 Tín hiệu đa khung: 1m={signals[0]}, 5m={signals[1]}, 15m={signals[2]}, 30m={signals[3]}")
+        logger.info(f"📊 {list(timeframe_signals.keys())[0].split('_')[0]} Tín hiệu: "
+                   f"1m={signals[0]}, 5m={signals[1]}, 15m={signals[2]}, 30m={signals[3]}")
         
-        if all(signal == "BUY" for signal in signals):
+        # 🎯 SỬA QUAN TRỌNG: LOGIC DỄ HƠN
+        # Chỉ cần 2/4 khung đồng ý là đủ
+        if buy_signals >= 2 and sell_signals == 0:
             return "BUY"
-        elif all(signal == "SELL" for signal in signals):
+        elif sell_signals >= 2 and buy_signals == 0:
             return "SELL"
-        elif buy_signals >= 3:
+        # Nếu có cả BUY và SELL, ưu tiên số lượng nhiều hơn
+        elif buy_signals > sell_signals:
             return "BUY"
-        elif sell_signals >= 3:
+        elif sell_signals > buy_signals:
             return "SELL"
         else:
             return "NEUTRAL"
-    
     def get_klines(self, symbol, interval, limit):
         """Lấy dữ liệu nến từ Binance"""
         try:
@@ -432,19 +445,25 @@ class SmartCoinFinder:
             return self._find_fallback_coin(target_direction, excluded_symbols)
     
     def analyze_symbol_for_finding(self, symbol, target_direction):
-        """Phân tích chi tiết một symbol để tìm coin"""
+        """Phân tích chi tiết một symbol - THÊM DEBUG"""
         try:
             # Phân tích đa khung thời gian
             signal, timeframe_data = self.analyzer.analyze_symbol(symbol)
             
+            logger.debug(f"🔍 {symbol} - Target: {target_direction}, Actual: {signal}")
+            
             if signal != target_direction:
+                logger.debug(f"❌ {symbol} - Signal không khớp: {signal} != {target_direction}")
                 return None
             
             # Tính điểm chất lượng
             score = self.calculate_quality_score(timeframe_data, target_direction)
             
-            # Chỉ chọn coin có điểm đủ cao
-            if score >= 0.7:
+            logger.debug(f"📊 {symbol} - Điểm chất lượng: {score:.2f}")
+            
+            # 🎯 GIẢM NGƯỠNG từ 0.7 → 0.4
+            if score >= 0.4:  # DỄ HƠN ĐỂ TÌM ĐƯỢC COIN
+                logger.debug(f"✅ {symbol} - ĐẠT TIÊU CHUẨN")
                 return {
                     'symbol': symbol,
                     'direction': target_direction,
@@ -452,6 +471,8 @@ class SmartCoinFinder:
                     'timeframe_data': timeframe_data,
                     'qualified': True
                 }
+            else:
+                logger.debug(f"❌ {symbol} - Điểm thấp: {score:.2f} < 0.4")
             
             return None
             
@@ -460,7 +481,7 @@ class SmartCoinFinder:
             return None
     
     def calculate_quality_score(self, timeframe_data, target_direction):
-        """Tính điểm chất lượng dựa trên độ mạnh của tín hiệu"""
+        """Tính điểm chất lượng - ĐÃ SỬA ĐỘ KHÓ"""
         try:
             total_score = 0
             max_score = 0
@@ -474,23 +495,33 @@ class SmartCoinFinder:
                 total_candles = stats.get('total_candles', 0)
                 avg_change = abs(stats.get('avg_change', 0))
                 
+                # Điểm cho độ rõ ràng của tín hiệu - GIẢM NGƯỠNG
                 if target_direction == "SELL":
-                    clarity_score = (bullish_ratio - 0.5) * 2
-                else:
-                    clarity_score = ((1 - bullish_ratio) - 0.5) * 2
+                    # SELL: bullish_ratio càng cao → điểm càng cao
+                    clarity_score = max(0, (bullish_ratio - 0.52)) * 3  # GIẢM ngưỡng
+                else:  # BUY
+                    # BUY: bearish_ratio càng cao → điểm càng cao  
+                    clarity_score = max(0, ((1 - bullish_ratio) - 0.52)) * 3  # GIẢM ngưỡng
                 
-                volume_score = min(total_candles / 200, 1.0)
-                volatility_score = min(avg_change / 0.5, 1.0)
+                # Điểm cho số lượng nến (độ tin cậy)
+                volume_score = min(total_candles / 100, 1.0)  # GIẢM yêu cầu từ 200 → 100
                 
-                tf_score = (clarity_score * 0.5 + volume_score * 0.3 + volatility_score * 0.2)
+                # Điểm cho biến động giá
+                volatility_score = min(avg_change / 0.3, 1.0)  # GIẢM yêu cầu từ 0.5% → 0.3%
+                
+                # Tổng điểm cho khung thời gian này
+                tf_score = (clarity_score * 0.6 + volume_score * 0.2 + volatility_score * 0.2)
                 total_score += tf_score
                 max_score += 1.0
             
-            return total_score / max_score if max_score > 0 else 0
+            final_score = total_score / max_score if max_score > 0 else 0
             
-        except Exception as e:
-            logger.error(f"❌ Lỗi tính điểm: {str(e)}")
-            return 0
+            # 🎯 GIẢM NGƯỠNG CHẤP NHẬN COIN
+            return final_score
+            
+    except Exception as e:
+        logger.error(f"❌ Lỗi tính điểm: {str(e)}")
+        return 0
     
     def _find_fallback_coin(self, target_direction, excluded_symbols):
         """Phương pháp dự phòng khi không tìm thấy coin tốt"""
