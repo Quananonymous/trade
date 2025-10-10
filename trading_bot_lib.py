@@ -358,8 +358,8 @@ def binance_api_request(url, method='GET', params=None, headers=None, timeout=15
     logger.error(f"Không thể thực hiện yêu cầu API sau {max_retries} lần thử")
     return None
 
-def get_all_usdt_pairs(limit=None):
-    """Lấy danh sách TẤT CẢ coin USDT với volume 24h - LOẠI BỎ BTC"""
+def get_all_usdt_pairs(limit=None, max_volume=1000000000):  # THÊM THAM SỐ max_volume = 1 tỷ
+    """Lấy danh sách coin USDT với volume 24h NHỎ HƠN 1B - LOẠI BỎ BTC"""
     try:
         url = "https://fapi.binance.com/fapi/v1/exchangeInfo"
         data = binance_api_request(url)
@@ -386,7 +386,9 @@ def get_all_usdt_pairs(limit=None):
                 symbol_info.get('contractType') == 'PERPETUAL'):
                 
                 volume = volume_map.get(symbol, 0)
-                usdt_pairs.append((symbol, volume))
+                # THÊM ĐIỀU KIỆN: CHỈ LẤY COIN CÓ VOLUME NHỎ HƠN 1 TỶ USDT
+                if volume < max_volume:  # < 1,000,000,000
+                    usdt_pairs.append((symbol, volume))
         
         # Sắp xếp theo volume giảm dần
         usdt_pairs.sort(key=lambda x: x[1], reverse=True)
@@ -397,7 +399,7 @@ def get_all_usdt_pairs(limit=None):
         else:
             symbols = [pair[0] for pair in usdt_pairs]  # TRẢ VỀ TẤT CẢ
         
-        logger.info(f"✅ Lấy được {len(symbols)} coin USDT từ Binance (đã loại BTC)")
+        logger.info(f"✅ Lấy được {len(symbols)} coin USDT (volume < {max_volume:,.0f} USDT) - đã loại BTC")
         return symbols
         
     except Exception as e:
@@ -2146,7 +2148,7 @@ class BotManager:
             strategy_config = self._get_strategy_config(strategy_name, allocation_rules)
             
             # Duyệt theo khối lượng giảm dần từ Binance
-            high_volume_symbols = get_all_usdt_pairs(limit=50)
+            high_volume_symbols = get_all_usdt_pairs(limit=500)
             
             allocated_count = 0
             
