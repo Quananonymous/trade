@@ -1,4 +1,4 @@
-# trading_bot_lib.py - HOÀN CHỈNH VỚI HỆ THỐNG BOT ĐỘNG ĐA LUỒNG
+# trading_bot_lib.py - HOÀN CHỈNH VỚI HỆ THỐNG CHỈ BÁO XU HƯỚNG & CÂN BẰNG VỊ THẾ THÔNG MINH
 import json
 import hmac
 import hashlib
@@ -31,8 +31,6 @@ def setup_logging():
 
 logger = setup_logging()
 
-
-
 # ========== HÀM TELEGRAM ==========
 def send_telegram(message, chat_id=None, reply_markup=None, bot_token=None, default_chat_id=None):
     if not bot_token:
@@ -62,7 +60,6 @@ def send_telegram(message, chat_id=None, reply_markup=None, bot_token=None, defa
         logger.error(f"Lỗi kết nối Telegram: {str(e)}")
 
 # ========== MENU TELEGRAM HOÀN CHỈNH ==========
-
 def create_cancel_keyboard():
     return {
         "keyboard": [[{"text": "❌ Hủy bỏ"}]],
@@ -73,7 +70,7 @@ def create_cancel_keyboard():
 def create_strategy_keyboard():
     return {
         "keyboard": [
-            [{"text": "⏰ Multi-Timeframe"}],
+            [{"text": "⏰ Trend System"}],
             [{"text": "❌ Hủy bỏ"}]
         ],
         "resize_keyboard": True,
@@ -124,6 +121,7 @@ def create_symbols_keyboard(strategy=None):
         "resize_keyboard": True,
         "one_time_keyboard": True
     }
+
 def create_main_menu():
     return {
         "keyboard": [
@@ -135,6 +133,7 @@ def create_main_menu():
         "resize_keyboard": True,
         "one_time_keyboard": False
     }
+
 def create_leverage_keyboard(strategy=None):
     leverages = ["3", "5", "10", "15", "20", "25", "50", "75", "100"]
     
@@ -198,6 +197,258 @@ def create_bot_count_keyboard():
         "resize_keyboard": True,
         "one_time_keyboard": True
     }
+
+# ========== HỆ THỐNG CHỈ BÁO XU HƯỚNG TÍCH HỢP ==========
+class TrendIndicatorSystem:
+    """HỆ THỐNG CHỈ BÁO XU HƯỚNG TÍCH HỢP - THAY THẾ ĐA KHUNG THỜI GIAN"""
+    
+    def __init__(self):
+        self.ema_fast = 9
+        self.ema_slow = 21
+        self.ema_trend = 50
+        self.rsi_period = 14
+        self.lookback = 100
+        
+    def calculate_ema(self, prices, period):
+        """Tính EMA"""
+        if len(prices) < period:
+            return prices[-1] if prices else 0
+            
+        ema = [prices[0]]
+        multiplier = 2 / (period + 1)
+        
+        for i in range(1, len(prices)):
+            ema_value = (prices[i] * multiplier) + (ema[i-1] * (1 - multiplier))
+            ema.append(ema_value)
+            
+        return ema[-1]
+    
+    def calculate_rsi(self, prices, period=14):
+        """Tính RSI"""
+        if len(prices) < period + 1:
+            return 50
+            
+        gains = []
+        losses = []
+        
+        for i in range(1, len(prices)):
+            change = prices[i] - prices[i-1]
+            if change > 0:
+                gains.append(change)
+                losses.append(0)
+            else:
+                gains.append(0)
+                losses.append(abs(change))
+        
+        if len(gains) < period:
+            return 50
+            
+        avg_gain = np.mean(gains[-period:])
+        avg_loss = np.mean(losses[-period:])
+        
+        if avg_loss == 0:
+            return 100 if avg_gain > 0 else 50
+            
+        rs = avg_gain / avg_loss
+        rsi = 100 - (100 / (1 + rs))
+        
+        return rsi
+    
+    def get_volume_data(self, symbol):
+        """Lấy dữ liệu volume"""
+        try:
+            url = "https://fapi.binance.com/fapi/v1/klines"
+            params = {
+                'symbol': symbol.upper(),
+                'interval': '15m',
+                'limit': 20
+            }
+            data = binance_api_request(url, params=params)
+            if not data:
+                return 1.0
+                
+            volumes = [float(candle[5]) for candle in data]
+            if len(volumes) < 2:
+                return 1.0
+                
+            current_volume = volumes[-1]
+            avg_volume = np.mean(volumes[:-1])
+            
+            return current_volume / avg_volume if avg_volume > 0 else 1.0
+            
+        except Exception as e:
+            logger.error(f"Lỗi lấy volume {symbol}: {str(e)}")
+            return 1.0
+    
+    def get_support_resistance(self, symbol):
+        """Xác định hỗ trợ/kháng cự đơn giản"""
+        try:
+            url = "https://fapi.binance.com/fapi/v1/klines"
+            params = {
+                'symbol': symbol.upper(),
+                'interval': '15m',
+                'limit': 30
+            }
+            data = binance_api_request(url, params=params)
+            if not data or len(data) < 20:
+                return 0, 0
+                
+            highs = [float(candle[2]) for candle in data]
+            lows = [float(candle[3]) for candle in data]
+            
+            resistance = max(highs[-20:])
+            support = min(lows[-20:])
+            
+            return support, resistance
+            
+        except Exception as e:
+            logger.error(f"Lỗi lấy S/R {symbol}: {str(e)}")
+            return 0, 0
+    
+    def analyze_symbol(self, symbol):
+        """PHÂN TÍCH TÍCH HỢP - TẤT CẢ CHỈ BÁO THÀNH 1 TÍN HIỆU DUY NHẤT"""
+        try:
+            klines = self.get_klines(symbol, '15m', self.lookback)
+            if not klines or len(klines) < 50:
+                return "NEUTRAL"
+            
+            closes = [float(candle[4]) for candle in klines]
+            current_price = closes[-1]
+            
+            # 1. TÍN HIỆU EMA (Quan trọng nhất - 40%)
+            ema_fast = self.calculate_ema(closes, self.ema_fast)
+            ema_slow = self.calculate_ema(closes, self.ema_slow)
+            ema_trend = self.calculate_ema(closes, self.ema_trend)
+            
+            ema_signal = "NEUTRAL"
+            if current_price > ema_fast > ema_slow > ema_trend:
+                ema_signal = "BUY"
+                ema_strength = 1.0
+            elif current_price < ema_fast < ema_slow < ema_trend:
+                ema_signal = "SELL" 
+                ema_strength = 1.0
+            elif current_price > ema_fast > ema_slow:
+                ema_signal = "BUY"
+                ema_strength = 0.7
+            elif current_price < ema_fast < ema_slow:
+                ema_signal = "SELL"
+                ema_strength = 0.7
+            else:
+                ema_strength = 0.3
+            
+            # 2. TÍN HIỆU RSI + VOLUME (30%)
+            rsi = self.calculate_rsi(closes, self.rsi_period)
+            volume_ratio = self.get_volume_data(symbol)
+            
+            rsi_signal = "NEUTRAL"
+            rsi_strength = 0
+            
+            if rsi < 30 and volume_ratio > 1.2:
+                rsi_signal = "BUY"
+                rsi_strength = min((30 - rsi) / 30 * volume_ratio, 1.0)
+            elif rsi > 70 and volume_ratio > 1.2:
+                rsi_signal = "SELL" 
+                rsi_strength = min((rsi - 70) / 30 * volume_ratio, 1.0)
+            elif 40 < rsi < 60:
+                rsi_strength = 0.2
+            
+            # 3. TÍN HIỆU SUPPORT/RESISTANCE (20%)
+            support, resistance = self.get_support_resistance(symbol)
+            sr_signal = "NEUTRAL"
+            sr_strength = 0
+            
+            if support > 0 and resistance > 0:
+                distance_to_resistance = (resistance - current_price) / current_price
+                distance_to_support = (current_price - support) / current_price
+                
+                if current_price > resistance and volume_ratio > 1.3:
+                    sr_signal = "BUY"
+                    sr_strength = min(volume_ratio * 0.8, 1.0)
+                elif current_price < support and volume_ratio > 1.3:
+                    sr_signal = "SELL"
+                    sr_strength = min(volume_ratio * 0.8, 1.0)
+                elif distance_to_resistance < 0.01:
+                    sr_signal = "SELL"
+                    sr_strength = 0.6
+                elif distance_to_support < 0.01:
+                    sr_signal = "BUY" 
+                    sr_strength = 0.6
+            
+            # 4. TÍN HIỆU MARKET STRUCTURE (10%)
+            structure_signal = self.analyze_market_structure(closes)
+            structure_strength = 0.5 if structure_signal != "NEUTRAL" else 0.2
+            
+            # TỔNG HỢP TẤT CẢ TÍN HIỆU
+            signals = {
+                "BUY": 0,
+                "SELL": 0, 
+                "NEUTRAL": 0
+            }
+            
+            weights = {
+                "EMA": 0.4,
+                "RSI_VOLUME": 0.3, 
+                "SR": 0.2,
+                "STRUCTURE": 0.1
+            }
+            
+            if ema_signal != "NEUTRAL":
+                signals[ema_signal] += weights["EMA"] * ema_strength
+                
+            if rsi_signal != "NEUTRAL": 
+                signals[rsi_signal] += weights["RSI_VOLUME"] * rsi_strength
+                
+            if sr_signal != "NEUTRAL":
+                signals[sr_signal] += weights["SR"] * sr_strength
+                
+            if structure_signal != "NEUTRAL":
+                signals[structure_signal] += weights["STRUCTURE"] * structure_strength
+            
+            max_signal = max(signals, key=signals.get)
+            confidence = signals[max_signal]
+            
+            if confidence >= 0.4:
+                logger.info(f"🎯 {symbol} - Tín hiệu {max_signal} (Độ tin cậy: {confidence:.1%})")
+                return max_signal
+            else:
+                logger.debug(f"⚪ {symbol} - Tín hiệu yếu (Confidence: {confidence:.1%})")
+                return "NEUTRAL"
+                
+        except Exception as e:
+            logger.error(f"❌ Lỗi phân tích {symbol}: {str(e)}")
+            return "NEUTRAL"
+    
+    def analyze_market_structure(self, prices):
+        """Phân tích cấu trúc thị trường đơn giản"""
+        if len(prices) < 10:
+            return "NEUTRAL"
+            
+        recent_highs = prices[-5:]
+        recent_lows = prices[-5:]
+        prev_highs = prices[-10:-5] 
+        prev_lows = prices[-10:-5]
+        
+        if (max(recent_highs) > max(prev_highs) and 
+            min(recent_lows) > min(prev_lows)):
+            return "BUY"
+        elif (max(recent_highs) < max(prev_highs) and 
+              min(recent_lows) < min(prev_lows)):
+            return "SELL"
+        return "NEUTRAL"
+    
+    def get_klines(self, symbol, interval, limit):
+        """Lấy dữ liệu nến từ Binance"""
+        try:
+            url = "https://fapi.binance.com/fapi/v1/klines"
+            params = {
+                'symbol': symbol.upper(),
+                'interval': interval,
+                'limit': limit
+            }
+            return binance_api_request(url, params=params)
+        except Exception as e:
+            logger.error(f"❌ Lỗi lấy nến {symbol} {interval}: {str(e)}")
+            return None
 
 # ========== POSITION BALANCER ==========
 class PositionBalancer:
@@ -268,183 +519,53 @@ class PositionBalancer:
             logger.error(f"❌ Lỗi đề xuất hướng: {str(e)}")
             return "NEUTRAL"
 
-# ========== MULTI TIMEFRAME ANALYZER ==========
-class MultiTimeframeAnalyzer:
-    """PHÂN TÍCH ĐA KHUNG THỜI GIAN - ĐÃ SỬA LỖI TÍN HIỆU"""
-    
-    def __init__(self):
-        self.timeframes = ['1m', '5m', '15m', '30m']
-        self.lookback = 200
-        
-    def analyze_symbol(self, symbol):
-        """Phân tích symbol trên 4 khung thời gian - ĐÃ SỬA"""
-        try:
-            timeframe_signals = {}
-            
-            for tf in self.timeframes:
-                signal, stats = self.analyze_timeframe(symbol, tf)
-                timeframe_signals[tf] = {
-                    'signal': signal,
-                    'stats': stats,
-                    'bullish_ratio': stats['bullish_ratio'] if stats else 0.5
-                }
-            
-            # Tổng hợp tín hiệu với logic MỚI - DỄ HƠN
-            final_signal = self.aggregate_signals(timeframe_signals)
-            return final_signal, timeframe_signals
-            
-        except Exception as e:
-            logger.error(f"❌ Lỗi phân tích {symbol}: {str(e)}")
-            return "NEUTRAL", {}
-    
-    def analyze_timeframe(self, symbol, timeframe):
-        """Phân tích 1 khung thời gian - ĐÃ SỬA NGƯỠNG"""
-        try:
-            klines = self.get_klines(symbol, timeframe, self.lookback)
-            if not klines or len(klines) < 50:
-                return "NEUTRAL", {}
-            
-            bullish_count = 0
-            bearish_count = 0
-            price_changes = []
-            
-            for i in range(1, min(len(klines), self.lookback)):
-                open_price = float(klines[i][1])
-                close_price = float(klines[i][4])
-                
-                if close_price > open_price:
-                    bullish_count += 1
-                elif close_price < open_price:
-                    bearish_count += 1
-                
-                price_change = ((close_price - open_price) / open_price) * 100
-                price_changes.append(price_change)
-            
-            total_candles = bullish_count + bearish_count
-            if total_candles == 0:
-                return "NEUTRAL", {}
-            
-            bullish_ratio = bullish_count / total_candles
-            bearish_ratio = bearish_count / total_candles
-            
-            # 🎯 SỬA QUAN TRỌNG: GIẢM NGƯỠNG XUỐNG 55%
-            signal = "NEUTRAL"
-            if bullish_ratio > 0.5:  # GIẢM từ 60% → 55%
-                signal = "SELL"
-                logger.debug(f"📈 {symbol} {timeframe}: {bullish_ratio:.1%} nến tăng → SELL")
-            elif bearish_ratio > 0.5:  # GIẢM từ 60% → 55%  
-                signal = "BUY"
-                logger.debug(f"📉 {symbol} {timeframe}: {bearish_ratio:.1%} nến giảm → BUY")
-            else:
-                logger.debug(f"⚪ {symbol} {timeframe}: {bullish_ratio:.1%} nến tăng → NEUTRAL")
-            
-            stats = {
-                'bullish_count': bullish_count,
-                'bearish_count': bearish_count,
-                'total_candles': total_candles,
-                'bullish_ratio': bullish_ratio,
-                'bearish_ratio': bearish_ratio,
-                'avg_change': np.mean(price_changes) if price_changes else 0
-            }
-            
-            return signal, stats
-            
-        except Exception as e:
-            logger.error(f"❌ Lỗi phân tích {timeframe}: {str(e)}")
-            return "NEUTRAL", {}
-    
-    def aggregate_signals(self, timeframe_signals):
-        """Tổng hợp tín hiệu - SỬA LOGIC ĐỂ CÓ TÍN HIỆU RÕ RÀNG HƠN"""
-        signals = []
-        
-        for tf, data in timeframe_signals.items():
-            signals.append(data['signal'])
-        
-        # Đếm số khung thời gian đồng thuận
-        buy_signals = signals.count("BUY")
-        sell_signals = signals.count("SELL")
-        
-        logger.info(f"📊 {list(timeframe_signals.keys())[0].split('_')[0]} Tín hiệu: "
-                   f"1m={signals[0]}, 5m={signals[1]}, 15m={signals[2]}, 30m={signals[3]} "
-                   f"(BUY: {buy_signals}/4, SELL: {sell_signals}/4)")
-        
-        # 🎯 SỬA LOGIC: ƯU TIÊN TÍN HIỆU RÕ RÀNG
-        # Nếu 3/4 khung đồng ý → tín hiệu mạnh
-        if buy_signals >= 3:
-            return "BUY"
-        elif sell_signals >= 3:
-            return "SELL"
-        # Nếu 2/4 khung đồng ý và 2 khung còn lại là NEUTRAL → tín hiệu trung bình
-        elif buy_signals >= 2 and (buy_signals + sell_signals) == 2:
-            return "BUY"
-        elif sell_signals >= 2 and (buy_signals + sell_signals) == 2:
-            return "SELL"
-        # Nếu phân hóa (2 BUY + 2 SELL) → NEUTRAL
-        else:
-            return "NEUTRAL"
-    def get_klines(self, symbol, interval, limit):
-        """Lấy dữ liệu nến từ Binance"""
-        try:
-            url = "https://fapi.binance.com/fapi/v1/klines"
-            params = {
-                'symbol': symbol.upper(),
-                'interval': interval,
-                'limit': limit
-            }
-            return binance_api_request(url, params=params)
-        except Exception as e:
-            logger.error(f"❌ Lỗi lấy nến {symbol} {interval}: {str(e)}")
-            return None
-
 # ========== SMART COIN FINDER ==========
 class SmartCoinFinder:
-    """TÌM COIN THÔNG MINH DỰA TRÊN ĐA KHUNG THỜI GIAN"""
+    """TÌM COIN THÔNG MINH DỰA TRÊN HỆ THỐNG CHỈ BÁO MỚI"""
     
     def __init__(self, api_key, api_secret):
         self.api_key = api_key
         self.api_secret = api_secret
-        self.analyzer = MultiTimeframeAnalyzer()
+        self.analyzer = TrendIndicatorSystem()
         
     def find_coin_by_direction(self, target_direction, excluded_symbols=None):
-        """TÌM 1 COIN DUY NHẤT - ĐÃ SỬA LỖI TRẢ VỀ None"""
+        """TÌM 1 COIN DUY NHẤT - VỚI HỆ THỐNG CHỈ BÁO MỚI"""
         try:
             if excluded_symbols is None:
                 excluded_symbols = set()
             
-            logger.info(f"🔍 Bot đang tìm 1 coin {target_direction}...")
+            logger.info(f"🔍 Bot đang tìm 1 coin {target_direction} với hệ thống chỉ báo mới...")
             
-            # Lấy danh sách coin USDT toàn bộ Binance
             all_symbols = get_all_usdt_pairs(limit=100)
-            
             if not all_symbols:
                 logger.error("❌ Không lấy được danh sách coin từ Binance")
                 return None
             
-            # Xáo trộn danh sách để random chọn coin
             random.shuffle(all_symbols)
             
-            # Duyệt qua từng coin cho đến khi tìm được coin phù hợp
             for symbol in all_symbols:
                 try:
-                    # Skip BTC, ETH và các symbol đã bị exclude
                     if symbol in ['BTCUSDT', 'ETHUSDT', 'BNBUSDT'] or symbol in excluded_symbols:
                         continue
                     
-                    # Phân tích coin
-                    result = self.analyze_symbol_for_finding(symbol, target_direction)
-                    if result and result.get('qualified', False):
-                        logger.info(f"✅ Bot đã tìm thấy coin: {symbol} - {target_direction} (điểm: {result['score']:.2f})")
-                        return result
+                    signal = self.analyzer.analyze_symbol(symbol)
+                    
+                    if signal == target_direction:
+                        logger.info(f"✅ Bot đã tìm thấy coin: {symbol} - {target_direction}")
+                        return {
+                            'symbol': symbol,
+                            'direction': target_direction,
+                            'score': 0.8,
+                            'qualified': True
+                        }
                         
                 except Exception as e:
                     logger.debug(f"❌ Lỗi phân tích {symbol}: {str(e)}")
                     continue
             
-            # Nếu không tìm thấy coin nào, sử dụng fallback
             logger.warning(f"⚠️ Không tìm thấy coin {target_direction} phù hợp, sử dụng fallback")
             fallback_coin = self._find_fallback_coin(target_direction, excluded_symbols)
             
-            # 🎯 SỬA LỖI: ĐẢM BẢO fallback_coin CÓ qualified=True
             if fallback_coin:
                 fallback_coin['qualified'] = True
                 return fallback_coin
@@ -455,102 +576,8 @@ class SmartCoinFinder:
             logger.error(f"❌ Lỗi tìm coin: {str(e)}")
             return None
     
-    def analyze_symbol_for_finding(self, symbol, target_direction):
-        """Phân tích chi tiết một symbol - THÊM DEBUG CHI TIẾT"""
-        try:
-            # Phân tích đa khung thời gian
-            signal, timeframe_data = self.analyzer.analyze_symbol(symbol)
-            
-            logger.info(f"🔍 {symbol} - Target: {target_direction}, Actual: {signal}")
-            
-            if signal != target_direction:
-                logger.info(f"❌ {symbol} - Signal không khớp: {signal} != {target_direction}")
-                
-                # Log chi tiết từng khung thời gian để debug
-                for tf, data in timeframe_data.items():
-                    stats = data.get('stats', {})
-                    if stats:
-                        logger.info(f"   {tf}: {data['signal']} | Tăng: {stats.get('bullish_ratio', 0):.1%}")
-                        
-                return None
-            
-            # Tính điểm chất lượng
-            score = self.calculate_quality_score(timeframe_data, target_direction)
-            
-            logger.info(f"📊 {symbol} - Điểm chất lượng: {score:.2f}")
-            
-            # Log chi tiết điểm số
-            for tf, data in timeframe_data.items():
-                stats = data.get('stats', {})
-                if stats:
-                    bullish_ratio = stats.get('bullish_ratio', 0.5)
-                    clarity_score = max(0, (bullish_ratio - 0.52)) * 3 if target_direction == "SELL" else max(0, ((1 - bullish_ratio) - 0.52)) * 3
-                    logger.info(f"   {tf}: {data['signal']} | Tăng: {bullish_ratio:.1%} | Điểm rõ: {clarity_score:.2f}")
-            
-            # GIẢM NGƯỠNG để test
-            if score >= 0.3:  # GIẢM XUỐNG 0.3 ĐỂ TEST
-                logger.info(f"✅ {symbol} - ĐẠT TIÊU CHUẨN (điểm: {score:.2f} >= 0.3)")
-                return {
-                    'symbol': symbol,
-                    'direction': target_direction,
-                    'score': score,
-                    'timeframe_data': timeframe_data,
-                    'qualified': True
-                }
-            else:
-                logger.info(f"❌ {symbol} - Điểm thấp: {score:.2f} < 0.3")
-            
-            return None
-            
-        except Exception as e:
-            logger.error(f"❌ Lỗi phân tích {symbol}: {str(e)}")
-            return None
-        
-    def calculate_quality_score(self, timeframe_data, target_direction):
-        """Tính điểm chất lượng - ĐÃ SỬA ĐỘ KHÓ"""
-        try:
-            total_score = 0
-            max_score = 0
-            
-            for tf, data in timeframe_data.items():
-                stats = data.get('stats', {})
-                if not stats:
-                    continue
-                    
-                bullish_ratio = stats.get('bullish_ratio', 0.5)
-                total_candles = stats.get('total_candles', 0)
-                avg_change = abs(stats.get('avg_change', 0))
-                
-                # Điểm cho độ rõ ràng của tín hiệu - GIẢM NGƯỠNG
-                if target_direction == "SELL":
-                    # SELL: bullish_ratio càng cao → điểm càng cao
-                    clarity_score = max(0, (bullish_ratio - 0.52)) * 3  # GIẢM ngưỡng
-                else:  # BUY
-                    # BUY: bearish_ratio càng cao → điểm càng cao  
-                    clarity_score = max(0, ((1 - bullish_ratio) - 0.52)) * 3  # GIẢM ngưỡng
-                
-                # Điểm cho số lượng nến (độ tin cậy)
-                volume_score = min(total_candles / 100, 1.0)  # GIẢM yêu cầu từ 200 → 100
-                
-                # Điểm cho biến động giá
-                volatility_score = min(avg_change / 0.3, 1.0)  # GIẢM yêu cầu từ 0.5% → 0.3%
-                
-                # Tổng điểm cho khung thời gian này
-                tf_score = (clarity_score * 0.6 + volume_score * 0.2 + volatility_score * 0.2)
-                total_score += tf_score
-                max_score += 1.0
-            
-            final_score = total_score / max_score if max_score > 0 else 0
-            
-            # 🎯 GIẢM NGƯỠNG CHẤP NHẬN COIN
-            return final_score
-            
-        except Exception as e:
-            logger.error(f"❌ Lỗi tính điểm: {str(e)}")
-            return 0
-    
     def _find_fallback_coin(self, target_direction, excluded_symbols):
-        """Phương pháp dự phòng - ĐÃ SỬA LỖI"""
+        """Phương pháp dự phòng"""
         logger.info(f"🔄 Sử dụng fallback cho {target_direction}")
         
         all_symbols = get_all_usdt_pairs(limit=50)
@@ -569,19 +596,19 @@ class SmartCoinFinder:
                     continue
                 
                 score = 0
-                if target_direction == "BUY" and change_24h < -5:  # GIẢM NGƯỠNG
-                    score = abs(change_24h) / 15  # Normalize
-                elif target_direction == "SELL" and change_24h > 5:  # GIẢM NGƯỠNG
+                if target_direction == "BUY" and change_24h < -5:
+                    score = abs(change_24h) / 15
+                elif target_direction == "SELL" and change_24h > 5:
                     score = abs(change_24h) / 15
                 
-                if score > 0.2:  # GIẢM NGƯỠNG
+                if score > 0.2:
                     logger.info(f"🔄 Fallback: {symbol} - {target_direction} (điểm: {score:.2f})")
                     return {
                         'symbol': symbol,
                         'direction': target_direction,
                         'score': score,
                         'fallback': True,
-                        'qualified': True  # 🎯 THÊM qualified
+                        'qualified': True
                     }
                         
             except Exception as e:
@@ -938,7 +965,7 @@ class BaseBot:
         self.config_key = config_key
         self.bot_id = bot_id or f"{strategy_name}_{int(time.time())}_{random.randint(1000, 9999)}"
         
-        self.status = "searching"  # searching, waiting, open
+        self.status = "searching"
         self.side = ""
         self.qty = 0
         self.entry = 0
@@ -946,7 +973,6 @@ class BaseBot:
         self.position_open = False
         self._stop = False
         
-        # Biến theo dõi thời gian
         self.last_trade_time = 0
         self.last_close_time = 0
         self.last_position_check = 0
@@ -955,26 +981,20 @@ class BaseBot:
         self.cooldown_period = 300
         self.position_check_interval = 30
         
-        # Bảo vệ chống lặp đóng lệnh
         self._close_attempted = False
         self._last_close_attempt = 0
         
-        # Cờ đánh dấu cần xóa bot
         self.should_be_removed = False
         
-        # THÊM THEO DÕI CÂN BẰNG
         self.position_balance_check = 0
         self.balance_check_interval = 60
         
         self.coin_manager = CoinManager()
-        
-        # KHỞI TẠO COIN FINDER CHO BOT
         self.coin_finder = SmartCoinFinder(api_key, api_secret)
         
-        # TRẠNG THÁI TÌM COIN
         self.current_target_direction = None
         self.last_find_time = 0
-        self.find_interval = 60  # Tìm coin mỗi 60 giây
+        self.find_interval = 60
         
         self.check_position_status()
         if self.symbol:
@@ -1020,67 +1040,93 @@ class BaseBot:
         raise NotImplementedError("Phương thức get_signal cần được triển khai")
 
     def get_target_direction(self):
-        """XÁC ĐỊNH HƯỚNG GIAO DỊCH - CHECK TẤT CẢ VỊ THẾ TRÊN BINANCE"""
+        """XÁC ĐỊNH HƯỚNG GIAO DỊCH - CHECK TẤT CẢ VỊ THẾ TRÊN BINANCE (ĐÃ TỐI ƯU)"""
         try:
-            # 🎯 SỬA QUAN TRỌNG: Lấy tất cả vị thế từ Binance, không chỉ từ bot
             all_positions = get_positions(api_key=self.api_key, api_secret=self.api_secret)
             
             buy_count = 0
             sell_count = 0
+            total_position_value = 0
+            buy_value = 0
+            sell_value = 0
+            
             position_details = []
             
-            # Đếm tất cả vị thế đang mở trên Binance
             for pos in all_positions:
                 position_amt = float(pos.get('positionAmt', 0))
-                if position_amt != 0:  # Có vị thế mở
+                entry_price = float(pos.get('entryPrice', 0))
+                leverage = float(pos.get('leverage', 1))
+                
+                if position_amt != 0:
                     symbol = pos.get('symbol', 'UNKNOWN')
+                    position_value = abs(position_amt) * entry_price / leverage
+                    total_position_value += position_value
+                    
                     if position_amt > 0:
                         buy_count += 1
-                        position_details.append(f"{symbol}(LONG)")
+                        buy_value += position_value
+                        position_details.append(f"{symbol}(LONG:${position_value:.0f})")
                     else:
                         sell_count += 1
-                        position_details.append(f"{symbol}(SHORT)")
+                        sell_value += position_value
+                        position_details.append(f"{symbol}(SHORT:${position_value:.0f})")
             
             total = buy_count + sell_count
             
-            self.log(f"🔍 TẤT CẢ VỊ THẾ BINANCE: {buy_count} LONG, {sell_count} SHORT")
+            self.log(f"🔍 VỊ THẾ BINANCE: {buy_count} LONG, {sell_count} SHORT")
+            self.log(f"💰 GIÁ TRỊ: LONG ${buy_value:.0f} vs SHORT ${sell_value:.0f}")
+            
             if position_details:
-                self.log(f"🔍 Chi tiết: {', '.join(position_details)}")
+                details_str = ", ".join(position_details[:5])
+                if len(position_details) > 5:
+                    details_str += f" ...(+{len(position_details)-5})"
+                self.log(f"📋 Chi tiết: {details_str}")
             
             if total == 0:
                 direction = "BUY" if random.random() > 0.5 else "SELL"
-                self.log(f"⚖️ Không có vị thế nào trên Binance → RANDOM {direction}")
+                self.log(f"⚖️ QUYẾT ĐỊNH: Không có vị thế → RANDOM {direction}")
                 return direction
             
-            buy_ratio = buy_count / total
-            sell_ratio = sell_count / total
+            buy_ratio_count = buy_count / total
+            sell_ratio_count = sell_count / total
             
-            self.log(f"📊 TỶ LỆ VỊ THẾ: LONG {buy_ratio:.1%} vs SHORT {sell_ratio:.1%}")
+            buy_ratio_value = buy_value / total_position_value if total_position_value > 0 else 0.5
+            sell_ratio_value = sell_value / total_position_value if total_position_value > 0 else 0.5
             
-            # 🎯 LOGIC CÂN BẰNG DỰA TRÊN TẤT CẢ VỊ THẾ
-            if buy_ratio >= 0.6:  # LONG chiếm ≥60%
-                self.log(f"⚖️ QUYẾT ĐỊNH: LONG chiếm ưu thế ({buy_ratio:.1%}) → TÌM SHORT")
+            self.log(f"📊 TỶ LỆ SỐ LƯỢNG: LONG {buy_ratio_count:.1%} vs SHORT {sell_ratio_count:.1%}")
+            self.log(f"📈 TỶ LỆ GIÁ TRỊ: LONG {buy_ratio_value:.1%} vs SHORT {sell_ratio_value:.1%}")
+            
+            if buy_ratio_value >= 0.65:
+                self.log(f"⚖️ QUYẾT ĐỊNH: LONG chiếm ưu thế ({buy_ratio_value:.1%} giá trị) → TÌM SHORT")
                 return "SELL"
-            elif sell_ratio >= 0.6:  # SHORT chiếm ≥60%
-                self.log(f"⚖️ QUYẾT ĐỊNH: SHORT chiếm ưu thế ({sell_ratio:.1%}) → TÌM LONG")
+            elif sell_ratio_value >= 0.65:
+                self.log(f"⚖️ QUYẾT ĐỊNH: SHORT chiếm ưu thế ({sell_ratio_value:.1%} giá trị) → TÌM LONG")
                 return "BUY"
-            elif buy_count > sell_count:  # LONG nhiều hơn SHORT
-                self.log(f"⚖️ QUYẾT ĐỊNH: LONG nhiều hơn SHORT ({buy_count} vs {sell_count}) → TÌM SHORT")
+            elif buy_ratio_value > sell_ratio_value + 0.15:
+                self.log(f"⚖️ QUYẾT ĐỊNH: LONG nhiều hơn SHORT ({buy_ratio_value:.1%} vs {sell_ratio_value:.1%}) → TÌM SHORT")
                 return "SELL"
-            elif sell_count > buy_count:  # SHORT nhiều hơn LONG
-                self.log(f"⚖️ QUYẾT ĐỊNH: SHORT nhiều hơn LONG ({sell_count} vs {buy_count}) → TÌM LONG")
+            elif sell_ratio_value > buy_ratio_value + 0.15:
+                self.log(f"⚖️ QUYẾT ĐỊNH: SHORT nhiều hơn LONG ({sell_ratio_value:.1%} vs {buy_ratio_value:.1%}) → TÌM LONG")
                 return "BUY"
             else:
-                # Cân bằng → random
-                direction = "BUY" if random.random() > 0.5 else "SELL"
-                self.log(f"⚖️ QUYẾT ĐỊNH: Cân bằng ({buy_count} LONG, {sell_count} SHORT) → RANDOM {direction}")
-                return direction
-                
+                if buy_count > sell_count:
+                    self.log(f"⚖️ QUYẾT ĐỊNH: Cân bằng nhưng nhiều LONG hơn → ƯU TIÊN SHORT")
+                    return "SELL"
+                elif sell_count > buy_count:
+                    self.log(f"⚖️ QUYẾT ĐỊNH: Cân bằng nhưng nhiều SHORT hơn → ƯU TIÊN LONG")  
+                    return "BUY"
+                else:
+                    direction = "BUY" if random.random() > 0.5 else "SELL"
+                    self.log(f"⚖️ QUYẾT ĐỊNH: Hoàn toàn cân bằng → RANDOM {direction}")
+                    return direction
+                    
         except Exception as e:
             self.log(f"❌ Lỗi kiểm tra vị thế Binance: {str(e)}")
+            self.log("🔄 Fallback: Dùng random direction do lỗi API")
             return "BUY" if random.random() > 0.5 else "SELL"
+
     def find_and_set_coin(self):
-        """TÌM VÀ SET COIN MỚI - THÊM LOGGING CÂN BẰNG"""
+        """TÌM VÀ SET COIN MỚI - VỚI KIỂM TRA CÂN BẰNG VỊ THẾ"""
         try:
             current_time = time.time()
             if current_time - self.last_find_time < self.find_interval:
@@ -1088,42 +1134,32 @@ class BaseBot:
             
             self.last_find_time = current_time
             
-            # Xác định hướng giao dịch mới
             self.current_target_direction = self.get_target_direction()
             
-            # Log rõ lý do chọn hướng
             self.log(f"🎯 Đang tìm coin {self.current_target_direction} để CÂN BẰNG hệ thống")
             
-            # Lấy danh sách coin đang được quản lý để tránh trùng lặp
             managed_coins = self.coin_manager.get_managed_coins()
             excluded_symbols = set(managed_coins.keys())
             
-            # Log các coin đang được trade
             if excluded_symbols:
                 self.log(f"🚫 Tránh các coin đang trade: {', '.join(excluded_symbols)}")
             
-            # Tìm coin mới
             coin_data = self.coin_finder.find_coin_by_direction(
                 self.current_target_direction, 
                 excluded_symbols
             )
         
-            
-            # 🎯 SỬA LỖI: KIỂM TRA coin_data CÓ TỒN TẠI KHÔNG
             if coin_data is None:
                 self.log(f"⚠️ Không tìm thấy coin {self.current_target_direction} phù hợp, thử lại sau")
                 return False
                 
-            # 🎯 SỬA LỖI: KIỂM TRA qualified CÓ TỒN TẠI KHÔNG
             if not coin_data.get('qualified', False):
                 self.log(f"⚠️ Coin {coin_data.get('symbol', 'UNKNOWN')} không đủ tiêu chuẩn, thử lại sau")
                 return False
             
             new_symbol = coin_data['symbol']
             
-            # Đăng ký coin mới
             if self._register_coin_with_retry(new_symbol):
-                # Cập nhật symbol và thiết lập WebSocket
                 if self.symbol:
                     self.ws_manager.remove_symbol(self.symbol)
                     self.coin_manager.unregister_coin(self.symbol)
@@ -1131,9 +1167,7 @@ class BaseBot:
                 self.symbol = new_symbol
                 self.ws_manager.add_symbol(self.symbol, self._handle_price_update)
                 
-                # Log thông tin coin mới
-                analysis_info = self._format_coin_analysis(coin_data)
-                self.log(f"🎯 Đã tìm thấy coin {new_symbol} - {self.current_target_direction}\n{analysis_info}")
+                self.log(f"🎯 Đã tìm thấy coin {new_symbol} - {self.current_target_direction}")
                 
                 self.status = "waiting"
                 return True
@@ -1144,21 +1178,9 @@ class BaseBot:
         except Exception as e:
             self.log(f"❌ Lỗi tìm coin: {str(e)}")
             return False
-    def _format_coin_analysis(self, coin_data):
-        """Định dạng thông tin phân tích coin"""
-        info = ""
-        timeframe_data = coin_data.get('timeframe_data', {})
-        
-        for tf, data in timeframe_data.items():
-            stats = data.get('stats', {})
-            if stats:
-                bullish_pct = stats.get('bullish_ratio', 0) * 100
-                info += f"  {tf}: {data['signal']} | Nến tăng: {bullish_pct:.1f}%\n"
-        
-        return info
 
     def get_signal_with_balance(self, original_signal):
-        """ĐIỀU CHỈNH TÍN HIỆU - CÂN BẰNG VỚI TẤT CẢ VỊ THẾ BINANCE"""
+        """ĐIỀU CHỈNH TÍN HIỆU - CÂN BẰNG VỚI TẤT CẢ VỊ THẾ BINANCE (ĐÃ TỐI ƯU)"""
         try:
             current_time = time.time()
             if current_time - self.position_balance_check < self.balance_check_interval:
@@ -1166,49 +1188,60 @@ class BaseBot:
             
             self.position_balance_check = current_time
             
-            # 🎯 SỬA: Lấy tất cả vị thế từ Binance
             all_positions = get_positions(api_key=self.api_key, api_secret=self.api_secret)
+            
+            if not all_positions:
+                self.log(f"⚖️ CÂN BẰNG: Không có vị thế → GIỮ NGUYÊN {original_signal}")
+                return original_signal
             
             buy_count = 0
             sell_count = 0
+            total_value = 0
+            buy_value = 0
+            sell_value = 0
             
             for pos in all_positions:
                 position_amt = float(pos.get('positionAmt', 0))
+                entry_price = float(pos.get('entryPrice', 0))
+                leverage = float(pos.get('leverage', 1))
+                
                 if position_amt != 0:
+                    position_value = abs(position_amt) * entry_price / leverage
+                    total_value += position_value
+                    
                     if position_amt > 0:
                         buy_count += 1
+                        buy_value += position_value
                     else:
                         sell_count += 1
+                        sell_value += position_value
             
             total = buy_count + sell_count
-            if total == 0:
-                return original_signal
+            buy_ratio = buy_value / total_value if total_value > 0 else 0.5
+            sell_ratio = sell_value / total_value if total_value > 0 else 0.5
             
-            buy_ratio = buy_count / total
-            sell_ratio = sell_count / total
+            self.log(f"⚖️ CÂN BẰNG TÍN HIỆU: {buy_count}L/${buy_value:.0f} vs {sell_count}S/${sell_value:.0f} | Tín hiệu gốc: {original_signal}")
             
-            self.log(f"📊 CÂN BẰNG TÍN HIỆU: {buy_count} LONG, {sell_count} SHORT | Tín hiệu gốc: {original_signal}")
-            
-            # 🎯 ĐIỀU CHỈNH TÍN HIỆU THEO TẤT CẢ VỊ THẾ
-            if original_signal == "BUY" and buy_ratio > 0.6:
-                self.log(f"⚖️ ĐIỀU CHỈNH: Nhiều LONG ({buy_ratio:.1%}) + tín hiệu BUY → CHUYỂN SHORT")
+            if original_signal == "BUY" and buy_ratio >= 0.6:
+                self.log(f"⚖️ ĐIỀU CHỈNH: Nhiều LONG ({buy_ratio:.1%} giá trị) + tín hiệu BUY → CHUYỂN SHORT")
                 return "SELL"
-            elif original_signal == "SELL" and sell_ratio > 0.6:
-                self.log(f"⚖️ ĐIỀU CHỈNH: Nhiều SHORT ({sell_ratio:.1%}) + tín hiệu SELL → CHUYỂN LONG")
+            elif original_signal == "SELL" and sell_ratio >= 0.6:
+                self.log(f"⚖️ ĐIỀU CHỈNH: Nhiều SHORT ({sell_ratio:.1%} giá trị) + tín hiệu SELL → CHUYỂN LONG")
                 return "BUY"
             elif original_signal == "BUY" and buy_ratio > sell_ratio + 0.2:
-                self.log(f"⚖️ ĐIỀU CHỈNH: LONG nhiều hơn SHORT → ƯU TIÊN SHORT")
+                self.log(f"⚖️ ĐIỀU CHỈNH: LONG nhiều hơn SHORT đáng kể → ƯU TIÊN SHORT")
                 return "SELL"
             elif original_signal == "SELL" and sell_ratio > buy_ratio + 0.2:
-                self.log(f"⚖️ ĐIỀU CHỈNH: SHORT nhiều hơn LONG → ƯU TIÊN LONG")
+                self.log(f"⚖️ ĐIỀU CHỈNH: SHORT nhiều hơn LONG đáng kể → ƯU TIÊN LONG")
                 return "BUY"
             else:
-                self.log(f"⚖️ GIỮ NGUYÊN: Tín hiệu {original_signal} phù hợp với cân bằng")
+                self.log(f"⚖️ GIỮ NGUYÊN: Tín hiệu {original_signal} phù hợp với cân bằng hệ thống")
                 return original_signal
-            
+                
         except Exception as e:
             self.log(f"❌ Lỗi cân bằng với vị thế Binance: {str(e)}")
             return original_signal
+
     def check_position_status(self):
         if not self.symbol:
             return
@@ -1262,7 +1295,6 @@ class BaseBot:
                     self.check_position_status()
                     self.last_position_check = current_time
                 
-                # NẾU KHÔNG CÓ COIN HOẶC ĐANG TÌM COIN
                 if not self.symbol or self.status == "searching":
                     if self.find_and_set_coin():
                         self.log("✅ Đã tìm thấy coin mới, bắt đầu phân tích...")
@@ -1270,13 +1302,10 @@ class BaseBot:
                         time.sleep(10)
                     continue
                 
-                # NẾU ĐANG CHỜ TÍN HIỆU
                 if not self.position_open:
                     signal = self.get_signal()
                     
-                    # 🎯 SỬA QUAN TRỌNG: CHỈ XỬ LÝ NẾU SIGNAL KHÁC NEUTRAL
                     if signal and signal != "NEUTRAL":
-                        # ÁP DỤNG CÂN BẰNG VỊ THẾ
                         balanced_signal = self.get_signal_with_balance(signal)
                         
                         if (balanced_signal and balanced_signal != "NEUTRAL" and
@@ -1289,12 +1318,10 @@ class BaseBot:
                             else:
                                 time.sleep(30)
                     else:
-                        # Nếu signal là NEUTRAL hoặc None, chỉ log debug
                         if signal == "NEUTRAL":
                             logger.debug(f"⚪ {self.symbol} - Tín hiệu NEUTRAL, bỏ qua")
-                        time.sleep(5)  # Chờ ngắn trước khi phân tích lại
+                        time.sleep(5)
                 
-                # KIỂM TRA TP/SL
                 if self.position_open and not self._close_attempted:
                     self.check_tp_sl()
                     
@@ -1317,7 +1344,6 @@ class BaseBot:
         self.log(f"🔴 Bot dừng")
 
     def open_position(self, side):
-        # 🎯 SỬA QUAN TRỌNG: VALIDATE SIDE TRƯỚC KHI ĐẶT LỆNH
         if side not in ["BUY", "SELL"]:
             self.log(f"❌ Side không hợp lệ: {side}")
             return False
@@ -1358,7 +1384,6 @@ class BaseBot:
                 self.log(f"❌ Số lượng quá nhỏ: {qty}")
                 return False
     
-            # 🎯 THÊM LOG CHI TIẾT TRƯỚC KHI ĐẶT LỆNH
             self.log(f"📊 Đang đặt lệnh {side} - SL: {step_size}, Qty: {qty}, Giá: {current_price}")
             
             result = place_order(self.symbol, side, qty, self.api_key, self.api_secret)
@@ -1391,8 +1416,7 @@ class BaseBot:
             else:
                 error_msg = result.get('msg', 'Unknown error') if result else 'No response'
                 self.log(f"❌ Lỗi đặt lệnh {side}: {error_msg}")
-                
-                # 🎯 LOG CHI TIẾT LỖI API
+                    
                 if result and 'code' in result:
                     self.log(f"📋 Mã lỗi Binance: {result['code']} - {result.get('msg', '')}")
                     
@@ -1401,6 +1425,7 @@ class BaseBot:
         except Exception as e:
             self.log(f"❌ Lỗi mở lệnh: {str(e)}")
             return False
+
     def close_position(self, reason=""):
         try:
             self.check_position_status()
@@ -1445,15 +1470,14 @@ class BaseBot:
                 )
                 self.log(message)
                 
-                # RESET HOÀN TOÀN SAU KHI ĐÓNG LỆNH
                 if self.symbol:
                     self.coin_manager.unregister_coin(self.symbol)
                     self.ws_manager.remove_symbol(self.symbol)
                 
                 self._reset_position()
                 self.last_close_time = time.time()
-                self.symbol = None  # RESET SYMBOL
-                self.status = "searching"  # CHUYỂN SANG TRẠNG THÁI TÌM COIN
+                self.symbol = None
+                self.status = "searching"
                 
                 time.sleep(2)
                 self.check_position_status()
@@ -1494,23 +1518,23 @@ class BaseBot:
         elif self.sl is not None and self.sl > 0 and roi <= -self.sl:
             self.close_position(f"❌ Đạt SL {self.sl}% (ROI: {roi:.2f}%)")
 
-# ========== BOT MULTI-TIMEFRAME ĐỘNG ==========
-class DynamicMultiTimeframeBot(BaseBot):
-    """Bot động sử dụng tín hiệu đa khung thời gian - MỖI BOT LÀ 1 VÒNG LẶP ĐỘC LẬP"""
+# ========== BOT XU HƯỚNG ĐỘNG ==========
+class DynamicTrendBot(BaseBot):
+    """Bot động sử dụng hệ thống chỉ báo xu hướng tích hợp"""
     
     def __init__(self, symbol, lev, percent, tp, sl, ws_manager, api_key, api_secret, 
                  telegram_bot_token, telegram_chat_id, config_key=None, bot_id=None):
         
         super().__init__(symbol, lev, percent, tp, sl, ws_manager, api_key, api_secret,
-                        telegram_bot_token, telegram_chat_id, "Dynamic Multi-Timeframe", 
+                        telegram_bot_token, telegram_chat_id, "Dynamic Trend System", 
                         config_key, bot_id)
         
-        self.analyzer = MultiTimeframeAnalyzer()
+        self.analyzer = TrendIndicatorSystem()
         self.last_analysis_time = 0
-        self.analysis_interval = 300
+        self.analysis_interval = 180
         
     def get_signal(self):
-        """Lấy tín hiệu từ phân tích đa khung thời gian"""
+        """Lấy tín hiệu từ hệ thống chỉ báo tích hợp"""
         if not self.symbol:
             return None
             
@@ -1521,30 +1545,16 @@ class DynamicMultiTimeframeBot(BaseBot):
             
             self.last_analysis_time = current_time
             
-            # Phân tích symbol
-            signal, timeframe_data = self.analyzer.analyze_symbol(self.symbol)
+            signal = self.analyzer.analyze_symbol(self.symbol)
             
             if signal != "NEUTRAL":
-                analysis_info = self._format_analysis_info(timeframe_data)
-                self.log(f"🎯 Tín hiệu {signal} từ phân tích đa khung:\n{analysis_info}")
+                self.log(f"🎯 Nhận tín hiệu {signal} từ hệ thống chỉ báo tích hợp")
             
             return signal
             
         except Exception as e:
-            self.log(f"❌ Lỗi phân tích đa khung: {str(e)}")
+            self.log(f"❌ Lỗi phân tích chỉ báo: {str(e)}")
             return None
-    
-    def _format_analysis_info(self, timeframe_data):
-        """Định dạng thông tin phân tích cho log"""
-        info = ""
-        for tf, data in timeframe_data.items():
-            stats = data.get('stats', {})
-            if stats:
-                info += (f"  {tf}: {data['signal']} | "
-                        f"Tăng: {stats['bullish_count']}/{stats['total_candles']} "
-                        f"({stats['bullish_ratio']:.1%}) | "
-                        f"TB: {stats['avg_change']:.2f}%\n")
-        return info
 
 # ========== BOT MANAGER HOÀN CHỈNH ==========
 class BotManager:
@@ -1560,13 +1570,12 @@ class BotManager:
         self.telegram_bot_token = telegram_bot_token
         self.telegram_chat_id = telegram_chat_id
         
-        # KHỞI TẠO HỆ THỐNG MỚI
         self.position_balancer = PositionBalancer(self)
         
         if api_key and api_secret:
             self._verify_api_connection()
-            self.log("🟢 HỆ THỐNG BOT ĐA LUỒNG ĐÃ KHỞI ĐỘNG")
-            self.log("⚖️ Mỗi bot là 1 vòng lặp độc lập - Tự tìm coin & trade")
+            self.log("🟢 HỆ THỐNG BOT XU HƯỚNG ĐÃ KHỞI ĐỘNG")
+            self.log("🎯 Sử dụng hệ thống chỉ báo tích hợp: EMA + RSI + Volume + Support/Resistance")
             
             self.telegram_thread = threading.Thread(target=self._telegram_listener, daemon=True)
             self.telegram_thread.start()
@@ -1586,7 +1595,6 @@ class BotManager:
     def get_position_summary(self):
         """Lấy thống kê tổng quan - BAO GỒM TẤT CẢ VỊ THẾ BINANCE"""
         try:
-            # 🎯 Lấy tất cả vị thế từ Binance
             all_positions = get_positions(api_key=self.api_key, api_secret=self.api_secret)
             
             binance_buy_count = 0
@@ -1604,7 +1612,6 @@ class BotManager:
                         binance_sell_count += 1
                         binance_positions.append(f"{symbol}(SHORT)")
             
-            # Thống kê bot
             bot_buy_count = 0
             bot_sell_count = 0
             searching_bots = 0
@@ -1652,7 +1659,6 @@ class BotManager:
                     else:
                         summary += f"   🔗 {', '.join(binance_positions)}\n"
                 
-                # Đề xuất cân bằng
                 if binance_buy_ratio > 0.6:
                     summary += f"\n⚖️ **ĐỀ XUẤT**: Nhiều LONG → ƯU TIÊN TÌM SHORT"
                 elif binance_sell_ratio > 0.6:
@@ -1667,6 +1673,7 @@ class BotManager:
                     
         except Exception as e:
             return f"❌ Lỗi thống kê: {str(e)}"
+
     def log(self, message):
         logger.info(f"[SYSTEM] {message}")
         if self.telegram_bot_token and self.telegram_chat_id:
@@ -1675,7 +1682,7 @@ class BotManager:
                          default_chat_id=self.telegram_chat_id)
 
     def send_main_menu(self, chat_id):
-        welcome = "🤖 <b>BOT GIAO DỊCH FUTURES ĐA LUỒNG</b>\n\n🎯 <b>MỖI BOT LÀ 1 VÒNG LẶP ĐỘC LẬP</b>"
+        welcome = "🤖 <b>BOT GIAO DỊCH FUTURES ĐA LUỒNG</b>\n\n🎯 <b>HỆ THỐNG CHỈ BÁO XU HƯỚNG TÍCH HỢP</b>"
         send_telegram(welcome, chat_id, create_main_menu(),
                      bot_token=self.telegram_bot_token, 
                      default_chat_id=self.telegram_chat_id)
@@ -1696,18 +1703,16 @@ class BotManager:
         bot_mode = kwargs.get('bot_mode', 'static')
         created_count = 0
         
-        # TẠO NHIỀU BOT THEO SỐ LƯỢNG NGƯỜI DÙNG CHỌN
         for i in range(bot_count):
             try:
                 if bot_mode == 'static' and symbol:
-                    # Bot tĩnh - coin cố định
                     bot_id = f"{symbol}_{strategy_type}_{i}_{int(time.time())}"
                     
                     if bot_id in self.bots:
                         continue
                     
                     bot_class = {
-                        "Multi-Timeframe": DynamicMultiTimeframeBot
+                        "Multi-Timeframe": DynamicTrendBot
                     }.get(strategy_type)
                     
                     if not bot_class:
@@ -1718,20 +1723,18 @@ class BotManager:
                                   self.telegram_chat_id, bot_id=bot_id)
                     
                 else:
-                    # Bot động - tự tìm coin
                     bot_id = f"DYNAMIC_{strategy_type}_{i}_{int(time.time())}"
                     
                     if bot_id in self.bots:
                         continue
                     
                     bot_class = {
-                        "Multi-Timeframe": DynamicMultiTimeframeBot
+                        "Multi-Timeframe": DynamicTrendBot
                     }.get(strategy_type)
                     
                     if not bot_class:
                         continue
                     
-                    # Bot động bắt đầu không có symbol
                     bot = bot_class(None, lev, percent, tp, sl, self.ws_manager,
                                   self.api_key, self.api_secret, self.telegram_bot_token,
                                   self.telegram_chat_id, bot_id=bot_id)
@@ -1746,10 +1749,11 @@ class BotManager:
         
         if created_count > 0:
             success_msg = (
-                f"✅ <b>ĐÃ TẠO {created_count}/{bot_count} BOT {strategy_type}</b>\n\n"
-                f"🎯 Chiến lược: {strategy_type}\n"
+                f"✅ <b>ĐÃ TẠO {created_count}/{bot_count} BOT XU HƯỚNG</b>\n\n"
+                f"🎯 Hệ thống: Trend Indicator System\n"
+                f"📊 Chỉ báo: EMA + RSI + Volume + Support/Resistance\n"
                 f"💰 Đòn bẩy: {lev}x\n"
-                f"📊 % Số dư: {percent}%\n"
+                f"📈 % Số dư: {percent}%\n"
                 f"🎯 TP: {tp}%\n"
                 f"🛡️ SL: {sl}%\n"
                 f"🔧 Chế độ: {bot_mode}\n"
@@ -1760,8 +1764,7 @@ class BotManager:
             else:
                 success_msg += f"🔗 Coin: Tự động tìm kiếm\n"
             
-            success_msg += f"\n🎯 <b>Mỗi bot là 1 vòng lặp độc lập</b>\n"
-            success_msg += f"🔄 <b>Tự reset hoàn toàn sau mỗi lệnh</b>"
+            success_msg += f"\n🎯 <b>Hệ thống chỉ báo tích hợp cho tín hiệu chính xác hơn</b>"
             
             self.log(success_msg)
             return True
@@ -1786,25 +1789,6 @@ class BotManager:
         self.running = False
         self.log("🔴 Hệ thống đã dừng")
 
-    def check_binance_positions(self):
-        """Kiểm tra nhanh vị thế Binance"""
-        try:
-            positions = get_positions(api_key=self.api_key, api_secret=self.api_secret)
-            buy_count = 0
-            sell_count = 0
-            
-            for pos in positions:
-                position_amt = float(pos.get('positionAmt', 0))
-                if position_amt != 0:
-                    if position_amt > 0:
-                        buy_count += 1
-                    else:
-                        sell_count += 1
-            
-            return buy_count, sell_count
-        except Exception as e:
-            logger.error(f"❌ Lỗi kiểm tra vị thế Binance: {e}")
-            return 0, 0
     def _telegram_listener(self):
         last_update_id = 0
         
@@ -1910,10 +1894,10 @@ class BotManager:
                 self.user_states[chat_id] = {}
                 send_telegram("❌ Đã hủy thêm bot", chat_id, create_main_menu(),
                             self.telegram_bot_token, self.telegram_chat_id)
-            elif text in ["⏰ Multi-Timeframe"]:
+            elif text in ["⏰ Trend System"]:
                 
                 strategy_map = {
-                    "⏰ Multi-Timeframe": "Multi-Timeframe"
+                    "⏰ Trend System": "Multi-Timeframe"
                 }
                 
                 strategy = strategy_map[text]
@@ -2273,26 +2257,24 @@ class BotManager:
         
         elif text == "🎯 Chiến lược":
             strategy_info = (
-                "🎯 <b>HỆ THỐNG BOT ĐA LUỒNG ĐỘC LẬP</b>\n\n"
+                "🎯 <b>HỆ THỐNG BOT XU HƯỚNG TÍCH HỢP</b>\n\n"
                 
-                "🤖 <b>Mỗi Bot là 1 Vòng Lặp Hoàn Chỉnh</b>\n"
-                "• 🔄 Tự tìm coin từ toàn bộ Binance\n"
-                "• 📊 Phân tích đa khung thời gian\n"
-                "• 🎯 Tự quyết định hướng giao dịch\n"
-                "• ⚖️ Tự cân bằng với bot khác\n"
-                "• 🔄 Reset hoàn toàn sau mỗi lệnh\n\n"
+                "🤖 <b>Hệ Thống Chỉ Báo Mới</b>\n"
+                "• 📈 EMA (9,21,50) - Xu hướng chính\n"  
+                "• 🔄 RSI (14) + Volume - Quá mua/bán\n"
+                "• 🎯 Support/Resistance - Breakout\n"
+                "• 📊 Market Structure - Cấu trúc thị trường\n\n"
                 
-                "⏰ <b>Multi-Timeframe Strategy</b>\n"
-                "• 📊 Phân tích 4 khung: 1m, 5m, 15m, 30m\n"
-                "• 🎯 Tín hiệu xác nhận khi đa số đồng thuận\n"
-                "• 📈 Thống kê 200 nến gần nhất\n\n"
+                "⚖️ <b>Tích Hợp Thông Minh</b>\n"
+                "• 🎯 Trọng số: EMA 40% + RSI 30% + S/R 20% + Structure 10%\n"
+                "• 📊 Confidence threshold: 40%\n"
+                "• 🔄 Phân tích mỗi 3 phút\n\n"
                 
-                "🔄 <b>Quy Trình Tự Động Hoàn Toàn</b>\n"
-                "1. 🔍 Tìm coin có tín hiệu tốt\n"
-                "2. 📊 Phân tích đa khung thời gian\n"
-                "3. 🎯 Mở lệnh khi có tín hiệu\n"
-                "4. 💰 Theo dõi TP/SL\n"
-                "5. 🔄 Reset & tìm coin mới"
+                "🔄 <b>Ưu Điểm Hệ Thống Mới</b>\n"
+                "• ✅ Bắt trend tốt hơn đa khung thời gian\n"
+                "• ✅ Ít tín hiệu giả, ít đi ngược xu hướng\n"
+                "• ✅ Kết hợp volume confirmation\n"
+                "• ✅ Phù hợp với thị trường thực tế"
             )
             send_telegram(strategy_info, chat_id,
                         bot_token=self.telegram_bot_token, default_chat_id=self.telegram_chat_id)
