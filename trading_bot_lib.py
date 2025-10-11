@@ -536,7 +536,7 @@ class SmartCoinFinder:
             
             logger.info(f"🔍 Bot đang tìm 1 coin {target_direction} với hệ thống chỉ báo mới...")
             
-            all_symbols = get_all_usdt_pairs(limit=100)
+            all_symbols = get_all_usdt_pairs(limit=600)
             if not all_symbols:
                 logger.error("❌ Không lấy được danh sách coin từ Binance")
                 return None
@@ -580,7 +580,7 @@ class SmartCoinFinder:
         """Phương pháp dự phòng"""
         logger.info(f"🔄 Sử dụng fallback cho {target_direction}")
         
-        all_symbols = get_all_usdt_pairs(limit=50)
+        all_symbols = get_all_usdt_pairs(limit=600)
         if not all_symbols:
             return None
             
@@ -706,7 +706,7 @@ def binance_api_request(url, method='GET', params=None, headers=None):
     logger.error(f"Không thể thực hiện yêu cầu API sau {max_retries} lần thử")
     return None
 
-def get_all_usdt_pairs(limit=100):
+def get_all_usdt_pairs(limit=600):
     try:
         url = "https://fapi.binance.com/fapi/v1/exchangeInfo"
         data = binance_api_request(url)
