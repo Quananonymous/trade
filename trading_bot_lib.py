@@ -1294,14 +1294,7 @@ class BaseBot:
                 if current_time - self.last_position_check > self.position_check_interval:
                     self.check_position_status()
                     self.last_position_check = current_time
-                
-                if not self.symbol or self.status == "searching":
-                    if self.find_and_set_coin():
-                        self.log("✅ Đã tìm thấy coin mới, bắt đầu phân tích...")
-                    else:
-                        time.sleep(10)
-                    continue
-                
+                              
                 if not self.position_open:
                     signal = self.get_signal()
                     
@@ -1312,7 +1305,6 @@ class BaseBot:
                             current_time - self.last_trade_time > 60 and
                             current_time - self.last_close_time > self.cooldown_period):
                             
-                            self.log(f"🎯 Nhận tín hiệu {balanced_signal}, đang mở lệnh...")
                             if self.open_position(balanced_signal):
                                 self.last_trade_time = current_time
                             else:
