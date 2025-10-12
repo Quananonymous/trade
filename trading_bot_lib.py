@@ -1133,5 +1133,3 @@ class BotManager:
         
         elif text:
             self.send_main_menu(chat_id)
-
-# ========== KHỞI CHẠY HỆ THỐNG ==========
