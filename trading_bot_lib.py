@@ -1247,7 +1247,8 @@ class BaseBot:
             excluded_symbols = set(managed_coins.keys())
             
             if excluded_symbols:
-                self.log(f"🚫 Tránh các coin đang trade: {', '.join(excluded_symbols)}")
+                excluded_list = list(excluded_symbols)[:5]
+                self.log(f"🚫 Tránh các coin đang trade: {', '.join(excluded_list)}{'...' if len(excluded_symbols) > 5 else ''}")
             
             # TÌM COIN VỚI KIỂM TRA ĐÒN BẨY
             coin_data = self.coin_finder.find_coin_by_direction(
@@ -1403,6 +1404,14 @@ class BaseBot:
                     self.last_position_check = current_time
                               
                 if not self.position_open:
+                    if not self.symbol:
+                        # Nếu không có symbol, tìm coin mới
+                        if self.find_and_set_coin():
+                            time.sleep(5)
+                        else:
+                            time.sleep(10)
+                        continue
+                    
                     signal = self.get_signal()
                     
                     if signal and signal != "NEUTRAL":
@@ -1448,6 +1457,11 @@ class BaseBot:
             return False
             
         try:
+            # KIỂM TRA SYMBOL TRƯỚC
+            if not self.symbol:
+                self.log(f"❌ Chưa có symbol, không thể mở lệnh {side}")
+                return False
+
             # KIỂM TRA LẠI ĐÒN BẨY TRƯỚC KHI MỞ LỆNH
             if not self.coin_finder.is_leverage_supported(self.symbol, self.lev):
                 self.log(f"❌ Coin {self.symbol} không hỗ trợ đòn bẩy {self.lev}x, tìm coin mới")
@@ -1644,11 +1658,7 @@ class DynamicTrendBot(BaseBot):
     def get_signal(self):
         """Lấy tín hiệu từ hệ thống chỉ báo tích hợp"""
         if not self.symbol:
-            # Nếu không có symbol, tìm coin mới
-            if self.find_and_set_coin():
-                return None
-            else:
-                return None
+            return None
             
         try:
             current_time = time.time()
