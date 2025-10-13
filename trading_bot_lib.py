@@ -1,4 +1,4 @@
-# trading_bot_lib_fixed.py - HOÀN CHỈNH VỚI ROTATION COIN
+# trading_bot_lib (19).py - HOÀN CHỈNH VỚI ROTATION COIN & KIỂM TRA ĐÒN BẨY
 import json
 import hmac
 import hashlib
@@ -519,26 +519,106 @@ class PositionBalancer:
             logger.error(f"❌ Lỗi đề xuất hướng: {str(e)}")
             return "NEUTRAL"
 
-# ========== SMART COIN FINDER ==========
+# ========== SMART COIN FINDER - CẬP NHẬT VỚI KIỂM TRA ĐÒN BẨY ==========
 class SmartCoinFinder:
-    """TÌM COIN THÔNG MINH DỰA TRÊN HỆ THỐNG CHỈ BÁO MỚI"""
+    """TÌM COIN THÔNG MINH DỰA TRÊN HỆ THỐNG CHỈ BÁO MỚI VÀ ĐÒN BẨY"""
     
     def __init__(self, api_key, api_secret):
         self.api_key = api_key
         self.api_secret = api_secret
         self.analyzer = TrendIndicatorSystem()
+        self.leverage_cache = {}  # Cache đòn bẩy để tăng tốc độ
+        self.cache_timeout = 300  # 5 phút
         
-    def find_coin_by_direction(self, target_direction, excluded_symbols=None):
-        """TÌM 1 COIN DUY NHẤT - VỚI HỆ THỐNG CHỈ BÁO MỚI"""
+    def get_symbol_leverage_info(self, symbol):
+        """Lấy thông tin đòn bẩy tối đa cho symbol"""
+        try:
+            # Kiểm tra cache trước
+            current_time = time.time()
+            if symbol in self.leverage_cache:
+                cached_data, timestamp = self.leverage_cache[symbol]
+                if current_time - timestamp < self.cache_timeout:
+                    return cached_data
+            
+            url = "https://fapi.binance.com/fapi/v1/exchangeInfo"
+            data = binance_api_request(url)
+            if not data:
+                return None
+                
+            for s in data['symbols']:
+                if s['symbol'] == symbol.upper():
+                    # Tìm thông tin đòn bẩy từ filters
+                    for f in s['filters']:
+                        if f['filterType'] == 'LEVERAGE':
+                            max_leverage = int(f.get('maxLeverage', 20))  # Mặc định 20x
+                            self.leverage_cache[symbol] = (max_leverage, current_time)
+                            return max_leverage
+                    
+                    # Nếu không tìm thấy filter leverage, trả về mặc định
+                    self.leverage_cache[symbol] = (20, current_time)
+                    return 20
+                    
+            return None
+            
+        except Exception as e:
+            logger.error(f"❌ Lỗi lấy đòn bẩy {symbol}: {str(e)}")
+            return None
+    
+    def is_leverage_supported(self, symbol, target_leverage):
+        """Kiểm tra coin có hỗ trợ đòn bẩy mục tiêu không"""
+        try:
+            max_leverage = self.get_symbol_leverage_info(symbol)
+            if max_leverage is None:
+                return False
+                
+            supported = max_leverage >= target_leverage
+            if not supported:
+                logger.debug(f"⚠️ {symbol} không hỗ trợ {target_leverage}x (tối đa: {max_leverage}x)")
+            return supported
+            
+        except Exception as e:
+            logger.error(f"❌ Lỗi kiểm tra đòn bẩy {symbol}: {str(e)}")
+            return False
+    
+    def filter_symbols_by_leverage(self, symbols, target_leverage):
+        """Lọc danh sách symbol theo đòn bẩy hỗ trợ"""
+        if not symbols:
+            return []
+            
+        logger.info(f"🔍 Đang lọc {len(symbols)} coin theo đòn bẩy {target_leverage}x...")
+        
+        valid_symbols = []
+        invalid_symbols = []
+        
+        for symbol in symbols:
+            if self.is_leverage_supported(symbol, target_leverage):
+                valid_symbols.append(symbol)
+            else:
+                invalid_symbols.append(symbol)
+        
+        logger.info(f"✅ Tìm thấy {len(valid_symbols)} coin hỗ trợ {target_leverage}x")
+        if invalid_symbols:
+            logger.info(f"⚠️ {len(invalid_symbols)} coin không hỗ trợ: {', '.join(invalid_symbols[:10])}{'...' if len(invalid_symbols) > 10 else ''}")
+        
+        return valid_symbols
+    
+    def find_coin_by_direction(self, target_direction, excluded_symbols=None, target_leverage=20):
+        """TÌM 1 COIN DUY NHẤT - VỚI KIỂM TRA ĐÒN BẨY"""
         try:
             if excluded_symbols is None:
                 excluded_symbols = set()
             
-            logger.info(f"🔍 Bot đang tìm 1 coin {target_direction} với hệ thống chỉ báo mới...")
+            logger.info(f"🔍 Bot đang tìm 1 coin {target_direction} (đòn bẩy {target_leverage}x)...")
             
             all_symbols = get_all_usdt_pairs(limit=600)
             if not all_symbols:
                 logger.error("❌ Không lấy được danh sách coin từ Binance")
+                return None
+            
+            # LỌC COIN THEO ĐÒN BẨY TRƯỚC
+            valid_symbols = self.filter_symbols_by_leverage(all_symbols, target_leverage)
+            if not valid_symbols:
+                logger.error(f"❌ Không có coin nào hỗ trợ đòn bẩy {target_leverage}x")
                 return None
             
             # THÊM: Lấy danh sách coin đang được quản lý
@@ -546,9 +626,16 @@ class SmartCoinFinder:
             managed_coins = coin_manager.get_managed_coins()
             excluded_symbols.update(managed_coins.keys())
             
-            random.shuffle(all_symbols)
+            # Loại bỏ các coin đã bị loại trừ
+            filtered_symbols = [s for s in valid_symbols if s not in excluded_symbols]
             
-            for symbol in all_symbols:
+            if not filtered_symbols:
+                logger.warning(f"⚠️ Tất cả coin hợp lệ đã bị loại trừ (đang được quản lý)")
+                return None
+            
+            random.shuffle(filtered_symbols)
+            
+            for symbol in filtered_symbols:
                 try:
                     if symbol in ['BTCUSDT', 'ETHUSDT', 'BNBUSDT'] or symbol in excluded_symbols:
                         continue
@@ -556,12 +643,13 @@ class SmartCoinFinder:
                     signal = self.analyzer.analyze_symbol(symbol)
                     
                     if signal == target_direction:
-                        logger.info(f"✅ Bot đã tìm thấy coin: {symbol} - {target_direction}")
+                        logger.info(f"✅ Bot đã tìm thấy coin: {symbol} - {target_direction} (hỗ trợ {target_leverage}x)")
                         return {
                             'symbol': symbol,
                             'direction': target_direction,
                             'score': 0.8,
-                            'qualified': True
+                            'qualified': True,
+                            'leverage_supported': True
                         }
                         
                 except Exception as e:
@@ -569,7 +657,7 @@ class SmartCoinFinder:
                     continue
             
             logger.warning(f"⚠️ Không tìm thấy coin {target_direction} phù hợp, sử dụng fallback")
-            fallback_coin = self._find_fallback_coin(target_direction, excluded_symbols)
+            fallback_coin = self._find_fallback_coin(target_direction, excluded_symbols, target_leverage)
             
             if fallback_coin:
                 fallback_coin['qualified'] = True
@@ -581,17 +669,28 @@ class SmartCoinFinder:
             logger.error(f"❌ Lỗi tìm coin: {str(e)}")
             return None
     
-    def _find_fallback_coin(self, target_direction, excluded_symbols):
-        """Phương pháp dự phòng"""
-        logger.info(f"🔄 Sử dụng fallback cho {target_direction}")
+    def _find_fallback_coin(self, target_direction, excluded_symbols, target_leverage):
+        """Phương pháp dự phòng với kiểm tra đòn bẩy"""
+        logger.info(f"🔄 Sử dụng fallback cho {target_direction} (đòn bẩy {target_leverage}x)")
         
         all_symbols = get_all_usdt_pairs(limit=600)
         if not all_symbols:
             return None
             
-        random.shuffle(all_symbols)
+        # Lọc theo đòn bẩy
+        valid_symbols = self.filter_symbols_by_leverage(all_symbols, target_leverage)
+        if not valid_symbols:
+            return None
+            
+        # Loại bỏ các coin bị loại trừ
+        filtered_symbols = [s for s in valid_symbols if s not in excluded_symbols]
         
-        for symbol in all_symbols:
+        if not filtered_symbols:
+            return None
+            
+        random.shuffle(filtered_symbols)
+        
+        for symbol in filtered_symbols:
             if symbol in ['BTCUSDT', 'ETHUSDT'] or symbol in excluded_symbols:
                 continue
                 
@@ -607,13 +706,14 @@ class SmartCoinFinder:
                     score = abs(change_24h) / 15
                 
                 if score > 0.2:
-                    logger.info(f"🔄 Fallback: {symbol} - {target_direction} (điểm: {score:.2f})")
+                    logger.info(f"🔄 Fallback: {symbol} - {target_direction} (điểm: {score:.2f}, đòn bẩy: {target_leverage}x)")
                     return {
                         'symbol': symbol,
                         'direction': target_direction,
                         'score': score,
                         'fallback': True,
-                        'qualified': True
+                        'qualified': True,
+                        'leverage_supported': True
                     }
                         
             except Exception as e:
@@ -1108,10 +1208,10 @@ class BaseBot:
                 self.log(f"⚖️ QUYẾT ĐỊNH: SHORT chiếm ưu thế ({sell_ratio_value:.1%} giá trị) → TÌM LONG")
                 return "BUY"
             elif buy_ratio_value > sell_ratio_value + 0.15:
-                self.log(f"⚖️ QUYẾT ĐỊNH: LONG nhiều hơn SHORT ({buy_ratio_value:.1%} vs {sell_ratio_value:.1%}) → TÌM SHORT")
+                self.log(f"⚖️ QUYẾT ĐỊNH: LONG nhiều hơn SHORT đáng kể → ƯU TIÊN SHORT")
                 return "SELL"
             elif sell_ratio_value > buy_ratio_value + 0.15:
-                self.log(f"⚖️ QUYẾT ĐỊNH: SHORT nhiều hơn LONG ({sell_ratio_value:.1%} vs {buy_ratio_value:.1%}) → TÌM LONG")
+                self.log(f"⚖️ QUYẾT ĐỊNH: SHORT nhiều hơn LONG đáng kể → ƯU TIÊN LONG")
                 return "BUY"
             else:
                 if buy_count > sell_count:
@@ -1131,7 +1231,7 @@ class BaseBot:
             return "BUY" if random.random() > 0.5 else "SELL"
 
     def find_and_set_coin(self):
-        """TÌM VÀ SET COIN MỚI - VỚI KIỂM TRA CÂN BẰNG VỊ THẾ"""
+        """TÌM VÀ SET COIN MỚI - VỚI KIỂM TRA ĐÒN BẨY"""
         try:
             current_time = time.time()
             if current_time - self.last_find_time < self.find_interval:
@@ -1141,7 +1241,7 @@ class BaseBot:
             
             self.current_target_direction = self.get_target_direction()
             
-            self.log(f"🎯 Đang tìm coin {self.current_target_direction} để CÂN BẰNG hệ thống")
+            self.log(f"🎯 Đang tìm coin {self.current_target_direction} (đòn bẩy {self.lev}x) để CÂN BẰNG hệ thống")
             
             managed_coins = self.coin_manager.get_managed_coins()
             excluded_symbols = set(managed_coins.keys())
@@ -1149,13 +1249,15 @@ class BaseBot:
             if excluded_symbols:
                 self.log(f"🚫 Tránh các coin đang trade: {', '.join(excluded_symbols)}")
             
+            # TÌM COIN VỚI KIỂM TRA ĐÒN BẨY
             coin_data = self.coin_finder.find_coin_by_direction(
                 self.current_target_direction, 
-                excluded_symbols
+                excluded_symbols,
+                self.lev  # Truyền đòn bẩy mục tiêu
             )
         
             if coin_data is None:
-                self.log(f"⚠️ Không tìm thấy coin {self.current_target_direction} phù hợp, thử lại sau")
+                self.log(f"⚠️ Không tìm thấy coin {self.current_target_direction} hỗ trợ đòn bẩy {self.lev}x, thử lại sau")
                 return False
                 
             if not coin_data.get('qualified', False):
@@ -1172,7 +1274,7 @@ class BaseBot:
                 self.symbol = new_symbol
                 self.ws_manager.add_symbol(self.symbol, self._handle_price_update)
                 
-                self.log(f"🎯 Đã tìm thấy coin {new_symbol} - {self.current_target_direction}")
+                self.log(f"🎯 Đã tìm thấy coin {new_symbol} - {self.current_target_direction} (hỗ trợ {self.lev}x)")
                 
                 self.status = "waiting"
                 return True
@@ -1346,6 +1448,14 @@ class BaseBot:
             return False
             
         try:
+            # KIỂM TRA LẠI ĐÒN BẨY TRƯỚC KHI MỞ LỆNH
+            if not self.coin_finder.is_leverage_supported(self.symbol, self.lev):
+                self.log(f"❌ Coin {self.symbol} không hỗ trợ đòn bẩy {self.lev}x, tìm coin mới")
+                self.close_position("Coin không hỗ trợ đòn bẩy")
+                self.symbol = None
+                self.status = "searching"
+                return False
+
             self.check_position_status()
             if self.position_open:
                 self.log(f"⚠️ Đã có vị thế {self.side}, bỏ qua tín hiệu {side}")
@@ -1579,6 +1689,7 @@ class BotManager:
             self.log("🟢 HỆ THỐNG BOT XU HƯỚNG ĐÃ KHỞI ĐỘNG")
             self.log("🎯 Sử dụng hệ thống chỉ báo tích hợp: EMA + RSI + Volume + Support/Resistance")
             self.log("🔄 Hệ thống Rotation Coin: Tự động tìm coin mới sau khi đóng lệnh")
+            self.log("⚡ Kiểm tra đòn bẩy: Tự động lọc coin hỗ trợ đòn bẩy mục tiêu")
             
             self.telegram_thread = threading.Thread(target=self._telegram_listener, daemon=True)
             self.telegram_thread.start()
@@ -1694,7 +1805,7 @@ class BotManager:
                          default_chat_id=self.telegram_chat_id)
 
     def send_main_menu(self, chat_id):
-        welcome = "🤖 <b>BOT GIAO DỊCH FUTURES ĐA LUỒNG</b>\n\n🎯 <b>HỆ THỐNG CHỈ BÁO XU HƯỚNG TÍCH HỢP</b>\n🔄 <b>ROTATION COIN TỰ ĐỘNG</b>"
+        welcome = "🤖 <b>BOT GIAO DỊCH FUTURES ĐA LUỒNG</b>\n\n🎯 <b>HỆ THỐNG CHỈ BÁO XU HƯỚNG TÍCH HỢP</b>\n🔄 <b>ROTATION COIN TỰ ĐỘNG</b>\n⚡ <b>KIỂM TRA ĐÒN BẨY TỰ ĐỘNG</b>"
         send_telegram(welcome, chat_id, create_main_menu(),
                      bot_token=self.telegram_bot_token, 
                      default_chat_id=self.telegram_chat_id)
@@ -1777,7 +1888,8 @@ class BotManager:
                 success_msg += f"🔗 Coin: Tự động tìm kiếm\n"
             
             success_msg += f"\n🎯 <b>Hệ thống rotation coin tự động</b>\n"
-            success_msg += f"🔄 <b>Tự tìm coin mới sau khi đóng lệnh</b>"
+            success_msg += f"🔄 <b>Tự tìm coin mới sau khi đóng lệnh</b>\n"
+            success_msg += f"⚡ <b>Kiểm tra đòn bẩy tự động</b>"
             
             self.log(success_msg)
             return True
@@ -1896,6 +2008,7 @@ class BotManager:
                         f"🔄 Mỗi bot tự tìm coin & trade độc lập\n"
                         f"🎯 Tự reset hoàn toàn sau mỗi lệnh\n"
                         f"📊 Mỗi bot là 1 vòng lặp hoàn chỉnh\n"
+                        f"⚡ <b>Kiểm tra đòn bẩy tự động</b>\n"
                         f"🔄 <b>Rotation coin tự động</b>\n\n"
                         "Chọn chiến lược:",
                         chat_id,
@@ -2112,6 +2225,7 @@ class BotManager:
                         success_msg += f"\n\n🎯 <b>Mỗi bot là 1 vòng lặp độc lập</b>\n"
                         success_msg += f"🔄 <b>Tự reset hoàn toàn sau mỗi lệnh</b>\n"
                         success_msg += f"📊 <b>Tự tìm coin & trade độc lập</b>\n"
+                        success_msg += f"⚡ <b>Kiểm tra đòn bẩy tự động</b>\n"
                         success_msg += f"🔄 <b>Rotation coin tự động</b>"
                         
                         send_telegram(success_msg, chat_id, create_main_menu(),
@@ -2141,6 +2255,7 @@ class BotManager:
                 f"💰 Số dư hiện có: <b>{balance:.2f} USDT</b>\n\n"
                 f"Chọn số lượng bot độc lập bạn muốn tạo:\n"
                 f"<i>Mỗi bot sẽ tự tìm coin & trade độc lập</i>\n"
+                f"⚡ <b>Kiểm tra đòn bẩy tự động</b>\n"
                 f"🔄 <b>Rotation coin tự động</b>",
                 chat_id,
                 create_bot_count_keyboard(),
@@ -2290,7 +2405,13 @@ class BotManager:
                 "• ✅ Tự động tìm coin mới sau khi đóng lệnh\n"
                 "• ✅ Tránh trùng lặp coin giữa các bot\n"
                 "• ✅ Luôn có coin mới để trade\n"
-                "• ✅ Vòng lặp vô hạn 5 bot"
+                "• ✅ Vòng lặp vô hạn 5 bot\n\n"
+                
+                "⚡ <b>KIỂM TRA ĐÒN BẨY TỰ ĐỘNG</b>\n"
+                "• ✅ Tự động lọc coin hỗ trợ đòn bẩy mục tiêu\n"
+                "• ✅ Cache thông tin để tăng tốc độ\n"
+                "• ✅ Log chi tiết coin hợp lệ/không hợp lệ\n"
+                "• ✅ Fallback an toàn nếu không tìm thấy coin"
             )
             send_telegram(strategy_info, chat_id,
                         bot_token=self.telegram_bot_token, default_chat_id=self.telegram_chat_id)
@@ -2310,7 +2431,8 @@ class BotManager:
                 f"📊 Đang trade: {trading_bots} bot\n"
                 f"🌐 WebSocket: {len(self.ws_manager.connections)} kết nối\n"
                 f"⚖️ Position Balancer: Đã sẵn sàng\n"
-                f"🔄 Rotation Coin: Đã kích hoạt\n\n"
+                f"🔄 Rotation Coin: Đã kích hoạt\n"
+                f"⚡ Kiểm tra đòn bẩy: Đã kích hoạt\n\n"
                 f"🎯 <b>Mỗi bot độc lập - Tự reset hoàn toàn</b>"
             )
             send_telegram(config_info, chat_id,
@@ -2344,6 +2466,7 @@ class BotManager:
                 f"🔄 Tự reset hoàn toàn sau mỗi lệnh\n"
                 f"📊 Mỗi bot là 1 vòng lặp hoàn chỉnh\n"
                 f"⚖️ Tự cân bằng với các bot khác\n"
+                f"⚡ <b>Kiểm tra đòn bẩy tự động</b>\n"
                 f"🔄 <b>Rotation coin tự động</b>\n\n"
                 f"Chọn đòn bẩy:",
                 chat_id,
