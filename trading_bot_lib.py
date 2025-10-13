@@ -16,6 +16,7 @@ import traceback
 import random
 from datetime import datetime
 from concurrent.futures import ThreadPoolExecutor
+from collections import deque
 
 # ========== CẤU HÌNH LOGGING ==========
 def setup_logging():
@@ -1033,7 +1034,7 @@ class BaseBot:
         self.side = ""
         self.qty = 0
         self.entry = 0
-        self.prices = []
+        self.prices = deque(maxlen=100)  # Tối ưu với deque
         self.position_open = False
         self._stop = False
         
@@ -1095,8 +1096,6 @@ class BaseBot:
             return
         try:
             self.prices.append(float(price))
-            if len(self.prices) > 100:
-                self.prices = self.prices[-100:]
         except Exception as e:
             self.log(f"❌ Lỗi xử lý giá: {str(e)}")
 
@@ -2408,13 +2407,4 @@ class BotManager:
 # ========== KHỞI TẠO GLOBAL INSTANCES ==========
 coin_manager = CoinManager()
 
-# ========== HÀM KHỞI ĐỘNG NHANH ==========
-def create_bot_system(api_key, api_secret, telegram_bot_token=None, telegram_chat_id=None):
-    """Khởi tạo nhanh hệ thống bot"""
-    manager = BotManager(
-        api_key=api_key,
-        api_secret=api_secret,
-        telegram_bot_token=telegram_bot_token,
-        telegram_chat_id=telegram_chat_id
-    )
-    return manager
+    print("🎯 Hệ thống 5 bước thông minh đã được tích hợp")
