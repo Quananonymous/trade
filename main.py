@@ -1797,57 +1797,6 @@ class DynamicTrendBot(BaseBot):
             self.log(f"❌ Lỗi phân tích chỉ báo: {str(e)}")
             return None
 
-# ========== BOT MANAGER HOÀN CHỈNH ==========
-# trading_bot_lib_part2.py
-# HỆ THỐNG TRADING BOT HOÀN CHỈNH - PHẦN 2 (BOT MANAGER HOÀN CHỈNH)
-import json
-import time
-import threading
-import random
-import requests
-from trading_bot_lib_part1 import *
-
-# ========== BOT XU HƯỚNG ĐỘNG ==========
-class DynamicTrendBot(BaseBot):
-    """Bot động sử dụng hệ thống chỉ báo xu hướng tích hợp"""
-    
-    def __init__(self, symbol, lev, percent, tp, sl, ws_manager, api_key, api_secret, 
-                 telegram_bot_token, telegram_chat_id, config_key=None, bot_id=None):
-        
-        super().__init__(symbol, lev, percent, tp, sl, ws_manager, api_key, api_secret,
-                        telegram_bot_token, telegram_chat_id, "Dynamic Trend System", 
-                        config_key, bot_id)
-        
-        self.analyzer = TrendIndicatorSystem()
-        self.last_analysis_time = 0
-        self.analysis_interval = 180
-        
-    def get_signal(self):
-        """Lấy tín hiệu từ hệ thống chỉ báo tích hợp"""
-        if not self.symbol:
-            if self.find_and_set_coin():
-                return None
-            else:
-                return None
-            
-        try:
-            current_time = time.time()
-            if current_time - self.last_analysis_time < self.analysis_interval:
-                return None
-            
-            self.last_analysis_time = current_time
-            
-            signal = self.analyzer.analyze_symbol(self.symbol)
-            
-            if signal != "NEUTRAL":
-                self.log(f"🎯 Nhận tín hiệu {signal} từ hệ thống chỉ báo")
-            
-            return signal
-            
-        except Exception as e:
-            self.log(f"❌ Lỗi phân tích chỉ báo: {str(e)}")
-            return None
-
 # ========== BOT MANAGER HOÀN CHỈNH - ĐẦY ĐỦ GIAO DIỆN TELEGRAM ==========
 class BotManager:
     def __init__(self, api_key=None, api_secret=None, telegram_bot_token=None, telegram_chat_id=None):
@@ -2567,3 +2516,4 @@ class BotManager:
         )
         send_telegram(config_info, chat_id,
                     bot_token=self.telegram_bot_token, default_chat_id=self.telegram_chat_id)
+
