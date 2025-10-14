@@ -1757,6 +1757,8 @@ class BaseBot:
         elif self.sl is not None and self.sl > 0 and roi <= -self.sl:
             self.close_position(f"❌ Đạt SL {self.sl}% (ROI: {roi:.2f}%)")
 
+
+# ========== BOT XU HƯỚNG ĐỘNG ==========
 class DynamicTrendBot(BaseBot):
     """Bot động sử dụng hệ thống chỉ báo xu hướng tích hợp"""
     
@@ -1797,7 +1799,7 @@ class DynamicTrendBot(BaseBot):
             self.log(f"❌ Lỗi phân tích chỉ báo: {str(e)}")
             return None
 
-# ========== BOT MANAGER HOÀN CHỈNH - ĐẦY ĐỦ GIAO DIỆN TELEGRAM ==========
+# ========== BOT MANAGER HOÀN CHỈNH - HỖ TRỢ SL=0 ==========
 class BotManager:
     def __init__(self, api_key=None, api_secret=None, telegram_bot_token=None, telegram_chat_id=None):
         self.ws_manager = WebSocketManager()
@@ -1919,10 +1921,6 @@ class BotManager:
         analyzer = TrendIndicatorSystem()
         return analyzer.get_probability_report(symbol)
 
-    def get_position_summary(self):
-        """Thống kê tổng quan"""
-        return self.get_detailed_statistics()
-
     def log(self, message):
         """Log thông điệp hệ thống"""
         if "❌" in message or "✅" in message or "🟢" in message or "🔴" in message or "⛔" in message:
@@ -1946,12 +1944,12 @@ class BotManager:
                      default_chat_id=self.telegram_chat_id)
 
     def add_bot(self, symbol, lev, percent, tp, sl, strategy_type, bot_count=1, **kwargs):
-        """Thêm bot với đầy đủ thông số"""
+        """Thêm bot với đầy đủ thông số - HỖ TRỢ SL=0"""
         bot_mode = kwargs.get('bot_mode', 'static')
         
-        if sl == 0:
-            sl = None
-            
+        # 🎯 QUAN TRỌNG: Cho phép SL = 0 (không có stop loss)
+        # Không cần convert sl = 0 thành None, giữ nguyên giá trị
+        
         if not self.api_key or not self.api_secret:
             self.log("❌ Chưa thiết lập API Key trong BotManager")
             return False
@@ -1998,15 +1996,18 @@ class BotManager:
                 continue
         
         if created_count > 0:
+            # Hiển thị thông tin SL
+            sl_display = "KHÔNG" if sl == 0 else f"{sl}%"
+            
             success_msg = (
-                f"✅ <b>ĐÃ TẠO {created_count}/{bot_count} BOT XU HƯỚNG</b>\n\n"
+                f"✅ <b>ĐÃ TẠO {created_count}/{bot_count} BOT THÀNH CÔNG</b>\n\n"
                 f"🎯 Hệ thống: Trend Indicator System\n"
                 f"📊 Chỉ báo: EMA + RSI + Volume + Support/Resistance\n"
                 f"📈 Thống kê: Phân tích xác suất 200 nến\n"
                 f"💰 Đòn bẩy: {lev}x\n"
                 f"📈 % Số dư: {percent}%\n"
                 f"🎯 TP: {tp}%\n"
-                f"🛡️ SL: {sl}%\n"
+                f"🛡️ SL: {sl_display}\n"
                 f"🔧 Chế độ: {bot_mode}\n"
             )
             
@@ -2079,9 +2080,20 @@ class BotManager:
                 time.sleep(10)
 
     def _handle_telegram_message(self, chat_id, text):
-        """Xử lý tin nhắn Telegram"""
+        """Xử lý tin nhắn Telegram - ĐÃ SỬA LỖI XÁC NHẬN"""
         user_state = self.user_states.get(chat_id, {})
         current_step = user_state.get('step')
+        
+        # 🎯 QUAN TRỌNG: Xử lý xác nhận tạo bot TRƯỚC
+        if current_step == 'waiting_confirmation':
+            if text == "✅ Xác nhận tạo bot":
+                self._confirm_create_bot(chat_id, user_state)
+                return
+            elif text == "❌ Hủy bỏ":
+                self.user_states[chat_id] = {}
+                send_telegram("❌ Đã hủy tạo bot", chat_id, create_main_menu(),
+                             self.telegram_bot_token, self.telegram_chat_id)
+                return
         
         # Xử lý các lệnh menu chính
         if text == "➕ Thêm Bot":
@@ -2106,7 +2118,7 @@ class BotManager:
             symbol = text.replace("📊 ", "").strip()
             report = self.get_probability_report(symbol)
             send_telegram(report, chat_id,
-                        bot_token=self.telegram_bot_token, default_chat_id=self.telegram_chat_id)
+                         self.telegram_bot_token, self.telegram_chat_id)
         elif current_step:
             self._handle_bot_creation_steps(chat_id, text, user_state, current_step)
         elif text.strip():
@@ -2118,7 +2130,7 @@ class BotManager:
         balance = get_balance(self.api_key, self.api_secret)
         if balance is None:
             send_telegram("❌ <b>LỖI KẾT NỐI BINANCE</b>\nVui lòng kiểm tra API Key!", chat_id,
-                        bot_token=self.telegram_bot_token, default_chat_id=self.telegram_chat_id)
+                         self.telegram_bot_token, self.telegram_chat_id)
             return
         
         send_telegram(
@@ -2135,7 +2147,7 @@ class BotManager:
         if text == '❌ Hủy bỏ':
             self.user_states[chat_id] = {}
             send_telegram("❌ Đã hủy quá trình tạo bot", chat_id, create_main_menu(),
-                        self.telegram_bot_token, self.telegram_chat_id)
+                         self.telegram_bot_token, self.telegram_chat_id)
             return
 
         try:
@@ -2155,12 +2167,12 @@ class BotManager:
                         )
                     else:
                         send_telegram("⚠️ Số lượng bot phải từ 1 đến 10. Vui lòng chọn lại:",
-                                    chat_id, create_bot_count_keyboard(),
-                                    self.telegram_bot_token, self.telegram_chat_id)
+                                     chat_id, create_bot_count_keyboard(),
+                                     self.telegram_bot_token, self.telegram_chat_id)
                 else:
                     send_telegram("⚠️ Vui lòng chọn số lượng bot từ bàn phím:",
-                                chat_id, create_bot_count_keyboard(),
-                                self.telegram_bot_token, self.telegram_chat_id)
+                                 chat_id, create_bot_count_keyboard(),
+                                 self.telegram_bot_token, self.telegram_chat_id)
 
             elif current_step == 'waiting_bot_mode':
                 if text in ["🤖 Bot Tĩnh - Coin cụ thể", "🔄 Bot Động - Tự tìm coin"]:
@@ -2178,8 +2190,8 @@ class BotManager:
                     )
                 else:
                     send_telegram("⚠️ Vui lòng chọn chế độ bot từ bàn phím:",
-                                chat_id, create_bot_mode_keyboard(),
-                                self.telegram_bot_token, self.telegram_chat_id)
+                                 chat_id, create_bot_mode_keyboard(),
+                                 self.telegram_bot_token, self.telegram_chat_id)
 
             elif current_step == 'waiting_strategy':
                 if text in ["⏰ Trend System"]:
@@ -2195,8 +2207,8 @@ class BotManager:
                     )
                 else:
                     send_telegram("⚠️ Vui lòng chọn chiến lược từ bàn phím:",
-                                chat_id, create_strategy_keyboard(),
-                                self.telegram_bot_token, self.telegram_chat_id)
+                                 chat_id, create_strategy_keyboard(),
+                                 self.telegram_bot_token, self.telegram_chat_id)
 
             elif current_step == 'waiting_leverage':
                 lev_text = text[:-1] if text.endswith('x') else text
@@ -2215,12 +2227,12 @@ class BotManager:
                         )
                     else:
                         send_telegram("⚠️ Đòn bẩy phải từ 1 đến 100. Vui lòng chọn lại:",
-                                    chat_id, create_leverage_keyboard(),
-                                    self.telegram_bot_token, self.telegram_chat_id)
+                                     chat_id, create_leverage_keyboard(),
+                                     self.telegram_bot_token, self.telegram_chat_id)
                 else:
                     send_telegram("⚠️ Vui lòng chọn đòn bẩy từ bàn phím:",
-                                chat_id, create_leverage_keyboard(),
-                                self.telegram_bot_token, self.telegram_chat_id)
+                                 chat_id, create_leverage_keyboard(),
+                                 self.telegram_bot_token, self.telegram_chat_id)
 
             elif current_step == 'waiting_percent':
                 if text.replace('.', '').isdigit():
@@ -2238,12 +2250,12 @@ class BotManager:
                         )
                     else:
                         send_telegram("⚠️ % số dư phải từ 0.1 đến 100. Vui lòng chọn lại:",
-                                    chat_id, create_percent_keyboard(),
-                                    self.telegram_bot_token, self.telegram_chat_id)
+                                     chat_id, create_percent_keyboard(),
+                                     self.telegram_bot_token, self.telegram_chat_id)
                 else:
                     send_telegram("⚠️ Vui lòng chọn % số dư từ bàn phím:",
-                                chat_id, create_percent_keyboard(),
-                                self.telegram_bot_token, self.telegram_chat_id)
+                                 chat_id, create_percent_keyboard(),
+                                 self.telegram_bot_token, self.telegram_chat_id)
 
             elif current_step == 'waiting_tp':
                 if text.isdigit():
@@ -2254,57 +2266,64 @@ class BotManager:
                         
                         send_telegram(
                             f"✅ <b>Bước 6:</b> Take Profit: {tp}%\n\n"
-                            f"<b>Bước 7:</b> Chọn Stop Loss (%):",
+                            f"<b>Bước 7:</b> Chọn Stop Loss (%):\n\n"
+                            f"💡 <i>Chọn '0' để KHÔNG sử dụng Stop Loss</i>",
                             chat_id,
                             create_sl_keyboard(),
                             self.telegram_bot_token, self.telegram_chat_id
                         )
                     else:
                         send_telegram("⚠️ Take Profit phải lớn hơn 0. Vui lòng chọn lại:",
-                                    chat_id, create_tp_keyboard(),
-                                    self.telegram_bot_token, self.telegram_chat_id)
+                                     chat_id, create_tp_keyboard(),
+                                     self.telegram_bot_token, self.telegram_chat_id)
                 else:
                     send_telegram("⚠️ Vui lòng chọn Take Profit từ bàn phím:",
-                                chat_id, create_tp_keyboard(),
-                                self.telegram_bot_token, self.telegram_chat_id)
+                                 chat_id, create_tp_keyboard(),
+                                 self.telegram_bot_token, self.telegram_chat_id)
 
             elif current_step == 'waiting_sl':
                 if text.isdigit():
                     sl = float(text)
-                    if sl >= 0:
+                    if sl >= 0:  # 🎯 CHO PHÉP SL = 0
                         user_state['sl'] = sl
                         
-                        # Tổng hợp thông tin và tạo bot
+                        # Chuyển sang bước xác nhận
                         self._create_bot_from_user_state(chat_id, user_state)
                         
                     else:
                         send_telegram("⚠️ Stop Loss phải lớn hơn hoặc bằng 0. Vui lòng chọn lại:",
-                                    chat_id, create_sl_keyboard(),
-                                    self.telegram_bot_token, self.telegram_chat_id)
+                                     chat_id, create_sl_keyboard(),
+                                     self.telegram_bot_token, self.telegram_chat_id)
                 else:
                     send_telegram("⚠️ Vui lòng chọn Stop Loss từ bàn phím:",
-                                chat_id, create_sl_keyboard(),
-                                self.telegram_bot_token, self.telegram_chat_id)
+                                 chat_id, create_sl_keyboard(),
+                                 self.telegram_bot_token, self.telegram_chat_id)
                 
         except ValueError as e:
             send_telegram("⚠️ Vui lòng nhập số hợp lệ:", chat_id,
-                        bot_token=self.telegram_bot_token, default_chat_id=self.telegram_chat_id)
+                         self.telegram_bot_token, self.telegram_chat_id)
         except Exception as e:
             send_telegram(f"❌ Lỗi xử lý: {str(e)}", chat_id,
-                        bot_token=self.telegram_bot_token, default_chat_id=self.telegram_chat_id)
+                         self.telegram_bot_token, self.telegram_chat_id)
             self.user_states[chat_id] = {}
 
     def _create_bot_from_user_state(self, chat_id, user_state):
-        """Tạo bot từ thông tin người dùng"""
+        """Tạo bot từ thông tin người dùng - ĐÃ SỬA"""
         try:
             strategy = user_state.get('strategy', 'Trend System')
             bot_mode = user_state.get('bot_mode', 'dynamic')
             leverage = user_state.get('leverage', 20)
             percent = user_state.get('percent', 5)
             tp = user_state.get('tp', 100)
-            sl = user_state.get('sl', 50)
+            sl = user_state.get('sl', 50)  # SL có thể = 0
             symbol = user_state.get('symbol')
             bot_count = user_state.get('bot_count', 1)
+            
+            # 🎯 HIỂN THỊ SL=0 RÕ RÀNG
+            if sl == 0:
+                sl_display = "KHÔNG (SL=0)"
+            else:
+                sl_display = f"{sl}%"
             
             # Hiển thị thông tin tổng hợp
             summary_msg = (
@@ -2315,7 +2334,7 @@ class BotManager:
                 f"💰 Đòn bẩy: {leverage}x\n"
                 f"📊 % Số dư: {percent}%\n"
                 f"🎯 Take Profit: {tp}%\n"
-                f"🛡️ Stop Loss: {sl}%\n"
+                f"🛡️ Stop Loss: {sl_display}\n"
             )
             
             if bot_mode == 'static' and symbol:
@@ -2335,7 +2354,7 @@ class BotManager:
             send_telegram(summary_msg, chat_id, confirm_keyboard,
                          self.telegram_bot_token, self.telegram_chat_id)
             
-            # Chờ xác nhận
+            # 🎯 QUAN TRỌNG: Chuyển sang trạng thái chờ xác nhận
             user_state['step'] = 'waiting_confirmation'
             user_state['pending_creation'] = {
                 'strategy': strategy,
@@ -2343,21 +2362,88 @@ class BotManager:
                 'leverage': leverage,
                 'percent': percent,
                 'tp': tp,
-                'sl': sl,
+                'sl': sl,  # SL có thể = 0
                 'symbol': symbol,
                 'bot_count': bot_count
             }
             
         except Exception as e:
             send_telegram(f"❌ Lỗi tạo bot: {str(e)}", chat_id,
-                         bot_token=self.telegram_bot_token, default_chat_id=self.telegram_chat_id)
+                         self.telegram_bot_token, self.telegram_chat_id)
+            self.user_states[chat_id] = {}
+
+    def _confirm_create_bot(self, chat_id, user_state):
+        """Xác nhận và tạo bot - ĐÃ SỬA LỖI"""
+        try:
+            pending_creation = user_state.get('pending_creation', {})
+            
+            if not pending_creation:
+                send_telegram("❌ Lỗi: Không tìm thấy thông tin tạo bot", chat_id, create_main_menu(),
+                             self.telegram_bot_token, self.telegram_chat_id)
+                self.user_states[chat_id] = {}
+                return
+            
+            # Lấy thông tin từ pending_creation
+            strategy = pending_creation.get('strategy', 'Trend System')
+            bot_mode = pending_creation.get('bot_mode', 'dynamic')
+            leverage = pending_creation.get('leverage', 20)
+            percent = pending_creation.get('percent', 5)
+            tp = pending_creation.get('tp', 100)
+            sl = pending_creation.get('sl', 50)  # SL có thể = 0
+            symbol = pending_creation.get('symbol')
+            bot_count = pending_creation.get('bot_count', 1)
+            
+            # Tạo bot
+            success = self.add_bot(
+                symbol=symbol,
+                lev=leverage,
+                percent=percent,
+                tp=tp,
+                sl=sl,  # SL có thể = 0
+                strategy_type=strategy,
+                bot_mode=bot_mode,
+                bot_count=bot_count
+            )
+            
+            if success:
+                # Hiển thị thông tin SL
+                sl_display = "KHÔNG" if sl == 0 else f"{sl}%"
+                
+                success_msg = (
+                    f"✅ <b>ĐÃ TẠO {bot_count} BOT THÀNH CÔNG!</b>\n\n"
+                    f"🤖 Số lượng: {bot_count} bot\n"
+                    f"🔧 Chế độ: {'Tĩnh - Coin cố định' if bot_mode == 'static' else 'Động - Tự tìm coin'}\n"
+                    f"🎯 Chiến lược: {strategy}\n"
+                    f"💰 Đòn bẩy: {leverage}x\n"
+                    f"📊 % Số dư: {percent}%\n"
+                    f"🎯 Take Profit: {tp}%\n"
+                    f"🛡️ Stop Loss: {sl_display}\n"
+                )
+                
+                if bot_mode == 'static' and symbol:
+                    success_msg += f"🔗 Coin: {symbol}\n"
+                
+                success_msg += f"\n🚀 <b>Bot đã bắt đầu hoạt động!</b>"
+                
+            else:
+                success_msg = "❌ <b>Lỗi khi tạo bot. Vui lòng thử lại.</b>"
+            
+            send_telegram(success_msg, chat_id, create_main_menu(),
+                         self.telegram_bot_token, self.telegram_chat_id)
+            
+            # Xóa state sau khi tạo bot
+            self.user_states[chat_id] = {}
+            
+        except Exception as e:
+            send_telegram(f"❌ Lỗi xác nhận tạo bot: {str(e)}", chat_id, create_main_menu(),
+                         self.telegram_bot_token, self.telegram_chat_id)
             self.user_states[chat_id] = {}
 
     def _handle_bot_list(self, chat_id):
         """Hiển thị danh sách bot"""
         if not self.bots:
             send_telegram("🤖 Không có bot nào đang chạy", chat_id,
-                        bot_token=self.telegram_bot_token, default_chat_id=self.telegram_chat_id)
+                         self.telegram_bot_token, self.telegram_chat_id)
         else:
             message = "🤖 <b>DANH SÁCH BOT ĐANG CHẠY</b>\n\n"
             
@@ -2372,29 +2458,31 @@ class BotManager:
                     status = "⚪ Unknown"
                 
                 symbol_info = bot.symbol if bot.symbol else "Đang tìm..."
+                sl_display = "KHÔNG" if bot.sl == 0 else f"{bot.sl}%"
+                
                 message += (
                     f"🔹 <b>{bot_id}</b>\n"
                     f"   📊 {symbol_info} | {status}\n"
                     f"   💰 ĐB: {bot.lev}x | Vốn: {bot.percent}%\n"
-                    f"   🎯 TP: {bot.tp}% | 🛡️ SL: {bot.sl if bot.sl else 0}%\n\n"
+                    f"   🎯 TP: {bot.tp}% | 🛡️ SL: {sl_display}\n\n"
                 )
             
             message += f"📈 Tổng số: {len(self.bots)} bot"
             
             send_telegram(message, chat_id,
-                        bot_token=self.telegram_bot_token, default_chat_id=self.telegram_chat_id)
+                         self.telegram_bot_token, self.telegram_chat_id)
 
     def _handle_statistics(self, chat_id):
         """Hiển thị thống kê"""
         summary = self.get_detailed_statistics()
         send_telegram(summary, chat_id,
-                     bot_token=self.telegram_bot_token, default_chat_id=self.telegram_chat_id)
+                     self.telegram_bot_token, self.telegram_chat_id)
 
     def _handle_stop_bot(self, chat_id):
         """Xử lý dừng bot"""
         if not self.bots:
             send_telegram("🤖 Không có bot nào đang chạy", chat_id,
-                        bot_token=self.telegram_bot_token, default_chat_id=self.telegram_chat_id)
+                         self.telegram_bot_token, self.telegram_chat_id)
         else:
             message = "⛔ <b>CHỌN BOT ĐỂ DỪNG</b>\n\n"
             keyboard = []
@@ -2418,13 +2506,13 @@ class BotManager:
         if bot_id == "DỪNG TẤT CẢ":
             self.stop_all()
             send_telegram("⛔ Đã dừng tất cả bot", chat_id, create_main_menu(),
-                        self.telegram_bot_token, self.telegram_chat_id)
+                         self.telegram_bot_token, self.telegram_chat_id)
         elif self.stop_bot(bot_id):
             send_telegram(f"⛔ Đã dừng bot {bot_id}", chat_id, create_main_menu(),
-                        self.telegram_bot_token, self.telegram_chat_id)
+                         self.telegram_bot_token, self.telegram_chat_id)
         else:
             send_telegram(f"⚠️ Không tìm thấy bot {bot_id}", chat_id, create_main_menu(),
-                        self.telegram_bot_token, self.telegram_chat_id)
+                         self.telegram_bot_token, self.telegram_chat_id)
 
     def _handle_balance(self, chat_id):
         """Hiển thị số dư"""
@@ -2432,13 +2520,13 @@ class BotManager:
             balance = get_balance(self.api_key, self.api_secret)
             if balance is None:
                 send_telegram("❌ <b>LỖI KẾT NỐI BINANCE</b>\nVui lòng kiểm tra API Key!", chat_id,
-                            bot_token=self.telegram_bot_token, default_chat_id=self.telegram_chat_id)
+                             self.telegram_bot_token, self.telegram_chat_id)
             else:
                 send_telegram(f"💰 <b>SỐ DƯ KHẢ DỤNG</b>: {balance:.2f} USDT", chat_id,
-                            bot_token=self.telegram_bot_token, default_chat_id=self.telegram_chat_id)
+                             self.telegram_bot_token, self.telegram_chat_id)
         except Exception as e:
             send_telegram(f"⚠️ Lỗi lấy số dư: {str(e)}", chat_id,
-                        bot_token=self.telegram_bot_token, default_chat_id=self.telegram_chat_id)
+                         self.telegram_bot_token, self.telegram_chat_id)
 
     def _handle_positions(self, chat_id):
         """Hiển thị vị thế"""
@@ -2446,7 +2534,7 @@ class BotManager:
             positions = get_positions(api_key=self.api_key, api_secret=self.api_secret)
             if not positions:
                 send_telegram("📭 Không có vị thế nào đang mở", chat_id,
-                            bot_token=self.telegram_bot_token, default_chat_id=self.telegram_chat_id)
+                             self.telegram_bot_token, self.telegram_chat_id)
                 return
             
             message = "📈 <b>VỊ THẾ ĐANG MỞ</b>\n\n"
@@ -2466,10 +2554,10 @@ class BotManager:
                     )
             
             send_telegram(message, chat_id,
-                        bot_token=self.telegram_bot_token, default_chat_id=self.telegram_chat_id)
+                         self.telegram_bot_token, self.telegram_chat_id)
         except Exception as e:
             send_telegram(f"⚠️ Lỗi lấy vị thế: {str(e)}", chat_id,
-                        bot_token=self.telegram_bot_token, default_chat_id=self.telegram_chat_id)
+                         self.telegram_bot_token, self.telegram_chat_id)
 
     def _handle_strategy(self, chat_id):
         """Hiển thị thông tin chiến lược"""
@@ -2492,7 +2580,7 @@ class BotManager:
             "• Quản lý rủi ro thông minh"
         )
         send_telegram(strategy_info, chat_id,
-                    bot_token=self.telegram_bot_token, default_chat_id=self.telegram_chat_id)
+                     self.telegram_bot_token, self.telegram_chat_id)
 
     def _handle_config(self, chat_id):
         """Hiển thị cấu hình hệ thống"""
@@ -2512,7 +2600,8 @@ class BotManager:
             f"📊 Đang trade: {trading_bots} bot\n"
             f"📈 Thống kê xác suất: ✅ Đã kích hoạt\n"
             f"🔄 Rotation Coin: ✅ Đã kích hoạt\n"
-            f"🎯 Hệ thống chỉ báo: ✅ Đã kích hoạt"
+            f"🎯 Hệ thống chỉ báo: ✅ Đã kích hoạt\n"
+            f"🛡️ Hỗ trợ SL=0: ✅ Đã kích hoạt"
         )
         send_telegram(config_info, chat_id,
-                    bot_token=self.telegram_bot_token, default_chat_id=self.telegram_chat_id)
+                     self.telegram_bot_token, self.telegram_chat_id)
