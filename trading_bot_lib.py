@@ -2406,5 +2406,3 @@ class BotManager:
 
 # ========== KHỞI TẠO GLOBAL INSTANCES ==========
 coin_manager = CoinManager()
-
-    print("🎯 Hệ thống 5 bước thông minh đã được tích hợp")
