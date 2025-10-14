@@ -3,7 +3,7 @@ import os
 import sys
 import time
 import logging
-from trading_bot_lib import BotManager, setup_logging
+from trading_bot_lib import BotManager
 def setup_logging():
     """Thiết lập hệ thống logging"""
     logging.basicConfig(
@@ -15,9 +15,6 @@ def setup_logging():
         ]
     )
     return logging.getLogger(__name__)
-
-logger = setup_logging()
-
 
 def load_environment_config():
     """Tải cấu hình từ biến môi trường"""
@@ -219,4 +216,5 @@ if __name__ == "__main__":
         quick_test()
     else:
         main()
+
 
