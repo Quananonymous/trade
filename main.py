@@ -3,7 +3,7 @@ import os
 import sys
 import time
 import logging
-from trading_bot_lib_final import create_bot_system, BotManager
+from trading_bot_lib import create_bot_system, BotManager
 
 # ========== CẤU HÌNH LOGGING ==========
 def setup_logging():
@@ -374,3 +374,4 @@ if __name__ == "__main__":
     else:
         # Chế độ menu tương tác
         main()
+
