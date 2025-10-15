@@ -461,74 +461,99 @@ class ProbabilityAnalyzer:
             return {'signal': 'NEUTRAL', 'strength': 'weak', 'confidence': 0.1}
     
     def get_final_signal_with_probability(self, symbol, signals_data):
-        """LẤY TÍN HIỆU CUỐI CÙNG VỚI PHÂN TÍCH XÁC SUẤT VÀ KỲ VỌNG - PHIÊN BẢN CẢI TIẾN"""
+        """LẤY TÍN HIỆU CUỐI CÙNG VỚI PHÂN TÍCH XÁC SUẤT VÀ KỲ VỌNG - LOGIC MỚI: XEM XÉT HƯỚNG NGƯỢC LẠI"""
         try:
             # PHÂN TÍCH TÍN HIỆU TỔNG HỢP
             combined_analysis = self.analyze_combined_signal(signals_data)
             main_signal = combined_analysis['signal']
             strength_level = combined_analysis['strength']
             base_confidence = combined_analysis['confidence']
-            
+    
             if main_signal == "NEUTRAL":
                 return "NEUTRAL", 0, 0, 0
-            
+    
             # PHÂN TÍCH XÁC SUẤT LỊCH SỬ
             stats = self.analyze_historical_performance(symbol)
-            
+    
             # LẤY THỐNG KÊ CHO LOẠI TÍN HIỆU
             signal_type = "bullish" if main_signal == "BUY" else "bearish"
-            
+            opposite_signal_type = "bearish" if main_signal == "BUY" else "bullish"
+    
             total_predictions = stats['combined_signals']['total_predictions'].get(signal_type, 0)
-            
+            total_predictions_opposite = stats['combined_signals']['total_predictions'].get(opposite_signal_type, 0)
+    
             # NẾU KHÔNG CÓ DỮ LIỆU LỊCH SỬ, SỬ DỤNG GIÁ TRỊ MẶC ĐỊNH HỢP LÝ
             if total_predictions < self.min_data_points:
-                probability = 0.55  # Tăng nhẹ probability mặc định
-                expectation = 0.5   # Kỳ vọng dương nhẹ
+                probability = 0.55
+                expectation = 0.5
                 variance = 0.12
             else:
                 correct_predictions = stats['combined_signals']['correct_predictions'].get(signal_type, 0)
                 probability = correct_predictions / total_predictions
                 expectation = stats['combined_signals']['expectations'].get(signal_type, 0.0)
                 variance = stats['combined_signals']['variances'].get(signal_type, 0.1)
-            
-            # ĐIỀU CHỈNH THEO ĐỘ MẠNH TÍN HIỆU
-            strength_stats = stats['signal_strength']
-            strength_total = strength_stats['total_predictions'].get(strength_level, 0)
-            
-            if strength_total > 5:  # Giảm ngưỡng yêu cầu
-                strength_correct = strength_stats['correct_predictions'].get(strength_level, 0)
-                strength_prob = strength_correct / strength_total
-                strength_expectation = strength_stats['expectations'].get(strength_level, 0.0)
-                
-                combined_probability = (probability * 0.6) + (strength_prob * 0.4)
-                combined_expectation = (expectation * 0.6) + (strength_expectation * 0.4)
-            else:
-                combined_probability = probability
-                combined_expectation = expectation
-            
-            # TÍNH ĐỘ TIN CẬY CUỐI CÙNG
-            final_confidence = base_confidence * combined_probability
-            
+    
+            # TÍNH ĐỘ TIN CẬY CUỐI CÙNG CHO HƯỚNG CHÍNH
+            final_confidence = base_confidence * probability
+    
             # ĐIỀU CHỈNH TĂNG ĐỘ TIN CẬY CHO TÍN HIỆU MẠNH
             if strength_level == "strong":
                 final_confidence *= 1.2
             elif strength_level == "medium":
                 final_confidence *= 1.1
-            
+    
             final_confidence = min(final_confidence, 0.95)  # Giới hạn tối đa
-            
-            logger.info(f"🎯 {symbol} - {main_signal}({strength_level}) | "
-                       f"Conf: {final_confidence:.2f} | "
-                       f"Prob: {combined_probability:.2f} | "
-                       f"Exp: {combined_expectation:.2f}% | "
-                       f"Var: {variance:.3f}")
-            
-            return main_signal, final_confidence, combined_expectation, variance
-            
+    
+            # LOGIC MỚI: NẾU HƯỚNG CHÍNH CÓ CONFIDENCE THẤP, KIỂM TRA HƯỚNG NGƯỢC LẠI
+            if final_confidence < 0.6:
+                # TÍNH CONFIDENCE CHO HƯỚNG NGƯỢC LẠI
+                if total_predictions_opposite >= self.min_data_points:
+                    correct_predictions_opposite = stats['combined_signals']['correct_predictions'].get(opposite_signal_type, 0)
+                    probability_opposite = correct_predictions_opposite / total_predictions_opposite
+                    expectation_opposite = stats['combined_signals']['expectations'].get(opposite_signal_type, 0.0)
+                    variance_opposite = stats['combined_signals']['variances'].get(opposite_signal_type, 0.1)
+    
+                    # TÍNH CONFIDENCE CHO HƯỚNG NGƯỢC LẠI (đảo ngược base_confidence)
+                    opposite_base_confidence = 1.0 - base_confidence
+                    final_confidence_opposite = opposite_base_confidence * probability_opposite
+    
+                    # ĐIỀU CHỈNH CHO TÍN HIỆU MẠNH
+                    if strength_level == "strong":
+                        final_confidence_opposite *= 1.2
+                    elif strength_level == "medium":
+                        final_confidence_opposite *= 1.1
+    
+                    final_confidence_opposite = min(final_confidence_opposite, 0.95)
+    
+                    # NẾU HƯỚNG NGƯỢC LẠI CÓ CONFIDENCE CAO HƠN 0.6, THÌ CHỌN HƯỚNG NGƯỢC LẠI
+                    if final_confidence_opposite >= 0.55 and expectation_opposite > -2:
+                        opposite_signal = "SELL" if main_signal == "BUY" else "BUY"
+                        logger.info(f"🎯 {symbol} - ĐẢO CHIỀU: {opposite_signal}({strength_level}) | "
+                                   f"Conf: {final_confidence_opposite:.2f} | "
+                                   f"Prob: {probability_opposite:.2f} | "
+                                   f"Exp: {expectation_opposite:.2f}% | "
+                                   f"Var: {variance_opposite:.3f}")
+                        return opposite_signal, final_confidence_opposite, expectation_opposite, variance_opposite
+    
+                # Nếu không đạt ngưỡng cho cả hai hướng, trả về NEUTRAL
+                logger.info(f"⚪ {symbol} - KHÔNG GIAO DỊCH: Confidence chính {final_confidence:.2f} < 0.55 và ngược lại cũng không đủ")
+                return "NEUTRAL", 0, 0, 0
+    
+            # Nếu hướng chính đạt ngưỡng, trả về hướng chính
+            if final_confidence >= 0.6 and expectation > -2:
+                logger.info(f"✅ {symbol} - QUYẾT ĐỊNH: {main_signal}({strength_level}) | "
+                           f"Conf: {final_confidence:.2f} | "
+                           f"Prob: {probability:.2f} | "
+                           f"Exp: {expectation:.2f}% | "
+                           f"Var: {variance:.3f}")
+                return main_signal, final_confidence, expectation, variance
+            else:
+                logger.info(f"⚪ {symbol} - KHÔNG GIAO DỊCH: Confidence {final_confidence:.2f} < 0.6 hoặc Expectation {expectation:.2f}% quá thấp")
+                return "NEUTRAL", 0, 0, 0
+    
         except Exception as e:
             logger.error(f"Lỗi lấy tín hiệu cuối cùng: {str(e)}")
             return "NEUTRAL", 0, 0, 0
-
     def analyze_historical_performance(self, symbol):
         """PHÂN TÍCH HIỆU SUẤT LỊCH SỬ CHI TIẾT VỚI ĐA ĐIỂM - TỐI ƯU HIỆU SUẤT"""
         try:
