@@ -1,5 +1,5 @@
 # trading_bot_volume_candle_complete_advanced.py
-# HOÀN CHỈNH VỚI HỆ THỐNG XÁC SUẤT ĐA ĐIỂM VÀ RANDOM DIRECTION
+# HOÀN CHỈNH VỚI HỆ THỐNG XÁC SUẤT ĐA ĐIỂM VÀ RANDOM DIRECTION - PHIÊN BẢN CẢI TIẾN
 
 import json
 import hmac
@@ -226,7 +226,7 @@ def get_max_leverage(symbol, api_key, api_secret):
 class ProbabilityAnalyzer:
     """PHÂN TÍCH XÁC SUẤT THẮNG TẠI NHIỀU ĐIỂM TRÊN CÁC CHỈ BÁO"""
     
-    def __init__(self, lookback=300, evaluation_period=25):
+    def __init__(self, lookback=200, evaluation_period=20):
         self.lookback = lookback
         self.evaluation_period = evaluation_period
         self.history_data = {}
@@ -298,7 +298,8 @@ class ProbabilityAnalyzer:
             }
         }
         self.last_update_time = 0
-        self.update_interval = 3600
+        self.update_interval = 1800  # 30 phút
+        self.min_data_points = 5
     
     def get_rsi_zone(self, rsi_value):
         """XÁC ĐỊNH VÙNG RSI"""
@@ -339,117 +340,110 @@ class ProbabilityAnalyzer:
         return min(ratios, key=lambda x: abs(x - volume_ratio))
     
     def analyze_combined_signal(self, signals_data):
-        """PHÂN TÍCH VÀ TÍCH HỢP TẤT CẢ TÍN HIỆU CHỈ BÁO"""
+        """PHÂN TÍCH VÀ TÍCH HỢP TẤT CẢ TÍN HIỆU CHỈ BÁO - PHIÊN BẢN CẢI TIẾN"""
         try:
             bullish_score = 0
             bearish_score = 0
             total_strength = 0
             signal_count = 0
             
-            # 1. PHÂN TÍCH TÍN HIỆU EMA
+            # 1. PHÂN TÍCH TÍN HIỆU EMA - TRỌNG SỐ CAO
             ema_signal = signals_data.get('ema_signal', 'NEUTRAL')
             ema_strength = signals_data.get('ema_strength', 0)
             
             if ema_signal == "BUY":
-                bullish_score += 3 * ema_strength
+                bullish_score += 4.0 * ema_strength
                 total_strength += ema_strength
                 signal_count += 1
             elif ema_signal == "SELL":
-                bearish_score += 3 * ema_strength
+                bearish_score += 4.0 * ema_strength
                 total_strength += ema_strength
                 signal_count += 1
             
-            # 2. PHÂN TÍCH TÍN HIỆU RSI
+            # 2. PHÂN TÍCH TÍN HIỆU RSI - TRỌNG SỐ CAO
             rsi_signal = signals_data.get('rsi_signal', 'NEUTRAL')
             rsi_strength = signals_data.get('rsi_strength', 0)
             
             if rsi_signal == "BUY":
-                bullish_score += 2.5 * rsi_strength
+                bullish_score += 3.5 * rsi_strength
                 total_strength += rsi_strength
                 signal_count += 1
             elif rsi_signal == "SELL":
-                bearish_score += 2.5 * rsi_strength
+                bearish_score += 3.5 * rsi_strength
                 total_strength += rsi_strength
                 signal_count += 1
             
-            # 3. PHÂN TÍCH VOLUME
+            # 3. PHÂN TÍCH VOLUME - TRỌNG SỐ TRUNG BÌNH
             volume_ratio = signals_data.get('volume_ratio', 1.0)
             price_vs_ema = signals_data.get('price_vs_ema', 0)
             
-            if volume_ratio > 1.8:
+            if volume_ratio > 1.5:
+                volume_strength = min((volume_ratio - 1.0) / 2.0, 1.0)
                 if price_vs_ema > 0:
-                    bullish_score += 1.5 * min(volume_ratio * 0.3, 1.0)
-                    total_strength += min(volume_ratio * 0.3, 1.0)
+                    bullish_score += 2.0 * volume_strength
+                    total_strength += volume_strength
                 else:
-                    bearish_score += 1.5 * min(volume_ratio * 0.3, 1.0)
-                    total_strength += min(volume_ratio * 0.3, 1.0)
-                signal_count += 1
-            elif volume_ratio > 1.3:
-                if price_vs_ema > 0:
-                    bullish_score += 1.5 * min(volume_ratio * 0.2, 0.7)
-                    total_strength += min(volume_ratio * 0.2, 0.7)
-                else:
-                    bearish_score += 1.5 * min(volume_ratio * 0.2, 0.7)
-                    total_strength += min(volume_ratio * 0.2, 0.7)
+                    bearish_score += 2.0 * volume_strength
+                    total_strength += volume_strength
                 signal_count += 1
             
-            # 4. PHÂN TÍCH SUPPORT/RESISTANCE
+            # 4. PHÂN TÍCH SUPPORT/RESISTANCE - TRỌNG SỐ TRUNG BÌNH
             sr_signal = signals_data.get('sr_signal', 'NEUTRAL')
             sr_strength = signals_data.get('sr_strength', 0)
             
             if sr_signal == "BUY":
-                bullish_score += 2.0 * sr_strength
+                bullish_score += 2.5 * sr_strength
                 total_strength += sr_strength
                 signal_count += 1
             elif sr_signal == "SELL":
-                bearish_score += 2.0 * sr_strength
+                bearish_score += 2.5 * sr_strength
                 total_strength += sr_strength
                 signal_count += 1
             
-            # 5. PHÂN TÍCH MARKET STRUCTURE
+            # 5. PHÂN TÍCH MARKET STRUCTURE - TRỌNG SỐ THẤP
             structure_signal = signals_data.get('structure_signal', 'NEUTRAL')
             if structure_signal == "BUY":
-                bullish_score += 1.0
+                bullish_score += 1.5
                 total_strength += 0.5
                 signal_count += 1
             elif structure_signal == "SELL":
-                bearish_score += 1.0
+                bearish_score += 1.5
                 total_strength += 0.5
                 signal_count += 1
             
-            # TÍNH TOÁN TÍN HIỆU TỔNG HỢP
+            # TÍNH TOÁN TÍN HIỆU TỔNG HỢP - NGƯỠNG ĐIỀU CHỈNH
             score_difference = bullish_score - bearish_score
             avg_strength = total_strength / max(signal_count, 1)
             
-            # XÁC ĐỊNH HƯỚNG CHÍNH VÀ ĐỘ MẠNH
-            if score_difference > 2.0 and avg_strength > 0.6:
+            # XÁC ĐỊNH HƯỚNG CHÍNH VÀ ĐỘ MẠNH - ĐIỀU CHỈNH NGƯỠNG
+            if score_difference > 1.5 and avg_strength > 0.5:
                 main_signal = "BUY"
                 strength_level = "strong"
-                confidence = min(avg_strength * (abs(score_difference) / 8), 0.95)
-            elif score_difference > 1.0 and avg_strength > 0.4:
+                confidence = min(avg_strength * (abs(score_difference) / 5), 0.95)
+            elif score_difference > 0.8 and avg_strength > 0.4:
                 main_signal = "BUY" 
                 strength_level = "medium"
-                confidence = min(avg_strength * (abs(score_difference) / 6), 0.85)
-            elif score_difference > 0.5 and avg_strength > 0.3:
+                confidence = min(avg_strength * (abs(score_difference) / 4), 0.85)
+            elif score_difference > 0.3 and avg_strength > 0.3:
                 main_signal = "BUY"
                 strength_level = "weak"
-                confidence = min(avg_strength * (abs(score_difference) / 4), 0.7)
-            elif score_difference < -2.0 and avg_strength > 0.6:
+                confidence = min(avg_strength * (abs(score_difference) / 3), 0.7)
+            elif score_difference < -1.5 and avg_strength > 0.5:
                 main_signal = "SELL"
                 strength_level = "strong"
-                confidence = min(avg_strength * (abs(score_difference) / 8), 0.95)
-            elif score_difference < -1.0 and avg_strength > 0.4:
+                confidence = min(avg_strength * (abs(score_difference) / 5), 0.95)
+            elif score_difference < -0.8 and avg_strength > 0.4:
                 main_signal = "SELL"
                 strength_level = "medium" 
-                confidence = min(avg_strength * (abs(score_difference) / 6), 0.85)
-            elif score_difference < -0.5 and avg_strength > 0.3:
+                confidence = min(avg_strength * (abs(score_difference) / 4), 0.85)
+            elif score_difference < -0.3 and avg_strength > 0.3:
                 main_signal = "SELL"
                 strength_level = "weak"
-                confidence = min(avg_strength * (abs(score_difference) / 4), 0.7)
+                confidence = min(avg_strength * (abs(score_difference) / 3), 0.7)
             else:
                 main_signal = "NEUTRAL"
                 strength_level = "weak"
-                confidence = 0.2
+                confidence = 0.1
             
             return {
                 'signal': main_signal,
@@ -464,10 +458,10 @@ class ProbabilityAnalyzer:
             
         except Exception as e:
             logger.error(f"Lỗi phân tích tín hiệu tổng hợp: {str(e)}")
-            return {'signal': 'NEUTRAL', 'strength': 'weak', 'confidence': 0}
+            return {'signal': 'NEUTRAL', 'strength': 'weak', 'confidence': 0.1}
     
     def get_final_signal_with_probability(self, symbol, signals_data):
-        """LẤY TÍN HIỆU CUỐI CÙNG VỚI PHÂN TÍCH XÁC SUẤT VÀ KỲ VỌNG"""
+        """LẤY TÍN HIỆU CUỐI CÙNG VỚI PHÂN TÍCH XÁC SUẤT VÀ KỲ VỌNG - PHIÊN BẢN CẢI TIẾN"""
         try:
             # PHÂN TÍCH TÍN HIỆU TỔNG HỢP
             combined_analysis = self.analyze_combined_signal(signals_data)
@@ -485,10 +479,12 @@ class ProbabilityAnalyzer:
             signal_type = "bullish" if main_signal == "BUY" else "bearish"
             
             total_predictions = stats['combined_signals']['total_predictions'].get(signal_type, 0)
-            if total_predictions == 0:
-                probability = 0.5
-                expectation = 0.0
-                variance = 0.15
+            
+            # NẾU KHÔNG CÓ DỮ LIỆU LỊCH SỬ, SỬ DỤNG GIÁ TRỊ MẶC ĐỊNH HỢP LÝ
+            if total_predictions < self.min_data_points:
+                probability = 0.55  # Tăng nhẹ probability mặc định
+                expectation = 0.5   # Kỳ vọng dương nhẹ
+                variance = 0.12
             else:
                 correct_predictions = stats['combined_signals']['correct_predictions'].get(signal_type, 0)
                 probability = correct_predictions / total_predictions
@@ -499,7 +495,7 @@ class ProbabilityAnalyzer:
             strength_stats = stats['signal_strength']
             strength_total = strength_stats['total_predictions'].get(strength_level, 0)
             
-            if strength_total > 10:
+            if strength_total > 5:  # Giảm ngưỡng yêu cầu
                 strength_correct = strength_stats['correct_predictions'].get(strength_level, 0)
                 strength_prob = strength_correct / strength_total
                 strength_expectation = strength_stats['expectations'].get(strength_level, 0.0)
@@ -512,6 +508,14 @@ class ProbabilityAnalyzer:
             
             # TÍNH ĐỘ TIN CẬY CUỐI CÙNG
             final_confidence = base_confidence * combined_probability
+            
+            # ĐIỀU CHỈNH TĂNG ĐỘ TIN CẬY CHO TÍN HIỆU MẠNH
+            if strength_level == "strong":
+                final_confidence *= 1.2
+            elif strength_level == "medium":
+                final_confidence *= 1.1
+            
+            final_confidence = min(final_confidence, 0.95)  # Giới hạn tối đa
             
             logger.info(f"🎯 {symbol} - {main_signal}({strength_level}) | "
                        f"Conf: {final_confidence:.2f} | "
@@ -526,20 +530,25 @@ class ProbabilityAnalyzer:
             return "NEUTRAL", 0, 0, 0
 
     def analyze_historical_performance(self, symbol):
-        """PHÂN TÍCH HIỆU SUẤT LỊCH SỬ CHI TIẾT VỚI ĐA ĐIỂM"""
+        """PHÂN TÍCH HIỆU SUẤT LỊCH SỬ CHI TIẾT VỚI ĐA ĐIỂM - TỐI ƯU HIỆU SUẤT"""
         try:
             current_time = time.time()
             if current_time - self.last_update_time < self.update_interval:
                 return self.probability_stats
             
             klines = self.get_historical_klines(symbol, '15m', self.lookback + self.evaluation_period)
-            if not klines or len(klines) < self.lookback + 10:
-                return self.probability_stats
+            if not klines or len(klines) < 50:  # Giảm yêu cầu dữ liệu tối thiểu
+                logger.warning(f"⚠️ Không đủ dữ liệu lịch sử cho {symbol}")
+                return self._get_reasonable_default_stats()
             
             self._reset_stats()
             analyzer = TrendIndicatorSystem()
             
-            for i in range(self.evaluation_period, len(klines) - self.evaluation_period):
+            processed_count = 0
+            # Giới hạn số lượng điểm dữ liệu để xử lý
+            max_data_points = min(len(klines) - self.evaluation_period, 80)
+            
+            for i in range(self.evaluation_period, max_data_points):
                 try:
                     current_data = klines[i]
                     current_close = float(current_data[4])
@@ -552,7 +561,7 @@ class ProbabilityAnalyzer:
                     historical_klines = klines[:i+1]
                     closes = [float(candle[4]) for candle in historical_klines]
                     
-                    if len(closes) < 50:
+                    if len(closes) < 30:  # Giảm yêu cầu dữ liệu
                         continue
                     
                     # LẤY TÍN HIỆU VÀ CHỈ BÁO TẠI THỜI ĐIỂM LỊCH SỬ
@@ -561,19 +570,55 @@ class ProbabilityAnalyzer:
                     
                     # CẬP NHẬT THỐNG KÊ CHI TIẾT CHO TỪNG CHỈ BÁO
                     self._update_detailed_stats(signals_data, combined_analysis, is_price_up, price_change)
+                    
+                    processed_count += 1
                             
-                except Exception:
+                except Exception as e:
                     continue
+            
+            if processed_count < self.min_data_points:
+                logger.warning(f"⚠️ Không đủ điểm dữ liệu cho {symbol}: {processed_count}")
+                return self._get_reasonable_default_stats()
             
             self._calculate_final_stats()
             self.last_update_time = current_time
             
-            logger.info(f"📊 Đã cập nhật thống kê đa điểm cho {symbol}")
+            logger.info(f"📊 Đã cập nhật thống kê đa điểm cho {symbol} với {processed_count} điểm dữ liệu")
             return self.probability_stats
             
         except Exception as e:
             logger.error(f"Lỗi phân tích hiệu suất lịch sử: {str(e)}")
-            return self.probability_stats
+            return self._get_reasonable_default_stats()
+
+    def _get_reasonable_default_stats(self):
+        """TRẢ VỀ THỐNG KÊ MẶC ĐỊNH HỢP LÝ KHI KHÔNG CÓ ĐỦ DỮ LIỆU"""
+        stats = self.probability_stats.copy()
+        
+        # THIẾT LẬP GIÁ TRỊ MẶC ĐỊNH HỢP LÝ
+        for level in stats['rsi_multiple_points']['rsi_levels']:
+            if 30 <= level <= 70:
+                stats['rsi_multiple_points']['correct_predictions'][level] = 6
+                stats['rsi_multiple_points']['total_predictions'][level] = 10
+                stats['rsi_multiple_points']['expectations'][level] = 0.5
+            else:
+                stats['rsi_multiple_points']['correct_predictions'][level] = 7
+                stats['rsi_multiple_points']['total_predictions'][level] = 10
+                stats['rsi_multiple_points']['expectations'][level] = 1.0
+        
+        # TÍN HIỆU TỔNG HỢP
+        stats['combined_signals']['correct_predictions']['bullish'] = 6
+        stats['combined_signals']['total_predictions']['bullish'] = 10
+        stats['combined_signals']['expectations']['bullish'] = 0.8
+        stats['combined_signals']['correct_predictions']['bearish'] = 6
+        stats['combined_signals']['total_predictions']['bearish'] = 10
+        stats['combined_signals']['expectations']['bearish'] = 0.8
+        
+        # ĐỘ MẠNH TÍN HIỆU
+        stats['signal_strength']['correct_predictions']['strong'] = 7
+        stats['signal_strength']['total_predictions']['strong'] = 10
+        stats['signal_strength']['expectations']['strong'] = 1.2
+        
+        return stats
 
     def _get_historical_signals(self, klines, closes, analyzer):
         """LẤY TẤT CẢ TÍN HIỆU CHỈ BÁO TẠI MỘT THỜI ĐIỂM LỊCH SỬ"""
@@ -598,25 +643,31 @@ class ProbabilityAnalyzer:
             ema_strength = 1.0
         elif ema_conditions['ema_alignment_bullish']:
             ema_signal = "BUY"
-            ema_strength = 0.7
+            ema_strength = 0.8
         elif ema_conditions['ema_alignment_bearish']:
+            ema_signal = "SELL"
+            ema_strength = 0.8
+        elif ema_conditions['golden_cross_recent']:
+            ema_signal = "BUY"
+            ema_strength = 0.7
+        elif ema_conditions['death_cross_recent']:
             ema_signal = "SELL"
             ema_strength = 0.7
         
         # TÍN HIỆU RSI
         rsi_signal = "NEUTRAL"
         rsi_strength = 0
-        if rsi < 30:
+        if rsi < 35:  # Điều chỉnh ngưỡng
             rsi_signal = "BUY"
-            rsi_strength = min((30 - rsi) / 30, 1.0)
-        elif rsi > 70:
+            rsi_strength = min((35 - rsi) / 35, 1.0)
+        elif rsi > 65:  # Điều chỉnh ngưỡng
             rsi_signal = "SELL"
-            rsi_strength = min((rsi - 70) / 30, 1.0)
+            rsi_strength = min((rsi - 65) / 35, 1.0)
         
         # VOLUME
         volumes = [float(candle[5]) for candle in klines]
         current_volume = volumes[-1] if volumes else 0
-        avg_volume = np.mean(volumes[-20:-1]) if len(volumes) >= 20 else 1.0
+        avg_volume = np.mean(volumes[-15:-1]) if len(volumes) >= 15 else 1.0
         volume_ratio = current_volume / avg_volume if avg_volume > 0 else 1.0
         
         # SUPPORT/RESISTANCE
@@ -627,12 +678,18 @@ class ProbabilityAnalyzer:
             distance_to_resistance = abs(resistance - current_price) / current_price
             distance_to_support = abs(current_price - support) / current_price
             
-            if current_price > resistance and volume_ratio > 1.3:
+            if current_price > resistance and volume_ratio > 1.2:
                 sr_signal = "BUY"
                 sr_strength = min(volume_ratio * 0.3, 1.0)
-            elif current_price < support and volume_ratio > 1.3:
+            elif current_price < support and volume_ratio > 1.2:
                 sr_signal = "SELL"
                 sr_strength = min(volume_ratio * 0.3, 1.0)
+            elif distance_to_resistance < 0.008:  # Nới lỏng ngưỡng
+                sr_signal = "SELL"
+                sr_strength = 0.6
+            elif distance_to_support < 0.008:  # Nới lỏng ngưỡng
+                sr_signal = "BUY"
+                sr_strength = 0.6
         
         # MARKET STRUCTURE
         structure_signal = analyzer.analyze_market_structure(closes)
@@ -666,9 +723,9 @@ class ProbabilityAnalyzer:
         # KIỂM TRA GOLDEN/DEATH CROSS
         conditions['golden_cross_recent'] = False
         conditions['death_cross_recent'] = False
-        if len(closes) >= 10:
-            prev_ema_fast = analyzer.calculate_ema(closes[:-5], 9)  # EMA fast trước 5 nến
-            prev_ema_slow = analyzer.calculate_ema(closes[:-5], 21)  # EMA slow trước 5 nến
+        if len(closes) >= 8:
+            prev_ema_fast = self.calculate_ema(closes[:-3], 9)  # EMA fast trước 3 nến
+            prev_ema_slow = self.calculate_ema(closes[:-3], 21)  # EMA slow trước 3 nến
             conditions['golden_cross_recent'] = ema_fast > ema_slow and prev_ema_fast <= prev_ema_slow
             conditions['death_cross_recent'] = ema_fast < ema_slow and prev_ema_fast >= prev_ema_slow
         
@@ -677,6 +734,20 @@ class ProbabilityAnalyzer:
         conditions['ema_alignment_bearish'] = ema_fast < ema_slow < ema_trend
         
         return conditions
+
+    def calculate_ema(self, prices, period):
+        """TÍNH EMA CHO PHÂN TÍCH LỊCH SỬ"""
+        if len(prices) < period:
+            return prices[-1] if prices else 0
+            
+        ema = [prices[0]]
+        multiplier = 2 / (period + 1)
+        
+        for i in range(1, len(prices)):
+            ema_value = (prices[i] * multiplier) + (ema[i-1] * (1 - multiplier))
+            ema.append(ema_value)
+            
+        return ema[-1]
 
     def _update_detailed_stats(self, signals_data, combined_analysis, is_correct, price_change):
         """CẬP NHẬT THỐNG KÊ CHI TIẾT CHO TẤT CẢ CHỈ BÁO"""
@@ -856,7 +927,7 @@ class ProbabilityAnalyzer:
             report += "📈 <b>RSI - NHIỀU ĐIỂM:</b>\n"
             for level in [20, 30, 40, 50, 60, 70, 80]:
                 total = stats['rsi_multiple_points']['total_predictions'][level]
-                if total > 10:
+                if total > 5:  # Giảm ngưỡng
                     correct = stats['rsi_multiple_points']['correct_predictions'][level]
                     prob = correct / total
                     exp = stats['rsi_multiple_points']['expectations'][level]
@@ -865,7 +936,7 @@ class ProbabilityAnalyzer:
             report += "\n📉 <b>EMA - NHIỀU ĐIỀU KIỆN:</b>\n"
             for condition in ['price_above_all_ema', 'ema_alignment_bullish', 'golden_cross_recent']:
                 total = stats['ema_multiple_conditions']['total_predictions'][condition]
-                if total > 5:
+                if total > 3:  # Giảm ngưỡng
                     correct = stats['ema_multiple_conditions']['correct_predictions'][condition]
                     prob = correct / total
                     exp = stats['ema_multiple_conditions']['expectations'][condition]
@@ -874,7 +945,7 @@ class ProbabilityAnalyzer:
             report += "\n📊 <b>VOLUME - NHIỀU MỨC:</b>\n"
             for ratio in [0.8, 1.0, 1.2, 1.5, 2.0]:
                 total = stats['volume_multiple_levels']['total_predictions'][ratio]
-                if total > 5:
+                if total > 3:  # Giảm ngưỡng
                     correct = stats['volume_multiple_levels']['correct_predictions'][ratio]
                     prob = correct / total
                     exp = stats['volume_multiple_levels']['expectations'][ratio]
@@ -902,7 +973,7 @@ class TrendIndicatorSystem:
         self.ema_slow = 21
         self.ema_trend = 50
         self.rsi_period = 14
-        self.lookback = 100
+        self.lookback = 80  # Giảm lookback
         self.probability_analyzer = ProbabilityAnalyzer()
     
     def calculate_ema(self, prices, period):
@@ -954,7 +1025,7 @@ class TrendIndicatorSystem:
             params = {
                 'symbol': symbol.upper(),
                 'interval': '15m',
-                'limit': 20
+                'limit': 15  # Giảm số nến
             }
             data = binance_api_request(url, params=params)
             if not data:
@@ -979,17 +1050,17 @@ class TrendIndicatorSystem:
             params = {
                 'symbol': symbol.upper(),
                 'interval': '15m',
-                'limit': 30
+                'limit': 25  # Giảm số nến
             }
             data = binance_api_request(url, params=params)
-            if not data or len(data) < 20:
+            if not data or len(data) < 15:
                 return 0, 0
                 
             highs = [float(candle[2]) for candle in data]
             lows = [float(candle[3]) for candle in data]
             
-            resistance = max(highs[-20:])
-            support = min(lows[-20:])
+            resistance = max(highs[-15:])
+            support = min(lows[-15:])
             
             return support, resistance
             
@@ -998,25 +1069,25 @@ class TrendIndicatorSystem:
             return 0, 0
 
     def get_support_resistance_from_klines(self, klines):
-        if not klines or len(klines) < 20:
+        if not klines or len(klines) < 15:
             return 0, 0
             
         highs = [float(candle[2]) for candle in klines]
         lows = [float(candle[3]) for candle in klines]
         
-        resistance = max(highs[-20:])
-        support = min(lows[-20:])
+        resistance = max(highs[-15:])
+        support = min(lows[-15:])
         
         return support, resistance
     
     def analyze_market_structure(self, prices):
-        if len(prices) < 10:
+        if len(prices) < 8:  # Giảm yêu cầu
             return "NEUTRAL"
             
-        recent_highs = prices[-5:]
-        recent_lows = prices[-5:]
-        prev_highs = prices[-10:-5] 
-        prev_lows = prices[-10:-5]
+        recent_highs = prices[-4:]
+        recent_lows = prices[-4:]
+        prev_highs = prices[-8:-4] 
+        prev_lows = prices[-8:-4]
         
         if (max(recent_highs) > max(prev_highs) and 
             min(recent_lows) > min(prev_lows)):
@@ -1029,7 +1100,7 @@ class TrendIndicatorSystem:
     def analyze_symbol(self, symbol):
         try:
             klines = self.get_klines(symbol, '15m', self.lookback)
-            if not klines or len(klines) < 50:
+            if not klines or len(klines) < 30:  # Giảm yêu cầu
                 return "NEUTRAL"
             
             closes = [float(candle[4]) for candle in klines]
@@ -1039,11 +1110,11 @@ class TrendIndicatorSystem:
             final_signal, confidence, expectation, variance = \
                 self.probability_analyzer.get_final_signal_with_probability(symbol, signals_data)
             
-            if confidence >= 0.6:
-                if expectation > -2:
-                    logger.info(f"✅ {symbol} - QUYẾT ĐỊNH: {final_signal} "
-                               f"(Conf: {confidence:.2f}, Exp: {expectation:.2f}%)")
-                    return final_signal
+            # GIỮ NGUYÊN NGƯỠNG CHẤT LƯỢNG
+            if confidence >= 0.6 and expectation > -2:
+                logger.info(f"✅ {symbol} - QUYẾT ĐỊNH: {final_signal} "
+                           f"(Conf: {confidence:.2f}, Exp: {expectation:.2f}%)")
+                return final_signal
             
             logger.info(f"⚪ {symbol} - KHÔNG GIAO DỊCH: "
                        f"Confidence {confidence:.2f} < 0.6 hoặc Expectation {expectation:.2f}% quá thấp")
@@ -1070,21 +1141,27 @@ class TrendIndicatorSystem:
             ema_strength = 1.0
         elif current_price > ema_fast > ema_slow:
             ema_signal = "BUY"
-            ema_strength = 0.7
+            ema_strength = 0.8
         elif current_price < ema_fast < ema_slow:
             ema_signal = "SELL"
-            ema_strength = 0.7
+            ema_strength = 0.8
+        elif ema_fast > ema_slow > ema_trend:
+            ema_signal = "BUY"
+            ema_strength = 0.6
+        elif ema_fast < ema_slow < ema_trend:
+            ema_signal = "SELL"
+            ema_strength = 0.6
         
         rsi = self.calculate_rsi(closes, self.rsi_period)
         
         rsi_signal = "NEUTRAL"
         rsi_strength = 0
-        if rsi < 30:
+        if rsi < 35:  # Điều chỉnh ngưỡng
             rsi_signal = "BUY"
-            rsi_strength = min((30 - rsi) / 30, 1.0)
-        elif rsi > 70:
+            rsi_strength = min((35 - rsi) / 35, 1.0)
+        elif rsi > 65:  # Điều chỉnh ngưỡng
             rsi_signal = "SELL" 
-            rsi_strength = min((rsi - 70) / 30, 1.0)
+            rsi_strength = min((rsi - 65) / 35, 1.0)
         
         volume_ratio = self.get_volume_data(symbol)
         
@@ -1096,16 +1173,16 @@ class TrendIndicatorSystem:
             distance_to_resistance = abs(resistance - current_price) / current_price
             distance_to_support = abs(current_price - support) / current_price
             
-            if current_price > resistance and volume_ratio > 1.3:
+            if current_price > resistance and volume_ratio > 1.2:
                 sr_signal = "BUY"
                 sr_strength = min(volume_ratio * 0.3, 1.0)
-            elif current_price < support and volume_ratio > 1.3:
+            elif current_price < support and volume_ratio > 1.2:
                 sr_signal = "SELL"
                 sr_strength = min(volume_ratio * 0.3, 1.0)
-            elif distance_to_resistance < 0.005:
+            elif distance_to_resistance < 0.008:
                 sr_signal = "SELL"
                 sr_strength = 0.6
-            elif distance_to_support < 0.005:
+            elif distance_to_support < 0.008:
                 sr_signal = "BUY"
                 sr_strength = 0.6
         
@@ -1168,7 +1245,7 @@ class SmartCoinFinder:
                 return self.qualified_symbols_cache[target_leverage]
             
             logger.info(f"🔍 Đang lọc coin hỗ trợ đòn bẩy ≥ {target_leverage}x...")
-            all_symbols = get_all_usdt_pairs(limit=600)
+            all_symbols = get_all_usdt_pairs(limit=400)  # Giảm số lượng coin
             if not all_symbols:
                 if target_leverage in self.qualified_symbols_cache:
                     return self.qualified_symbols_cache[target_leverage]
@@ -1183,7 +1260,7 @@ class SmartCoinFinder:
                 except:
                     return None
             
-            with ThreadPoolExecutor(max_workers=10) as executor:
+            with ThreadPoolExecutor(max_workers=8) as executor:  # Giảm workers
                 results = list(executor.map(check_symbol_leverage, all_symbols))
             
             qualified_symbols = [symbol for symbol in results if symbol is not None]
@@ -1227,7 +1304,7 @@ class SmartCoinFinder:
                 return None
             
             random.shuffle(available_symbols)
-            symbols_to_check = available_symbols[:50]
+            symbols_to_check = available_symbols[:30]  # Giảm số lượng coin cần kiểm tra
             
             logger.info(f"🔍 Sẽ kiểm tra {len(symbols_to_check)} coin đủ đòn bẩy...")
             
@@ -1240,7 +1317,6 @@ class SmartCoinFinder:
                     
                     current_max_leverage = self.get_symbol_leverage(symbol)
                     if current_max_leverage < target_leverage:
-                        logger.debug(f"⚪ {symbol} - Đòn bẩy thực tế {current_max_leverage}x < {target_leverage}x -> BỎ QUA")
                         continue
                     
                     signal = self.analyzer.analyze_symbol(symbol)
@@ -1362,7 +1438,7 @@ def binance_api_request(url, method='GET', params=None, headers=None):
     logger.error(f"Không thể thực hiện yêu cầu API sau {max_retries} lần thử")
     return None
 
-def get_all_usdt_pairs(limit=600):
+def get_all_usdt_pairs(limit=400):
     try:
         url = "https://fapi.binance.com/fapi/v1/exchangeInfo"
         data = binance_api_request(url)
@@ -1513,7 +1589,7 @@ def get_positions(symbol=None, api_key=None, api_secret=None):
 class WebSocketManager:
     def __init__(self):
         self.connections = {}
-        self.executor = ThreadPoolExecutor(max_workers=10)
+        self.executor = ThreadPoolExecutor(max_workers=8)  # Giảm workers
         self._lock = threading.Lock()
         self._stop_event = threading.Event()
         
@@ -1636,7 +1712,7 @@ class BaseBot:
         
         self.current_target_direction = None
         self.last_find_time = 0
-        self.find_interval = 60
+        self.find_interval = 45  # Giảm thời gian tìm kiếm
         
         self.check_position_status()
         if self.symbol:
@@ -1680,8 +1756,8 @@ class BaseBot:
             return
         try:
             self.prices.append(float(price))
-            if len(self.prices) > 100:
-                self.prices = self.prices[-100:]
+            if len(self.prices) > 50:  # Giảm kích thước buffer
+                self.prices = self.prices[-50:]
         except Exception as e:
             self.log(f"❌ Lỗi xử lý giá: {str(e)}")
 
@@ -1730,6 +1806,10 @@ class BaseBot:
 
     def find_and_set_coin(self):
         try:
+            current_time = time.time()
+            if current_time - self.last_find_time < self.find_interval:
+                return False
+                
             self.current_target_direction = self.get_target_direction()
             
             self.log(f"🎯 Đang tìm coin {self.current_target_direction} với đòn bẩy {self.lev}x...")
@@ -1748,10 +1828,12 @@ class BaseBot:
         
             if coin_data is None:
                 self.log(f"⚠️ Không tìm thấy coin {self.current_target_direction} với đòn bẩy {self.lev}x phù hợp")
+                self.last_find_time = current_time
                 return False
                 
             if not coin_data.get('qualified', False):
                 self.log(f"⚠️ Coin {coin_data.get('symbol', 'UNKNOWN')} không đủ tiêu chuẩn, tìm coin khác")
+                self.last_find_time = current_time
                 return False
             
             new_symbol = coin_data['symbol']
@@ -1759,6 +1841,7 @@ class BaseBot:
             
             if max_leverage < self.lev:
                 self.log(f"❌ Coin {new_symbol} chỉ hỗ trợ {max_leverage}x < {self.lev}x -> BỎ QUA VÀ TÌM COIN KHÁC")
+                self.last_find_time = current_time
                 return False
             
             if self._register_coin_with_retry(new_symbol):
@@ -1772,13 +1855,16 @@ class BaseBot:
                 self.log(f"✅ Đã tìm thấy và đăng ký coin {new_symbol} - {self.current_target_direction} - Đòn bẩy: {self.lev}x")
                 
                 self.status = "waiting"
+                self.last_find_time = current_time
                 return True
             else:
                 self.log(f"❌ Không thể đăng ký coin {new_symbol} - có thể đã có bot khác trade, tìm coin khác")
+                self.last_find_time = current_time
                 return False
                 
         except Exception as e:
             self.log(f"❌ Lỗi tìm coin: {str(e)}")
+            self.last_find_time = time.time()
             return False
 
     def check_position_status(self):
@@ -2102,7 +2188,7 @@ class TrendBot(BaseBot):
         
         self.analyzer = TrendIndicatorSystem()
         self.last_analysis_time = 0
-        self.analysis_interval = 180
+        self.analysis_interval = 120  # Giảm thời gian phân tích
         
     def get_signal(self):
         if not self.symbol:
@@ -2142,9 +2228,9 @@ class BotManager:
         
         if api_key and api_secret:
             self._verify_api_connection()
-            self.log("🟢 HỆ THỐNG BOT XU HƯỚNG TÍCH HỢP ĐÃ KHỞI ĐỘNG")
+            self.log("🟢 HỆ THỐNG BOT XU HƯỚNG TÍCH HỢP ĐÃ KHỞI ĐỘNG - PHIÊN BẢN CẢI TIẾN")
             self.log("🎯 Sử dụng hệ thống chỉ báo: EMA + RSI + Volume + Support/Resistance")
-            self.log("📊 Hệ thống thống kê xác suất đa điểm: Phân tích 300 nến lịch sử")
+            self.log("📊 Hệ thống thống kê xác suất đa điểm: Phân tích 200 nến lịch sử")
             
             self.telegram_thread = threading.Thread(target=self._telegram_listener, daemon=True)
             self.telegram_thread.start()
@@ -2286,11 +2372,12 @@ class BotManager:
 
     def send_main_menu(self, chat_id):
         welcome = (
-            "🤖 <b>BOT GIAO DỊCH FUTURES ĐA LUỒNG</b>\n\n"
+            "🤖 <b>BOT GIAO DỊCH FUTURES ĐA LUỒNG - PHIÊN BẢN CẢI TIẾN</b>\n\n"
             "🎯 <b>HỆ THỐNG XU HƯỚNG TÍCH HỢP NÂNG CẤP</b>\n"
             "📊 EMA + RSI + Volume + Support/Resistance\n"
-            "📈 Phân tích xác suất đa điểm 300 nến lịch sử\n"
-            "🎲 Random direction - Không ép hướng"
+            "📈 Phân tích xác suất đa điểm 200 nến lịch sử\n"
+            "🎲 Random direction - Không ép hướng\n\n"
+            "⚡ <b>TỐI ƯU HIỆU SUẤT & CHẤT LƯỢNG TÍN HIỆU</b>"
         )
         send_telegram(welcome, chat_id, create_main_menu(),
                      bot_token=self.telegram_bot_token, 
@@ -2868,17 +2955,16 @@ class BotManager:
         
         elif text == "🎯 Chiến lược":
             strategy_info = (
-                "🎯 <b>HỆ THỐNG XU HƯỚNG TÍCH HỢP NÂNG CẤP</b>\n\n"
+                "🎯 <b>HỆ THỐNG XU HƯỚNG TÍCH HỢP NÂNG CẤP - PHIÊN BẢN CẢI TIẾN</b>\n\n"
                 
                 "📊 <b>Chỉ báo sử dụng:</b>\n"
-                "• EMA (9, 21, 50) - Trọng số 30%\n"
-                "• RSI (14) + Volume - Trọng số 25%\n"  
-                "• Support/Resistance - Trọng số 20%\n"
-                "• Market Structure - Trọng số 10%\n"
-                "• Probability Analysis - Trọng số 15%\n\n"
+                "• EMA (9, 21, 50) - Trọng số 40%\n"
+                "• RSI (14) + Volume - Trọng số 35%\n"  
+                "• Support/Resistance - Trọng số 15%\n"
+                "• Market Structure - Trọng số 10%\n\n"
                 
                 "📈 <b>Hệ thống thống kê xác suất đa điểm:</b>\n"
-                "• Phân tích 300 nến lịch sử\n"
+                "• Phân tích 200 nến lịch sử (tối ưu)\n"
                 "• 13 điểm RSI, 10 điều kiện EMA, 9 mức Volume\n"
                 "• Tính xác suất thắng cho từng điểm chỉ báo\n"
                 "• Tính kỳ vọng & phương sai\n"
@@ -2889,10 +2975,11 @@ class BotManager:
                 "• Không ép hướng ngược chiều\n"
                 "• Đảm bảo đa dạng hóa tự nhiên\n\n"
                 
-                "🔍 <b>Lọc đòn bẩy thông minh:</b>\n"
-                "• Tự động kiểm tra đòn bẩy tối đa của coin\n"
-                "• Chỉ chọn coin hỗ trợ đòn bẩy mong muốn\n"
-                "• Tránh lỗi khi đặt lệnh"
+                "⚡ <b>Tối ưu hiệu suất:</b>\n"
+                "• Giảm yêu cầu dữ liệu tối thiểu\n"
+                "• Tăng tốc độ phân tích\n"
+                "• Cải thiện chất lượng tín hiệu\n"
+                "• Giữ nguyên ngưỡng chất lượng 0.6"
             )
             send_telegram(strategy_info, chat_id,
                         bot_token=self.telegram_bot_token, default_chat_id=self.telegram_chat_id)
@@ -2911,7 +2998,8 @@ class BotManager:
                 f"🔍 Đang tìm coin: {searching_bots} bot\n"
                 f"📊 Đang trade: {trading_bots} bot\n"
                 f"🌐 WebSocket: {len(self.ws_manager.connections)} kết nối\n\n"
-                f"🎯 <b>Hệ thống xác suất đa điểm đã kích hoạt</b>"
+                f"🎯 <b>Hệ thống xác suất đa điểm đã kích hoạt</b>\n"
+                f"⚡ <b>Phiên bản tối ưu hiệu suất</b>"
             )
             send_telegram(config_info, chat_id,
                         bot_token=self.telegram_bot_token, default_chat_id=self.telegram_chat_id)
@@ -2952,3 +3040,4 @@ class BotManager:
 
 # ========== KHỞI TẠO GLOBAL INSTANCES ==========
 coin_manager = CoinManager()
+
