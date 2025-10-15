@@ -758,7 +758,7 @@ class TrendIndicatorSystem:
             max_signal = max(signals, key=signals.get)
             confidence = signals[max_signal]
             
-            if confidence >= 0.60:
+            if confidence >= 0.55:
                 return max_signal
             else:
                 return "NEUTRAL"
