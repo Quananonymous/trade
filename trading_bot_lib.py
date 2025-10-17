@@ -1246,6 +1246,49 @@ class BaseBot:
                 self.log(f"❌ Lỗi kiểm tra vị thế: {str(e)}")
                 self.last_error_log_time = time.time()
 
+    def check_exit_conditions(self):
+        """KIỂM TRA CÁC ĐIỀU KIỆN THOÁT LỆNH THÔNG MINH"""
+        if not self.position_open or not self.symbol or self._close_attempted:
+            return
+            
+        try:
+            # 1. Kiểm tra tín hiệu thoát từ RSI & EMA
+            exit_signal = self.analyzer.check_exit_signal(self.symbol, self.side)
+            if exit_signal:
+                self.close_position(f"📊 Tín hiệu thoát RSI & EMA")
+                return
+            
+            # 2. Kiểm tra tín hiệu đảo chiều (QUAN TRỌNG)
+            current_signal = self.get_signal()
+            if current_signal and current_signal != "NEUTRAL" and current_signal != self.side:
+                self.close_position(f"🔄 Tín hiệu đảo chiều: {current_signal}")
+                return
+            
+            # 3. Kiểm tra nếu coin không còn hỗ trợ đòn bẩy đủ
+            current_leverage = self.coin_finder.get_symbol_leverage(self.symbol)
+            if current_leverage < self.lev:
+                self.close_position(f"⚠️ Đòn bẩy giảm ({current_leverage}x < {self.lev}x)")
+                return
+            
+            # 4. Kiểm tra volume quá thấp (có thể không có thanh khoản)
+            klines = self.analyzer.get_klines(self.symbol, '5m', 10)
+            if klines and len(klines) >= 5:
+                current_volume = float(klines[-1][5])
+                avg_volume = np.mean([float(candle[5]) for candle in klines[-5:-1]])
+                
+                if avg_volume > 0 and current_volume < avg_volume * 0.3:  # Volume < 30% trung bình
+                    self.close_position(f"📉 Volume quá thấp ({current_volume:.0f} < 30% trung bình)")
+                    return
+            
+            # 5. Kiểm tra thời gian giữ lệnh quá lâu (tránh treo lệnh)
+            if hasattr(self, 'position_open_time'):
+                position_duration = time.time() - self.position_open_time
+                if position_duration > 3600 * 4:  # 4 giờ
+                    self.close_position(f"⏰ Giữ lệnh quá lâu ({position_duration/3600:.1f}h)")
+                    return
+            
+        except Exception as e:
+            self.log(f"❌ Lỗi kiểm tra điều kiện thoát: {str(e)}")
     def _reset_position(self):
         self.position_open = False
         self.status = "searching" if not self.symbol else "waiting"
@@ -1256,12 +1299,15 @@ class BaseBot:
         self._last_close_attempt = 0
 
     def _run(self):
+        """VÒNG LẶP CHÍNH CỦA BOT - ĐÃ THÊM KIỂM TRA THOÁT LỆNH"""
         while not self._stop:
             try:
                 current_time = time.time()
                 
+                # KIỂM TRA ĐÒN BẨY ĐỊNH KỲ
                 if current_time - getattr(self, '_last_leverage_check', 0) > 60:
                     if not self.verify_leverage_and_switch():
+                        # NẾU ĐÒN BẨY KHÔNG ĐỦ, XÓA SYMBOL VÀ TIẾP TỤC TÌM
                         if self.symbol:
                             self.ws_manager.remove_symbol(self.symbol)
                             self.coin_manager.unregister_coin(self.symbol)
@@ -1275,11 +1321,13 @@ class BaseBot:
                     self.last_position_check = current_time
                               
                 if not self.position_open:
+                    # Nếu không có symbol, tìm coin mới LIÊN TỤC
                     if not self.symbol:
-                        self.find_and_set_coin()
+                        self.find_and_set_coin()  # LUÔN GỌI, KHÔNG KIỂM TRA KẾT QUẢ
                         time.sleep(1)
                         continue
                     
+                    # NẾU CÓ SYMBOL NHƯNG CHƯA CÓ VỊ THẾ, LUÔN PHÂN TÍCH TÍN HIỆU
                     signal = self.get_signal()
                     
                     if signal and signal != "NEUTRAL":
@@ -1287,6 +1335,7 @@ class BaseBot:
                             if self.open_position(signal):
                                 self.last_trade_time = current_time
                             else:
+                                # NẾU MỞ LỆNH THẤT BẠI, XÓA SYMBOL VÀ TÌM LẠI
                                 if self.symbol:
                                     self.ws_manager.remove_symbol(self.symbol)
                                     self.coin_manager.unregister_coin(self.symbol)
@@ -1295,8 +1344,15 @@ class BaseBot:
                     else:
                         time.sleep(1)
                 
-                if self.position_open and not self._close_attempted:
-                    self.check_tp_sl()
+                else:
+                    # 🔥 QUAN TRỌNG: KHI ĐANG CÓ VỊ THẾ, KIỂM TRA THOÁT LỆNH
+                    if current_time - getattr(self, 'last_exit_check_time', 0) > 30:  # Kiểm tra mỗi 30 giây
+                        self.check_exit_conditions()
+                        self.last_exit_check_time = current_time
+                    
+                    # Vẫn kiểm tra TP/SL thông thường
+                    if not self._close_attempted:
+                        self.check_tp_sl()
                     
                 time.sleep(1)
             
@@ -1305,7 +1361,6 @@ class BaseBot:
                     self.log(f"❌ Lỗi hệ thống: {str(e)}")
                     self.last_error_log_time = time.time()
                 time.sleep(1)
-
     def stop(self):
         self._stop = True
         if self.symbol:
@@ -1382,6 +1437,7 @@ class BaseBot:
                     self.qty = executed_qty if side == "BUY" else -executed_qty
                     self.position_open = True
                     self.status = "open"
+                    self.position_open_time = time.time() 
                     
                     message = (
                         f"✅ <b>ĐÃ MỞ VỊ THẾ {self.symbol}</b>\n"
