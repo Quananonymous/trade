@@ -1345,11 +1345,7 @@ class BaseBot:
                         time.sleep(1)
                 
                 else:
-                    # 🔥 QUAN TRỌNG: KHI ĐANG CÓ VỊ THẾ, KIỂM TRA THOÁT LỆNH
-                    if current_time - getattr(self, 'last_exit_check_time', 0) > 30:  # Kiểm tra mỗi 30 giây
-                        self.check_exit_conditions()
-                        self.last_exit_check_time = current_time
-                    
+                          
                     # Vẫn kiểm tra TP/SL thông thường
                     if not self._close_attempted:
                         self.check_tp_sl()
