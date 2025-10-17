@@ -1046,12 +1046,6 @@ class BaseBot:
         
         self.thread = threading.Thread(target=self._run, daemon=True)
         self.thread.start()
-        
-        if self.symbol:
-            self.log(f"🟢 Bot {strategy_name} khởi động | {self.symbol} | ĐB: {lev}x | Vốn: {percent}% | TP/SL: {tp}%/{sl}%")
-        else:
-            self.log(f"🟢 Bot {strategy_name} khởi động | Đang tìm coin... | ĐB: {lev}x | Vốn: {percent}% | TP/SL: {tp}%/{sl}%")
-
     def _register_coin_with_retry(self, symbol):
         max_retries = 3
         for attempt in range(max_retries):
@@ -1112,18 +1106,14 @@ class BaseBot:
             
             if total == 0:
                 direction = "BUY" if random.random() > 0.5 else "SELL"
-                self.log(f"⚖️ QUYẾT ĐỊNH: Không có vị thế → RANDOM {direction}")
                 return direction
             
             if buy_count > sell_count:
-                self.log(f"⚖️ QUYẾT ĐỊNH: Nhiều LONG hơn ({buy_count} vs {sell_count}) → TÌM SHORT")
                 return "SELL"
             elif sell_count > buy_count:
-                self.log(f"⚖️ QUYẾT ĐỊNH: Nhiều SHORT hơn ({sell_count} vs {buy_count}) → TÌM LONG")  
                 return "BUY"
             else:
                 direction = "BUY" if random.random() > 0.5 else "SELL"
-                self.log(f"⚖️ QUYẾT ĐỊNH: Cân bằng → RANDOM {direction}")
                 return direction
                 
         except Exception as e:
@@ -1198,8 +1188,6 @@ class BaseBot:
                 
                 self.symbol = new_symbol
                 self.ws_manager.add_symbol(self.symbol, self._handle_price_update)
-                
-                self.log(f"✅ Đã tìm thấy và đăng ký coin {new_symbol} - {self.current_target_direction} - Đòn bẩy: {self.lev}x")
                 
                 self.status = "waiting"
                 return True
@@ -1604,9 +1592,6 @@ class VolumeMACDBot(BaseBot):
             self.last_analysis_time = current_time
             
             signal = self.analyzer.analyze_volume_macd(self.symbol)
-            
-            if signal != "NEUTRAL":
-                self.log(f"🎯 Nhận tín hiệu {signal} từ hệ thống Volume & MACD")
             
             return signal
             
