@@ -1151,15 +1151,10 @@ class BaseBot:
         """TÌM VÀ SET COIN MỚI"""
         try:
             self.current_target_direction = self.get_target_direction()
-            
-            self.log(f"🎯 Đang tìm coin {self.current_target_direction} với đòn bẩy {self.lev}x...")
-            
             managed_coins = self.coin_manager.get_managed_coins()
             excluded_symbols = set(managed_coins.keys())
             
-            if excluded_symbols:
-                self.log(f"🚫 Tránh các coin đang trade: {', '.join(list(excluded_symbols)[:5])}...")
-            
+            if excluded_symbols: 
             coin_data = self.coin_finder.find_coin_by_direction(
                 self.current_target_direction, 
                 self.lev,
@@ -1167,18 +1162,15 @@ class BaseBot:
             )
         
             if coin_data is None:
-                self.log(f"⚠️ Không tìm thấy coin {self.current_target_direction} với đòn bẩy {self.lev}x phù hợp")
                 return False
                 
             if not coin_data.get('qualified', False):
-                self.log(f"⚠️ Coin {coin_data.get('symbol', 'UNKNOWN')} không đủ tiêu chuẩn, tìm coin khác")
                 return False
             
             new_symbol = coin_data['symbol']
             max_leverage = coin_data.get('max_leverage', 100)
             
             if max_leverage < self.lev:
-                self.log(f"❌ Coin {new_symbol} chỉ hỗ trợ {max_leverage}x < {self.lev}x -> BỎ QUA VÀ TÌM COIN KHÁC")
                 return False
             
             if self._register_coin_with_retry(new_symbol):
@@ -1192,7 +1184,6 @@ class BaseBot:
                 self.status = "waiting"
                 return True
             else:
-                self.log(f"❌ Không thể đăng ký coin {new_symbol} - có thể đã có bot khác trade, tìm coin khác")
                 return False
                 
         except Exception as e:
@@ -1440,7 +1431,6 @@ class BaseBot:
                     return False
             else:
                 error_msg = result.get('msg', 'Unknown error') if result else 'No response'
-                self.log(f"❌ Lỗi đặt lệnh {side}: {error_msg} -> TÌM COIN KHÁC")
                 
                 if result and 'code' in result:
                     self.log(f"📋 Mã lỗi Binance: {result['code']} - {result.get('msg', '')}")
@@ -1610,14 +1600,6 @@ class VolumeMACDBot(BaseBot):
         # Nếu đã đóng lệnh do TP/SL thì không kiểm tra tiếp
         if not self.position_open:
             return
-            
-        # Kiểm tra tín hiệu thoát từ RSI & EMA
-        try:
-            exit_signal = self.analyzer.check_exit_signal(self.symbol, self.side)
-            if exit_signal:
-                self.close_position(f"📊 Tín hiệu thoát RSI & EMA")
-        except Exception as e:
-            self.log(f"❌ Lỗi kiểm tra tín hiệu thoát: {str(e)}")
 
 # ========== BOT MANAGER HOÀN CHỈNH ==========
 class BotManager:
