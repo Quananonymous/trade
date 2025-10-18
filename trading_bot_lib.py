@@ -1154,7 +1154,6 @@ class BaseBot:
             managed_coins = self.coin_manager.get_managed_coins()
             excluded_symbols = set(managed_coins.keys())
             
-            if excluded_symbols: 
             coin_data = self.coin_finder.find_coin_by_direction(
                 self.current_target_direction, 
                 self.lev,
