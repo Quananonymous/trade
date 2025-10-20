@@ -1470,22 +1470,23 @@ class BaseBot:
     def check_tp_sl(self):
         if not self.position_open or self.entry <= 0 or self._close_attempted:
             return
-
+    
         current_price = get_current_price(self.symbol)
         if current_price <= 0:
             return
-
+    
+        # SỬA: Sử dụng self.entry (giá trung bình hiện tại) thay vì self.entry_base
         if self.side == "BUY":
-            profit = (current_price - self.entry) * abs(self.qty)
+            profit = (current_price - self.entry) * abs(self.qty)  # Sửa từ self.entry_base thành self.entry
         else:
-            profit = (self.entry - current_price) * abs(self.qty)
+            profit = (self.entry - current_price) * abs(self.qty)  # Sửa từ self.entry_base thành self.entry
             
-        invested = self.entry * abs(self.qty) / self.lev
+        invested = self.entry * abs(self.qty) / self.lev  # Sửa từ self.entry_base thành self.entry
         if invested <= 0:
             return
             
         roi = (profit / invested) * 100
-
+    
         if self.tp is not None and roi >= self.tp:
             self.close_position(f"✅ Đạt TP {self.tp}% (ROI: {roi:.2f}%)")
         elif self.sl is not None and self.sl > 0 and roi <= -self.sl:
