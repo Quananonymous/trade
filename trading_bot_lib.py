@@ -329,6 +329,7 @@ def set_leverage(symbol, lev, api_key, api_secret):
         return False
 
 def get_balance(api_key, api_secret):
+    """Lấy số dư KHẢ DỤNG (availableBalance) để tính toán khối lượng"""
     try:
         ts = int(time.time() * 1000)
         params = {"timestamp": ts}
@@ -340,10 +341,16 @@ def get_balance(api_key, api_secret):
         data = binance_api_request(url, headers=headers)
         if not data:
             return None
+            
         for asset in data['assets']:
             if asset['asset'] == 'USDT':
-                # SỬA: Dùng walletBalance thay vì availableBalance
-                return float(asset['walletBalance'])
+                available_balance = float(asset['availableBalance'])
+                total_balance = float(asset['walletBalance'])
+                
+                # Log để debug
+                logger.info(f"💰 Số dư - Khả dụng: {available_balance:.2f} USDT, Tổng: {total_balance:.2f} USDT")
+                
+                return available_balance  # ✅ TRẢ VỀ SỐ DƯ KHẢ DỤNG
         return 0
     except Exception as e:
         logger.error(f"Lỗi lấy số dư: {str(e)}")
