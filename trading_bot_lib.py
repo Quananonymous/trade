@@ -1,4 +1,4 @@
-# trading_bot_volume_fixed_part1.py - PHẦN 1: CORE SYSTEM & BASE BOT
+# trading_bot_core.py
 import json
 import hmac
 import hashlib
@@ -55,13 +55,9 @@ def send_telegram(message, chat_id=None, reply_markup=None, bot_token=None, defa
     except Exception:
         pass
 
-# ========== MENU TELEGRAM HOÀN CHỈNH ==========
+# ========== MENU TELEGRAM ==========
 def create_cancel_keyboard():
-    return {
-        "keyboard": [[{"text": "❌ Hủy bỏ"}]],
-        "resize_keyboard": True,
-        "one_time_keyboard": True
-    }
+    return {"keyboard": [[{"text": "❌ Hủy bỏ"}]], "resize_keyboard": True, "one_time_keyboard": True}
 
 def create_strategy_keyboard():
     return {
@@ -112,11 +108,7 @@ def create_symbols_keyboard(strategy=None):
         keyboard.append(row)
     keyboard.append([{"text": "❌ Hủy bỏ"}])
     
-    return {
-        "keyboard": keyboard,
-        "resize_keyboard": True,
-        "one_time_keyboard": True
-    }
+    return {"keyboard": keyboard, "resize_keyboard": True, "one_time_keyboard": True}
 
 def create_main_menu():
     return {
@@ -132,7 +124,6 @@ def create_main_menu():
 
 def create_leverage_keyboard(strategy=None):
     leverages = ["3", "5", "10", "15", "20", "25", "50", "75", "100"]
-    
     keyboard = []
     row = []
     for lev in leverages:
@@ -143,12 +134,7 @@ def create_leverage_keyboard(strategy=None):
     if row:
         keyboard.append(row)
     keyboard.append([{"text": "❌ Hủy bỏ"}])
-    
-    return {
-        "keyboard": keyboard,
-        "resize_keyboard": True,
-        "one_time_keyboard": True
-    }
+    return {"keyboard": keyboard, "resize_keyboard": True, "one_time_keyboard": True}
 
 def create_percent_keyboard():
     return {
@@ -194,456 +180,7 @@ def create_bot_count_keyboard():
         "one_time_keyboard": True
     }
 
-# ========== HÀM KIỂM TRA ĐÒN BẨY TỐI ĐA ==========
-def get_max_leverage(symbol, api_key, api_secret):
-    """Lấy đòn bẩy tối đa cho một symbol"""
-    try:
-        url = "https://fapi.binance.com/fapi/v1/exchangeInfo"
-        data = binance_api_request(url)
-        if not data:
-            return 100
-        
-        for s in data['symbols']:
-            if s['symbol'] == symbol.upper():
-                for f in s['filters']:
-                    if f['filterType'] == 'LEVERAGE':
-                        if 'maxLeverage' in f:
-                            return int(f['maxLeverage'])
-                break
-        return 100
-    except Exception as e:
-        logger.error(f"Lỗi lấy đòn bẩy tối đa {symbol}: {str(e)}")
-        return 100
-
-# ========== HỆ THỐNG PHÂN TÍCH VOLUME, MACD, RSI & EMA ==========
-class VolumeMACDStrategy:
-    """HỆ THỐNG PHÂN TÍCH DỰA TRÊN VOLUME, MACD, RSI & EMA"""
-    
-    def __init__(self):
-        self.volume_threshold = 2
-        self.volume_decrease_threshold = 0.5
-        self.small_body_threshold = 0.1
-        
-    def get_klines(self, symbol, interval, limit):
-        """Lấy dữ liệu nến từ Binance"""
-        try:
-            url = "https://fapi.binance.com/fapi/v1/klines"
-            params = {
-                'symbol': symbol.upper(),
-                'interval': interval,
-                'limit': limit
-            }
-            return binance_api_request(url, params=params)
-        except Exception as e:
-            return None
-    
-    def calculate_ema(self, prices, period):
-        """Tính EMA (Exponential Moving Average)"""
-        if len(prices) < period:
-            return None
-        
-        ema_values = []
-        multiplier = 2 / (period + 1)
-        
-        sma = sum(prices[:period]) / period
-        ema_values.append(sma)
-        
-        for i in range(period, len(prices)):
-            ema = (prices[i] * multiplier) + (ema_values[-1] * (1 - multiplier))
-            ema_values.append(ema)
-        
-        return ema_values
-    
-    def calculate_macd(self, prices, fast_period=12, slow_period=26, signal_period=9):
-        """Tính MACD (Moving Average Convergence Divergence)"""
-        if len(prices) < slow_period:
-            return None, None, None
-        
-        ema_fast = self.calculate_ema(prices, fast_period)
-        ema_slow = self.calculate_ema(prices, slow_period)
-        
-        if not ema_fast or not ema_slow:
-            return None, None, None
-        
-        min_length = min(len(ema_fast), len(ema_slow))
-        ema_fast = ema_fast[-min_length:]
-        ema_slow = ema_slow[-min_length:]
-        prices = prices[-min_length:]
-        
-        macd_line = [ema_fast[i] - ema_slow[i] for i in range(len(ema_fast))]
-        signal_line = self.calculate_ema(macd_line, signal_period)
-        
-        if not signal_line:
-            return None, None, None
-        
-        histogram = [macd_line[i] - signal_line[i] for i in range(len(signal_line))]
-        
-        return macd_line, signal_line, histogram
-    
-    def calculate_rsi(self, prices, period=14):
-        """Tính RSI (Relative Strength Index)"""
-        if len(prices) < period + 1:
-            return None
-        
-        gains = []
-        losses = []
-        
-        for i in range(1, len(prices)):
-            change = prices[i] - prices[i-1]
-            gains.append(max(change, 0))
-            losses.append(max(-change, 0))
-        
-        rsi_values = []
-        for i in range(period, len(gains)):
-            avg_gain = sum(gains[i-period:i]) / period
-            avg_loss = sum(losses[i-period:i]) / period
-            
-            if avg_loss == 0:
-                rsi = 100
-            else:
-                rs = avg_gain / avg_loss
-                rsi = 100 - (100 / (1 + rs))
-            
-            rsi_values.append(rsi)
-        
-        return rsi_values
-    
-    def is_doji(self, open_price, high, low, close):
-        """Kiểm tra nến doji (thân nến nhỏ)"""
-        body_size = abs(close - open_price)
-        total_range = high - low
-        
-        if total_range == 0:
-            return False
-        
-        body_ratio = body_size / total_range
-        return body_ratio < self.small_body_threshold
-    
-    def analyze_volume_macd(self, symbol):
-        """PHÂN TÍCH VOLUME, MACD, RSI & EMA THEO 3 KHUNG 1m, 5m, 15m"""
-        try:
-            intervals = ['1m', '5m', '15m']
-            signals = []
-            
-            for interval in intervals:
-                klines = self.get_klines(symbol, interval, 100)
-                if not klines or len(klines) < 50:
-                    continue
-                
-                current_candle = klines[-2]
-                prev_candles = klines[-30:-2]
-                
-                open_price = float(current_candle[1])
-                close_price = float(current_candle[4])
-                high_price = float(current_candle[2])
-                low_price = float(current_candle[3])
-                current_volume = float(current_candle[5])
-                
-                volumes = [float(candle[5]) for candle in prev_candles]
-                avg_volume = np.mean(volumes) if volumes else current_volume
-                
-                volume_ratio = current_volume / avg_volume if avg_volume > 0 else 1
-                volume_increase = volume_ratio > self.volume_threshold
-                volume_decrease = volume_ratio < self.volume_decrease_threshold
-                
-                is_green = close_price > open_price
-                is_red = close_price < open_price
-                is_doji_candle = self.is_doji(open_price, high_price, low_price, close_price)
-                
-                close_prices = [float(candle[4]) for candle in klines]
-                
-                macd_line, signal_line, histogram = self.calculate_macd(close_prices)
-                rsi_values = self.calculate_rsi(close_prices)
-                ema_20 = self.calculate_ema(close_prices, 20)
-                
-                macd_bullish = False
-                macd_bearish = False
-                rsi_overbought = False
-                rsi_oversold = False
-                price_above_ema = False
-                price_below_ema = False
-                
-                if macd_line and signal_line and len(macd_line) > 1 and len(signal_line) > 1:
-                    macd_bullish = macd_line[-1] > signal_line[-1] and macd_line[-2] <= signal_line[-2]
-                    macd_bearish = macd_line[-1] < signal_line[-1] and macd_line[-2] >= signal_line[-2]
-                
-                if rsi_values and len(rsi_values) > 0:
-                    current_rsi = rsi_values[-1]
-                    rsi_overbought = current_rsi > 75
-                    rsi_oversold = current_rsi < 25
-                
-                if ema_20 and len(ema_20) > 0:
-                    current_ema_20 = ema_20[-1]
-                    price_above_ema = close_price > current_ema_20
-                    price_below_ema = close_price < current_ema_20
-                
-                signal = "NEUTRAL"
-                
-                if volume_increase and macd_bullish and is_green:
-                    signal = "BUY"
-                elif volume_increase and macd_bearish and is_red:
-                    signal = "SELL"
-                elif volume_decrease and is_doji_candle:
-                    signal = "BUY"
-                
-                signals.append((interval, signal, {
-                    'volume_ratio': volume_ratio,
-                    'macd_bullish': macd_bullish,
-                    'macd_bearish': macd_bearish,
-                    'rsi': rsi_values[-1] if rsi_values else 50,
-                    'price_above_ema': price_above_ema,
-                    'price_below_ema': price_below_ema
-                }))
-            
-            if not signals:
-                return "NEUTRAL"
-                
-            buy_count = sum(1 for _, s, _ in signals if s == "BUY")
-            sell_count = sum(1 for _, s, _ in signals if s == "SELL")
-            
-            if buy_count > sell_count:
-                final_signal = "BUY"
-            elif sell_count > buy_count:
-                final_signal = "SELL"
-            else:
-                final_signal = "NEUTRAL"
-            
-            return final_signal
-            
-        except Exception as e:
-            return "NEUTRAL"
-    
-    def check_exit_signal(self, symbol, current_side):
-        """KIỂM TRA TÍN HIỆU THOÁT LỆNH KHI ĐANG CÓ VỊ THẾ"""
-        try:
-            if not current_side:
-                return False
-                
-            klines = self.get_klines(symbol, '5m', 50)
-            if not klines or len(klines) < 30:
-                return False
-            
-            current_candle = klines[-2]
-            open_price = float(current_candle[1])
-            close_price = float(current_candle[4])
-            high_price = float(current_candle[2])
-            low_price = float(current_candle[3])
-            current_volume = float(current_candle[5])
-            
-            prev_candles = klines[-30:-2]
-            volumes = [float(candle[5]) for candle in prev_candles]
-            avg_volume = np.mean(volumes) if volumes else current_volume
-            
-            volume_ratio = current_volume / avg_volume if avg_volume > 0 else 1
-            volume_decrease = volume_ratio < self.volume_decrease_threshold
-            
-            close_prices = [float(candle[4]) for candle in klines]
-            
-            rsi_values = self.calculate_rsi(close_prices)
-            ema_20 = self.calculate_ema(close_prices, 20)
-            
-            rsi_overbought = False
-            rsi_oversold = False
-            price_above_ema = False
-            price_below_ema = False
-            
-            if rsi_values and len(rsi_values) > 0:
-                current_rsi = rsi_values[-1]
-                rsi_overbought = current_rsi > 85
-                rsi_oversold = current_rsi < 15
-            
-            if ema_20 and len(ema_20) > 0:
-                current_ema_20 = ema_20[-1]
-                price_above_ema = close_price > current_ema_20
-                price_below_ema = close_price < current_ema_20
-            
-            if current_side == "BUY":
-                if (rsi_overbought or (rsi_oversold and price_below_ema)) and volume_decrease:
-                    return True
-            
-            elif current_side == "SELL":
-                if (rsi_oversold or (rsi_overbought and price_above_ema)) and volume_decrease:
-                    return True
-            
-            return False
-            
-        except Exception as e:
-            return False
-
-# ========== SMART COIN FINDER NÂNG CẤP ==========
-class SmartCoinFinder:
-    """TÌM COIN THÔNG MINH - LỌC ĐÒN BẨY TRƯỚC, VOLUME SAU"""
-    
-    def __init__(self, api_key, api_secret):
-        self.api_key = api_key
-        self.api_secret = api_secret
-        self.analyzer = VolumeMACDStrategy()
-        self.leverage_cache = {}
-        self.volume_cache = {}
-        self.qualified_symbols_cache = {}
-        self.cache_timeout = 300
-        self.last_cache_update = 0
-        
-    def get_24h_volume(self, symbol):
-        """Lấy volume giao dịch 24h của symbol"""
-        try:
-            if symbol in self.volume_cache:
-                return self.volume_cache[symbol]
-                
-            url = "https://fapi.binance.com/fapi/v1/ticker/24hr"
-            params = {'symbol': symbol.upper()}
-            data = binance_api_request(url, params=params)
-            if data and 'volume' in data:
-                volume = float(data['volume'])
-                self.volume_cache[symbol] = volume
-                return volume
-        except Exception:
-            pass
-        return 0
-
-    def get_pre_filtered_symbols(self, target_leverage):
-        """LẤY DANH SÁCH COIN ĐÃ LỌC THEO ĐÒN BẨY TRƯỚC"""
-        try:
-            current_time = time.time()
-            
-            cache_key = f"lev_{target_leverage}"
-            if (cache_key in self.qualified_symbols_cache and 
-                self.qualified_symbols_cache[cache_key] and
-                current_time - self.last_cache_update < self.cache_timeout):
-                return self.qualified_symbols_cache[cache_key]
-            
-            all_symbols = get_all_usdt_pairs(limit=600)
-            if not all_symbols:
-                if cache_key in self.qualified_symbols_cache:
-                    return self.qualified_symbols_cache[cache_key]
-                return []
-            
-            qualified_by_leverage = []
-            
-            def check_leverage_only(symbol):
-                try:
-                    max_leverage = self.get_symbol_leverage(symbol)
-                    return symbol if max_leverage >= target_leverage else None
-                except:
-                    return None
-            
-            with ThreadPoolExecutor(max_workers=15) as executor:
-                results = list(executor.map(check_leverage_only, all_symbols))
-            
-            qualified_by_leverage = [symbol for symbol in results if symbol is not None]
-            
-            final_qualified = []
-            for symbol in qualified_by_leverage:
-                try:
-                    volume_24h = self.get_24h_volume(symbol)
-                    if 1000000 <= volume_24h <= 1000000000:
-                        final_qualified.append(symbol)
-                except:
-                    continue
-            
-            self.qualified_symbols_cache[cache_key] = final_qualified
-            self.last_cache_update = current_time
-            
-            return final_qualified
-            
-        except Exception as e:
-            logger.error(f"Lỗi lọc coin theo đòn bẩy: {str(e)}")
-            if cache_key in self.qualified_symbols_cache:
-                return self.qualified_symbols_cache[cache_key]
-            return []
-
-    def get_symbol_leverage(self, symbol):
-        if symbol in self.leverage_cache:
-            return self.leverage_cache[symbol]
-        
-        max_leverage = get_max_leverage(symbol, self.api_key, self.api_secret)
-        self.leverage_cache[symbol] = max_leverage
-        return max_leverage
-
-    def find_coin_by_direction(self, target_direction, target_leverage, excluded_symbols=None):
-        """TÌM 1 COIN DUY NHẤT - LỌC ĐÒN BẨY TRƯỚC, TÍN HIỆU SAU"""
-        try:
-            if excluded_symbols is None:
-                excluded_symbols = set()
-            
-            qualified_symbols = self.get_pre_filtered_symbols(target_leverage)
-            if not qualified_symbols:
-                return None
-            
-            available_symbols = [s for s in qualified_symbols if s not in excluded_symbols]
-            
-            if not available_symbols:
-                return None
-            
-            random.shuffle(available_symbols)
-            symbols_to_check = available_symbols[:30]
-            
-            for symbol in symbols_to_check:
-                try:
-                    signal = self.analyzer.analyze_volume_macd(symbol)
-                    
-                    if signal == target_direction:
-                        max_leverage = self.get_symbol_leverage(symbol)
-                        volume_24h = self.get_24h_volume(symbol)
-                        
-                        return {
-                            'symbol': symbol,
-                            'direction': target_direction,
-                            'max_leverage': max_leverage,
-                            'volume_24h': volume_24h,
-                            'score': 0.8,
-                            'qualified': True
-                        }
-                        
-                except Exception:
-                    continue
-            
-            return None
-                
-        except Exception as e:
-            logger.error(f"Lỗi tìm coin: {str(e)}")
-            return None
-
-# ========== QUẢN LÝ COIN CHUNG ==========
-class CoinManager:
-    _instance = None
-    _lock = threading.Lock()
-    
-    def __new__(cls):
-        with cls._lock:
-            if cls._instance is None:
-                cls._instance = super(CoinManager, cls).__new__(cls)
-                cls._instance.managed_coins = {}
-                cls._instance.config_coin_count = {}
-        return cls._instance
-    
-    def register_coin(self, symbol, bot_id, strategy, config_key=None):
-        with self._lock:
-            if symbol not in self.managed_coins:
-                self.managed_coins[symbol] = {
-                    "strategy": strategy, 
-                    "bot_id": bot_id,
-                    "config_key": config_key
-                }
-                return True
-            return False
-    
-    def unregister_coin(self, symbol):
-        with self._lock:
-            if symbol in self.managed_coins:
-                del self.managed_coins[symbol]
-                return True
-            return False
-    
-    def is_coin_managed(self, symbol):
-        with self._lock:
-            return symbol in self.managed_coins
-    
-    def get_managed_coins(self):
-        with self._lock:
-            return self.managed_coins.copy()
-
-# ========== API BINANCE ==========
+# ========== HÀM API BINANCE ==========
 def sign(query, api_secret):
     try:
         return hmac.new(api_secret.encode(), query.encode(), hashlib.sha256).hexdigest()
@@ -685,7 +222,6 @@ def binance_api_request(url, method='GET', params=None, headers=None):
             continue
         except Exception as e:
             time.sleep(1)
-    
     return None
 
 def get_all_usdt_pairs(limit=600):
@@ -702,9 +238,27 @@ def get_all_usdt_pairs(limit=600):
                 usdt_pairs.append(symbol)
         
         return usdt_pairs[:limit] if limit else usdt_pairs
-        
     except Exception as e:
         return []
+
+def get_max_leverage(symbol, api_key, api_secret):
+    try:
+        url = "https://fapi.binance.com/fapi/v1/exchangeInfo"
+        data = binance_api_request(url)
+        if not data:
+            return 100
+        
+        for s in data['symbols']:
+            if s['symbol'] == symbol.upper():
+                for f in s['filters']:
+                    if f['filterType'] == 'LEVERAGE':
+                        if 'maxLeverage' in f:
+                            return int(f['maxLeverage'])
+                break
+        return 100
+    except Exception as e:
+        logger.error(f"Lỗi lấy đòn bẩy tối đa {symbol}: {str(e)}")
+        return 100
 
 def get_step_size(symbol, api_key, api_secret):
     url = "https://fapi.binance.com/fapi/v1/exchangeInfo"
@@ -831,6 +385,420 @@ def get_positions(symbol=None, api_key=None, api_secret=None):
     except Exception as e:
         logger.error(f"Lỗi lấy vị thế: {str(e)}")
     return []
+
+# ========== HỆ THỐNG PHÂN TÍCH VOLUME, MACD, RSI & EMA ==========
+class VolumeMACDStrategy:
+    def __init__(self):
+        self.volume_threshold = 2
+        self.volume_decrease_threshold = 0.5
+        self.small_body_threshold = 0.1
+    
+    def get_klines(self, symbol, interval, limit):
+        try:
+            url = "https://fapi.binance.com/fapi/v1/klines"
+            params = {
+                'symbol': symbol.upper(),
+                'interval': interval,
+                'limit': limit
+            }
+            return binance_api_request(url, params=params)
+        except Exception as e:
+            return None
+    
+    def calculate_ema(self, prices, period):
+        if len(prices) < period:
+            return None
+        
+        ema_values = []
+        multiplier = 2 / (period + 1)
+        
+        sma = sum(prices[:period]) / period
+        ema_values.append(sma)
+        
+        for i in range(period, len(prices)):
+            ema = (prices[i] * multiplier) + (ema_values[-1] * (1 - multiplier))
+            ema_values.append(ema)
+        
+        return ema_values
+    
+    def calculate_macd(self, prices, fast_period=12, slow_period=26, signal_period=9):
+        if len(prices) < slow_period:
+            return None, None, None
+        
+        ema_fast = self.calculate_ema(prices, fast_period)
+        ema_slow = self.calculate_ema(prices, slow_period)
+        
+        if not ema_fast or not ema_slow:
+            return None, None, None
+        
+        min_length = min(len(ema_fast), len(ema_slow))
+        ema_fast = ema_fast[-min_length:]
+        ema_slow = ema_slow[-min_length:]
+        prices = prices[-min_length:]
+        
+        macd_line = [ema_fast[i] - ema_slow[i] for i in range(len(ema_fast))]
+        signal_line = self.calculate_ema(macd_line, signal_period)
+        
+        if not signal_line:
+            return None, None, None
+        
+        histogram = [macd_line[i] - signal_line[i] for i in range(len(signal_line))]
+        
+        return macd_line, signal_line, histogram
+    
+    def calculate_rsi(self, prices, period=14):
+        if len(prices) < period + 1:
+            return None
+        
+        gains = []
+        losses = []
+        
+        for i in range(1, len(prices)):
+            change = prices[i] - prices[i-1]
+            gains.append(max(change, 0))
+            losses.append(max(-change, 0))
+        
+        rsi_values = []
+        for i in range(period, len(gains)):
+            avg_gain = sum(gains[i-period:i]) / period
+            avg_loss = sum(losses[i-period:i]) / period
+            
+            if avg_loss == 0:
+                rsi = 100
+            else:
+                rs = avg_gain / avg_loss
+                rsi = 100 - (100 / (1 + rs))
+            
+            rsi_values.append(rsi)
+        
+        return rsi_values
+    
+    def is_doji(self, open_price, high, low, close):
+        body_size = abs(close - open_price)
+        total_range = high - low
+        
+        if total_range == 0:
+            return False
+        
+        body_ratio = body_size / total_range
+        return body_ratio < self.small_body_threshold
+    
+    def analyze_volume_macd(self, symbol):
+        try:
+            intervals = ['1m', '5m', '15m']
+            signals = []
+            
+            for interval in intervals:
+                klines = self.get_klines(symbol, interval, 100)
+                if not klines or len(klines) < 50:
+                    continue
+                
+                current_candle = klines[-2]
+                prev_candles = klines[-30:-2]
+                
+                open_price = float(current_candle[1])
+                close_price = float(current_candle[4])
+                high_price = float(current_candle[2])
+                low_price = float(current_candle[3])
+                current_volume = float(current_candle[5])
+                
+                volumes = [float(candle[5]) for candle in prev_candles]
+                avg_volume = np.mean(volumes) if volumes else current_volume
+                
+                volume_ratio = current_volume / avg_volume if avg_volume > 0 else 1
+                volume_increase = volume_ratio > self.volume_threshold
+                volume_decrease = volume_ratio < self.volume_decrease_threshold
+                
+                is_green = close_price > open_price
+                is_red = close_price < open_price
+                is_doji_candle = self.is_doji(open_price, high_price, low_price, close_price)
+                
+                close_prices = [float(candle[4]) for candle in klines]
+                
+                macd_line, signal_line, histogram = self.calculate_macd(close_prices)
+                rsi_values = self.calculate_rsi(close_prices)
+                ema_20 = self.calculate_ema(close_prices, 20)
+                
+                macd_bullish = False
+                macd_bearish = False
+                rsi_overbought = False
+                rsi_oversold = False
+                price_above_ema = False
+                price_below_ema = False
+                
+                if macd_line and signal_line and len(macd_line) > 1 and len(signal_line) > 1:
+                    macd_bullish = macd_line[-1] > signal_line[-1] and macd_line[-2] <= signal_line[-2]
+                    macd_bearish = macd_line[-1] < signal_line[-1] and macd_line[-2] >= signal_line[-2]
+                
+                if rsi_values and len(rsi_values) > 0:
+                    current_rsi = rsi_values[-1]
+                    rsi_overbought = current_rsi > 75
+                    rsi_oversold = current_rsi < 25
+                
+                if ema_20 and len(ema_20) > 0:
+                    current_ema_20 = ema_20[-1]
+                    price_above_ema = close_price > current_ema_20
+                    price_below_ema = close_price < current_ema_20
+                
+                signal = "NEUTRAL"
+                
+                if volume_increase and macd_bullish and is_green:
+                    signal = "BUY"
+                elif volume_increase and macd_bearish and is_red:
+                    signal = "SELL"
+                elif volume_decrease and is_doji_candle:
+                    signal = "BUY"
+                
+                signals.append((interval, signal, {
+                    'volume_ratio': volume_ratio,
+                    'macd_bullish': macd_bullish,
+                    'macd_bearish': macd_bearish,
+                    'rsi': rsi_values[-1] if rsi_values else 50,
+                    'price_above_ema': price_above_ema,
+                    'price_below_ema': price_below_ema
+                }))
+            
+            if not signals:
+                return "NEUTRAL"
+                
+            buy_count = sum(1 for _, s, _ in signals if s == "BUY")
+            sell_count = sum(1 for _, s, _ in signals if s == "SELL")
+            
+            if buy_count > sell_count:
+                final_signal = "BUY"
+            elif sell_count > buy_count:
+                final_signal = "SELL"
+            else:
+                final_signal = "NEUTRAL"
+            
+            return final_signal
+            
+        except Exception as e:
+            return "NEUTRAL"
+    
+    def check_exit_signal(self, symbol, current_side):
+        try:
+            if not current_side:
+                return False
+                
+            klines = self.get_klines(symbol, '5m', 50)
+            if not klines or len(klines) < 30:
+                return False
+            
+            current_candle = klines[-2]
+            open_price = float(current_candle[1])
+            close_price = float(current_candle[4])
+            high_price = float(current_candle[2])
+            low_price = float(current_candle[3])
+            current_volume = float(current_candle[5])
+            
+            prev_candles = klines[-30:-2]
+            volumes = [float(candle[5]) for candle in prev_candles]
+            avg_volume = np.mean(volumes) if volumes else current_volume
+            
+            volume_ratio = current_volume / avg_volume if avg_volume > 0 else 1
+            volume_decrease = volume_ratio < self.volume_decrease_threshold
+            
+            close_prices = [float(candle[4]) for candle in klines]
+            
+            rsi_values = self.calculate_rsi(close_prices)
+            ema_20 = self.calculate_ema(close_prices, 20)
+            
+            rsi_overbought = False
+            rsi_oversold = False
+            price_above_ema = False
+            price_below_ema = False
+            
+            if rsi_values and len(rsi_values) > 0:
+                current_rsi = rsi_values[-1]
+                rsi_overbought = current_rsi > 85
+                rsi_oversold = current_rsi < 15
+            
+            if ema_20 and len(ema_20) > 0:
+                current_ema_20 = ema_20[-1]
+                price_above_ema = close_price > current_ema_20
+                price_below_ema = close_price < current_ema_20
+            
+            if current_side == "BUY":
+                if (rsi_overbought or (rsi_oversold and price_below_ema)) and volume_decrease:
+                    return True
+            
+            elif current_side == "SELL":
+                if (rsi_oversold or (rsi_overbought and price_above_ema)) and volume_decrease:
+                    return True
+            
+            return False
+            
+        except Exception as e:
+            return False
+
+# ========== SMART COIN FINDER ==========
+class SmartCoinFinder:
+    def __init__(self, api_key, api_secret):
+        self.api_key = api_key
+        self.api_secret = api_secret
+        self.analyzer = VolumeMACDStrategy()
+        self.leverage_cache = {}
+        self.volume_cache = {}
+        self.qualified_symbols_cache = {}
+        self.cache_timeout = 300
+        self.last_cache_update = 0
+        
+    def get_24h_volume(self, symbol):
+        try:
+            if symbol in self.volume_cache:
+                return self.volume_cache[symbol]
+                
+            url = "https://fapi.binance.com/fapi/v1/ticker/24hr"
+            params = {'symbol': symbol.upper()}
+            data = binance_api_request(url, params=params)
+            if data and 'volume' in data:
+                volume = float(data['volume'])
+                self.volume_cache[symbol] = volume
+                return volume
+        except Exception:
+            pass
+        return 0
+
+    def get_pre_filtered_symbols(self, target_leverage):
+        try:
+            current_time = time.time()
+            
+            cache_key = f"lev_{target_leverage}"
+            if (cache_key in self.qualified_symbols_cache and 
+                self.qualified_symbols_cache[cache_key] and
+                current_time - self.last_cache_update < self.cache_timeout):
+                return self.qualified_symbols_cache[cache_key]
+            
+            all_symbols = get_all_usdt_pairs(limit=600)
+            if not all_symbols:
+                if cache_key in self.qualified_symbols_cache:
+                    return self.qualified_symbols_cache[cache_key]
+                return []
+            
+            qualified_by_leverage = []
+            
+            def check_leverage_only(symbol):
+                try:
+                    max_leverage = self.get_symbol_leverage(symbol)
+                    return symbol if max_leverage >= target_leverage else None
+                except:
+                    return None
+            
+            with ThreadPoolExecutor(max_workers=15) as executor:
+                results = list(executor.map(check_leverage_only, all_symbols))
+            
+            qualified_by_leverage = [symbol for symbol in results if symbol is not None]
+            
+            final_qualified = []
+            for symbol in qualified_by_leverage:
+                try:
+                    volume_24h = self.get_24h_volume(symbol)
+                    if 1000000 <= volume_24h <= 1000000000:
+                        final_qualified.append(symbol)
+                except:
+                    continue
+            
+            self.qualified_symbols_cache[cache_key] = final_qualified
+            self.last_cache_update = current_time
+            
+            return final_qualified
+            
+        except Exception as e:
+            logger.error(f"Lỗi lọc coin theo đòn bẩy: {str(e)}")
+            if cache_key in self.qualified_symbols_cache:
+                return self.qualified_symbols_cache[cache_key]
+            return []
+
+    def get_symbol_leverage(self, symbol):
+        if symbol in self.leverage_cache:
+            return self.leverage_cache[symbol]
+        
+        max_leverage = get_max_leverage(symbol, self.api_key, self.api_secret)
+        self.leverage_cache[symbol] = max_leverage
+        return max_leverage
+
+    def find_coin_by_direction(self, target_direction, target_leverage, excluded_symbols=None):
+        try:
+            if excluded_symbols is None:
+                excluded_symbols = set()
+            
+            qualified_symbols = self.get_pre_filtered_symbols(target_leverage)
+            if not qualified_symbols:
+                return None
+            
+            available_symbols = [s for s in qualified_symbols if s not in excluded_symbols]
+            
+            if not available_symbols:
+                return None
+            
+            random.shuffle(available_symbols)
+            symbols_to_check = available_symbols[:30]
+            
+            for symbol in symbols_to_check:
+                try:
+                    signal = self.analyzer.analyze_volume_macd(symbol)
+                    
+                    if signal == target_direction:
+                        max_leverage = self.get_symbol_leverage(symbol)
+                        volume_24h = self.get_24h_volume(symbol)
+                        
+                        return {
+                            'symbol': symbol,
+                            'direction': target_direction,
+                            'max_leverage': max_leverage,
+                            'volume_24h': volume_24h,
+                            'score': 0.8,
+                            'qualified': True
+                        }
+                        
+                except Exception:
+                    continue
+            
+            return None
+                
+        except Exception as e:
+            logger.error(f"Lỗi tìm coin: {str(e)}")
+            return None
+
+# ========== QUẢN LÝ COIN CHUNG ==========
+class CoinManager:
+    _instance = None
+    _lock = threading.Lock()
+    
+    def __new__(cls):
+        with cls._lock:
+            if cls._instance is None:
+                cls._instance = super(CoinManager, cls).__new__(cls)
+                cls._instance.managed_coins = {}
+                cls._instance.config_coin_count = {}
+        return cls._instance
+    
+    def register_coin(self, symbol, bot_id, strategy, config_key=None):
+        with self._lock:
+            if symbol not in self.managed_coins:
+                self.managed_coins[symbol] = {
+                    "strategy": strategy, 
+                    "bot_id": bot_id,
+                    "config_key": config_key
+                }
+                return True
+            return False
+    
+    def unregister_coin(self, symbol):
+        with self._lock:
+            if symbol in self.managed_coins:
+                del self.managed_coins[symbol]
+                return True
+            return False
+    
+    def is_coin_managed(self, symbol):
+        with self._lock:
+            return symbol in self.managed_coins
+    
+    def get_managed_coins(self):
+        with self._lock:
+            return self.managed_coins.copy()
 
 # ========== WEBSOCKET MANAGER ==========
 class WebSocketManager:
@@ -960,12 +928,12 @@ class BaseBot:
         self.last_find_time = 0
         self.find_interval = 60
         
-        # Thêm biến quản lý nhồi lệnh FIBONACCI
+        # Biến quản lý nhồi lệnh FIBONACCI
         self.entry_base = 0
         self.average_down_count = 0
         self.last_average_down_time = 0
         self.average_down_cooldown = 60
-        self.max_average_down_count = 5  # Giới hạn nhồi tối đa 5 lần
+        self.max_average_down_count = 5
         
         self.check_position_status()
         if self.symbol:
@@ -1102,7 +1070,6 @@ class BaseBot:
             return False
 
     def get_actual_pnl(self):
-        """Lấy PnL thực tế từ Binance"""
         try:
             positions = get_positions(self.symbol, self.api_key, self.api_secret)
             if not positions:
@@ -1118,7 +1085,6 @@ class BaseBot:
                     if position_amt == 0:
                         return 0, 0
                         
-                    # Tính ROI thực tế
                     position_size = abs(position_amt) * entry_price
                     invested = position_size / leverage
                     roi = (unrealized_pnl / invested) * 100 if invested > 0 else 0
@@ -1151,7 +1117,6 @@ class BaseBot:
                         self.qty = position_amt
                         self.entry = float(pos.get('entryPrice', 0))
                         
-                        # Cập nhật PnL thực tế
                         unrealized_pnl, roi = self.get_actual_pnl()
                         self.log(f"📊 Vị thế thực tế: {self.side} {abs(self.qty):.4f} | Entry: {self.entry:.4f} | PnL: {unrealized_pnl:.2f} USDT")
                         break
@@ -1169,7 +1134,6 @@ class BaseBot:
                 self.last_error_log_time = time.time()
 
     def check_averaging_down(self):
-        """CƠ CHẾ NHỒI LỆNH THEO FIBONACCI - DỰA TRÊN % BIẾN ĐỘNG GIÁ"""
         if not self.position_open or self.entry_base <= 0:
             return False
             
@@ -1178,7 +1142,6 @@ class BaseBot:
             if current_price <= 0:
                 return False
             
-            # Tính % biến động giá so với entry_base
             if self.side == "BUY":
                 price_change_pct = (self.entry_base - current_price) / self.entry_base * 100
             else:
@@ -1186,17 +1149,13 @@ class BaseBot:
 
             current_time = time.time()
             
-            # Các mốc Fibonacci phổ biến: 2%, 3%, 5%, 8%, 13%, 21%, 34%...
             fibo_levels = [2.0, 3.0, 5.0, 8.0, 13.0, 21.0, 34.0]
             
-            # Xác định mốc Fibonacci hiện tại dựa trên số lần đã nhồi
             if self.average_down_count < len(fibo_levels):
                 current_fibo_level = fibo_levels[self.average_down_count]
             else:
-                # Nếu vượt quá số mốc Fibonacci, dùng mốc cuối cùng
                 current_fibo_level = fibo_levels[-1]
             
-            # Kiểm tra điều kiện nhồi lệnh
             if (price_change_pct >= current_fibo_level and 
                 current_time - self.last_average_down_time > self.average_down_cooldown and
                 self.average_down_count < self.max_average_down_count):
@@ -1211,7 +1170,6 @@ class BaseBot:
             return False
 
     def average_down(self):
-        """THỰC HIỆN NHỒI LỆNH VỚI % SỐ DƯ NGƯỜI DÙNG CẤU HÌNH"""
         try:
             if not self.position_open:
                 return False
@@ -1225,7 +1183,7 @@ class BaseBot:
                 return False
 
             step_size = get_step_size(self.symbol, self.api_key, self.api_secret)
-            usd_amount = balance * (self.percent / 100)  # Dùng % số dư NGƯỜI DÙNG NHẬP LÚC ĐẦU
+            usd_amount = balance * (self.percent / 100)
             additional_qty = (usd_amount * self.lev) / current_price
             
             if step_size > 0:
@@ -1246,7 +1204,6 @@ class BaseBot:
                     self.entry = (self.entry * abs(self.qty) + avg_price * executed_qty) / total_qty
                     self.qty = total_qty if self.side == "BUY" else -total_qty
                     
-                    # GIỮ NGUYÊN entry_base (mốc neo ban đầu)
                     self.average_down_count += 1
                     self.last_average_down_time = time.time()
 
@@ -1273,7 +1230,6 @@ class BaseBot:
             return False
 
     def _get_next_fibo_level(self):
-        """Lấy mốc Fibonacci tiếp theo cho lần nhồi kế tiếp"""
         fibo_levels = [2.0, 3.0, 5.0, 8.0, 13.0, 21.0, 34.0]
         if self.average_down_count < len(fibo_levels):
             return fibo_levels[self.average_down_count]
@@ -1288,10 +1244,9 @@ class BaseBot:
         self._close_attempted = False
         self._last_close_attempt = 0
         self.entry_base = 0
-        self.average_down_count = 0  # Reset số lần nhồi về 0
+        self.average_down_count = 0
 
     def _force_reset(self):
-        """Reset mạnh tay, không phụ thuộc vào trạng thái hiện tại"""
         if self.symbol:
             self.coin_manager.unregister_coin(self.symbol)
             self.ws_manager.remove_symbol(self.symbol)
@@ -1302,7 +1257,7 @@ class BaseBot:
         self.qty = 0
         self.entry = 0
         self.entry_base = 0
-        self.average_down_count = 0  # Reset số lần nhồi về 0
+        self.average_down_count = 0
         self._close_attempted = False
         self.symbol = None
 
@@ -1338,7 +1293,6 @@ class BaseBot:
                         time.sleep(1)
                         continue
                     
-                    # THÊM: Luôn gọi get_signal, không check time
                     signal = self.get_signal()
                     
                     if signal and signal != "NEUTRAL":
@@ -1352,14 +1306,12 @@ class BaseBot:
                         else:
                             self.log(f"⏳ Đang trong thời gian chờ giữa các lệnh")
                     else:
-                        # THÊM: Log trạng thái chờ
                         if current_time - getattr(self, 'last_analysis_time', 0) > 30:
                             self.log("🟡 Đang chờ tín hiệu từ Volume MACD...")
                             self.last_analysis_time = current_time
                         time.sleep(1)
                 
                 else:
-                    # LUÔN check TP/SL và averaging_down, không phụ thuộc vào SL
                     self.check_averaging_down()
                     self.check_tp_sl()
                     
@@ -1440,7 +1392,7 @@ class BaseBot:
                     
                     if executed_qty > 0:
                         self.entry = avg_price
-                        self.entry_base = avg_price  # Lưu mốc neo ban đầu
+                        self.entry_base = avg_price
                         self.average_down_count = 0
                         self.side = side
                         self.qty = executed_qty if side == "BUY" else -executed_qty
@@ -1497,7 +1449,6 @@ class BaseBot:
             self._close_attempted = True
             self._last_close_attempt = current_time
 
-            # Lấy vị thế THỰC TẾ từ Binance
             positions = get_positions(self.symbol, self.api_key, self.api_secret)
             actual_position_amt = 0
             
@@ -1506,7 +1457,6 @@ class BaseBot:
                     actual_position_amt = float(pos.get('positionAmt', 0))
                     break
             
-            # Nếu không có vị thế thực tế, vẫn reset
             if actual_position_amt == 0:
                 self._force_reset()
                 self.log(f"🔄 Reset trạng thái (không có vị thế thực tế): {reason}")
@@ -1521,7 +1471,6 @@ class BaseBot:
             result = place_order(self.symbol, close_side, close_qty, self.api_key, self.api_secret)
             
             if result and 'orderId' in result:
-                # Lấy PnL thực tế cuối cùng
                 unrealized_pnl, roi = self.get_actual_pnl()
                 current_price = self.current_price or get_current_price(self.symbol)
                 
@@ -1557,7 +1506,6 @@ class BaseBot:
             return
         
         try:
-            # Lấy vị thế THỰC TẾ từ Binance
             positions = get_positions(self.symbol, self.api_key, self.api_secret)
             if not positions:
                 return
@@ -1573,7 +1521,6 @@ class BaseBot:
             if not current_position:
                 return
                 
-            # Lấy dữ liệu THỰC TẾ từ Binance
             position_amt = float(current_position.get('positionAmt', 0))
             entry_price = float(current_position.get('entryPrice', 0))
             leverage = float(current_position.get('leverage', 1))
@@ -1581,20 +1528,17 @@ class BaseBot:
             if position_amt == 0 or entry_price <= 0:
                 return
             
-            # Sử dụng giá hiện tại từ WebSocket
             current_price = self.current_price
             if current_price <= 0:
                 current_price = get_current_price(self.symbol)
             if current_price <= 0:
                 return
             
-            # Tính toán PnL THỰC TẾ
-            if position_amt > 0:  # LONG position
+            if position_amt > 0:
                 price_diff = current_price - entry_price
-            else:  # SHORT position  
+            else:
                 price_diff = entry_price - current_price
                 
-            # Tính ROI dựa trên vốn thực tế
             position_size = abs(position_amt) * entry_price
             invested = position_size / leverage
             unrealized_pnl = price_diff * abs(position_amt)
@@ -1604,11 +1548,9 @@ class BaseBot:
                 
             roi = (unrealized_pnl / invested) * 100
 
-            # Log theo dõi
             if abs(roi) > max(self.tp, self.sl if self.sl > 0 else 0) * 0.7:
                 self.log(f"📊 Theo dõi PnL: ROI={roi:.2f}%, Giá vào={entry_price:.4f}, Giá hiện tại={current_price:.4f}")
 
-            # Kiểm tra TP/SL
             if self.tp is not None and roi >= self.tp:
                 self.log(f"🎯 ĐẠT TP: {roi:.2f}% >= {self.tp}%")
                 self.close_position(f"✅ Đạt TP {self.tp}% (ROI thực tế: {roi:.2f}%)")
@@ -1630,7 +1572,7 @@ class VolumeMACDBot(BaseBot):
         
         self.analyzer = VolumeMACDStrategy()
         self.last_analysis_time = 0
-        self.analysis_interval = 10  # Giảm từ 60s xuống 10s
+        self.analysis_interval = 10
         
     def get_signal(self):
         if not self.symbol:
@@ -1647,7 +1589,6 @@ class VolumeMACDBot(BaseBot):
             self.log(f"🔍 Đang phân tích tín hiệu cho {self.symbol}")
             signal = self.analyzer.analyze_volume_macd(self.symbol)
             
-            # THÊM LOG CHI TIẾT
             if signal == "NEUTRAL":
                 self.log(f"⚪ Không có tín hiệu rõ ràng từ Volume MACD")
             else:
@@ -1658,6 +1599,7 @@ class VolumeMACDBot(BaseBot):
         except Exception as e:
             self.log(f"💥 Lỗi phân tích tín hiệu: {str(e)}")
             return None
+
 
 # ========== BOT MANAGER HOÀN CHỈNH ==========
 class BotManager:
