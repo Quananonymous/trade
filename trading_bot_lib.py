@@ -1,4 +1,4 @@
-# trading_bot_volume_fixed.py - ĐÃ FIX LỖI TP VÀ RESET COIN
+# trading_bot_volume_fixed_part1.py - PHẦN 1: CORE SYSTEM & BASE BOT
 import json
 import hmac
 import hashlib
@@ -20,7 +20,7 @@ from concurrent.futures import ThreadPoolExecutor
 # ========== CẤU HÌNH LOGGING ==========
 def setup_logging():
     logging.basicConfig(
-        level=logging.INFO,  # Đổi thành INFO để theo dõi tốt hơn
+        level=logging.INFO,
         format='%(asctime)s - %(levelname)s - %(module)s - %(message)s',
         handlers=[
             logging.StreamHandler(),
@@ -933,7 +933,7 @@ class BaseBot:
         self.qty = 0
         self.entry = 0
         self.prices = []
-        self.current_price = 0  # THÊM: Giá hiện tại từ WebSocket
+        self.current_price = 0
         self.position_open = False
         self._stop = False
         
@@ -996,7 +996,7 @@ class BaseBot:
             return
         try:
             price_float = float(price)
-            self.current_price = price_float  # CẬP NHẬT GIÁ HIỆN TẠI
+            self.current_price = price_float
             self.prices.append(price_float)
             if len(self.prices) > 100:
                 self.prices = self.prices[-100:]
@@ -1100,6 +1100,34 @@ class BaseBot:
         except Exception as e:
             return False
 
+    def get_actual_pnl(self):
+        """Lấy PnL thực tế từ Binance"""
+        try:
+            positions = get_positions(self.symbol, self.api_key, self.api_secret)
+            if not positions:
+                return 0, 0
+                
+            for pos in positions:
+                if pos['symbol'] == self.symbol:
+                    unrealized_pnl = float(pos.get('unRealizedProfit', 0))
+                    entry_price = float(pos.get('entryPrice', 0))
+                    position_amt = float(pos.get('positionAmt', 0))
+                    leverage = float(pos.get('leverage', 1))
+                    
+                    if position_amt == 0:
+                        return 0, 0
+                        
+                    # Tính ROI thực tế
+                    position_size = abs(position_amt) * entry_price
+                    invested = position_size / leverage
+                    roi = (unrealized_pnl / invested) * 100 if invested > 0 else 0
+                    
+                    return unrealized_pnl, roi
+                    
+            return 0, 0
+        except Exception as e:
+            return 0, 0
+
     def check_position_status(self):
         if not self.symbol:
             return
@@ -1121,6 +1149,10 @@ class BaseBot:
                         self.side = "BUY" if position_amt > 0 else "SELL"
                         self.qty = position_amt
                         self.entry = float(pos.get('entryPrice', 0))
+                        
+                        # Cập nhật PnL thực tế
+                        unrealized_pnl, roi = self.get_actual_pnl()
+                        self.log(f"📊 Vị thế thực tế: {self.side} {abs(self.qty):.4f} | Entry: {self.entry:.4f} | PnL: {unrealized_pnl:.2f} USDT")
                         break
                     else:
                         position_found = True
@@ -1132,9 +1164,10 @@ class BaseBot:
                 
         except Exception as e:
             if time.time() - self.last_error_log_time > 10:
+                self.log(f"💥 Lỗi check position status: {str(e)}")
                 self.last_error_log_time = time.time()
 
-    def check_averaging_down(self):
+     def check_averaging_down(self):
         if not self.position_open or self.entry_base <= 0:
             return False
             
@@ -1156,10 +1189,13 @@ class BaseBot:
             
             current_time = time.time()
             
-            if (roi <= -100 and 
+            # CẤP SỐ CỘNG: Lần 1: -100%, Lần 2: -200%, Lần 3: -300%, ...
+            required_roi_threshold = -100 * (self.average_down_count + 1)
+            
+            if (roi <= required_roi_threshold and 
                 current_time - self.last_average_down_time > self.average_down_cooldown):
                 
-                self.log(f"📉 Đạt -100% ROI từ mốc neo, thực hiện nhồi lệnh. ROI: {roi:.2f}%")
+                self.log(f"📉 Đạt {required_roi_threshold}% ROI từ mốc neo, thực hiện nhồi lệnh lần {self.average_down_count + 1}. ROI: {roi:.2f}%")
                 return self.average_down()
                 
             return False
@@ -1202,19 +1238,20 @@ class BaseBot:
                     self.entry = (self.entry * abs(self.qty) + avg_price * executed_qty) / total_qty
                     self.qty = total_qty if self.side == "BUY" else -total_qty
                     
-                    self.entry_base = self.entry
+                    # GIỮ NGUYÊN entry_base (mốc neo ban đầu)
                     self.average_down_count += 1
                     self.last_average_down_time = time.time()
 
                     message = (
-                        f"📈 <b>ĐÃ NHỒI LỆNH {self.symbol}</b>\n"
+                        f"📈 <b>ĐÃ NHỒI LỆNH LẦN {self.average_down_count} - {self.symbol}</b>\n"
                         f"📌 Hướng: {self.side}\n"
-                        f"🏷️ Giá vào mới: {self.entry:.4f}\n"
+                        f"🏷️ Giá vào ban đầu: {self.entry_base:.4f}\n"
+                        f"🏷️ Giá trung bình mới: {self.entry:.4f}\n"
                         f"📊 Khối lượng thêm: {executed_qty:.4f}\n"
                         f"📊 Tổng khối lượng: {total_qty:.4f}\n"
-                        f"💵 Giá trị: {executed_qty * self.entry:.2f} USDT\n"
+                        f"💵 Giá trị nhồi: {executed_qty * avg_price:.2f} USDT\n"
                         f"💰 Đòn bẩy: {self.lev}x\n"
-                        f"🔢 Số lần nhồi: {self.average_down_count}"
+                        f"🎯 Ngưỡng nhồi tiếp theo: {-100 * (self.average_down_count + 1)}%"
                     )
                     self.log(message)
                     return True
@@ -1235,7 +1272,7 @@ class BaseBot:
         self._close_attempted = False
         self._last_close_attempt = 0
         self.entry_base = 0
-        self.average_down_count = 0
+        self.average_down_count = 0  # Reset số lần nhồi về 0
 
     def _force_reset(self):
         """Reset mạnh tay, không phụ thuộc vào trạng thái hiện tại"""
@@ -1249,9 +1286,9 @@ class BaseBot:
         self.qty = 0
         self.entry = 0
         self.entry_base = 0
-        self.average_down_count = 0
+        self.average_down_count = 0  # Reset số lần nhồi về 0
         self._close_attempted = False
-        self.symbol = None  # QUAN TRỌNG: Reset symbol để tìm coin mới
+        self.symbol = None
 
     def _run(self):
         while not self._stop:
@@ -1275,24 +1312,34 @@ class BaseBot:
                 if not self.position_open:
                     if not self.symbol:
                         if current_time - self.last_find_time > self.find_interval:
-                            self.find_and_set_coin()
+                            self.log("🔍 Đang tìm coin mới...")
+                            success = self.find_and_set_coin()
+                            if success:
+                                self.log(f"✅ Đã tìm thấy coin: {self.symbol}")
+                            else:
+                                self.log("❌ Không tìm thấy coin phù hợp")
                             self.last_find_time = current_time
                         time.sleep(1)
                         continue
                     
+                    # THÊM: Luôn gọi get_signal, không check time
                     signal = self.get_signal()
                     
                     if signal and signal != "NEUTRAL":
+                        self.log(f"🚀 Nhận được tín hiệu {signal}, chuẩn bị mở lệnh...")
                         if current_time - self.last_trade_time > 3 and current_time - self.last_close_time > self.cooldown_period:
                             if self.open_position(signal):
                                 self.last_trade_time = current_time
                             else:
-                                if self.symbol:
-                                    self.ws_manager.remove_symbol(self.symbol)
-                                    self.coin_manager.unregister_coin(self.symbol)
-                                    self.symbol = None
-                                time.sleep(1)
+                                self.log("❌ Không thể mở lệnh, reset symbol...")
+                                self._cleanup_symbol()
+                        else:
+                            self.log(f"⏳ Đang trong thời gian chờ giữa các lệnh")
                     else:
+                        # THÊM: Log trạng thái chờ
+                        if current_time - getattr(self, 'last_analysis_time', 0) > 30:
+                            self.log("🟡 Đang chờ tín hiệu từ Volume MACD...")
+                            self.last_analysis_time = current_time
                         time.sleep(1)
                 
                 else:
@@ -1336,7 +1383,7 @@ class BaseBot:
                 return False
     
             volume_24h = self.coin_finder.get_24h_volume(self.symbol)
-            if volume_24h < 1000000 or volume_24h > 1000000000:
+            if volume_24h < 5000000 or volume_24h > 1000000000:
                 self._cleanup_symbol()
                 return False
     
@@ -1433,28 +1480,33 @@ class BaseBot:
             self._close_attempted = True
             self._last_close_attempt = current_time
 
-            close_side = "SELL" if self.side == "BUY" else "BUY"
-            close_qty = abs(self.qty) if self.qty != 0 else 0
+            # Lấy vị thế THỰC TẾ từ Binance
+            positions = get_positions(self.symbol, self.api_key, self.api_secret)
+            actual_position_amt = 0
             
-            if close_qty <= 0:
-                # Nếu không có vị thế, vẫn reset trạng thái
+            for pos in positions:
+                if pos['symbol'] == self.symbol:
+                    actual_position_amt = float(pos.get('positionAmt', 0))
+                    break
+            
+            # Nếu không có vị thế thực tế, vẫn reset
+            if actual_position_amt == 0:
                 self._force_reset()
-                self.log(f"🔄 Reset trạng thái (không có vị thế): {reason}")
+                self.log(f"🔄 Reset trạng thái (không có vị thế thực tế): {reason}")
                 return True
                 
+            close_side = "SELL" if actual_position_amt > 0 else "BUY"
+            close_qty = abs(actual_position_amt)
+            
             cancel_all_orders(self.symbol, self.api_key, self.api_secret)
             time.sleep(0.5)
             
             result = place_order(self.symbol, close_side, close_qty, self.api_key, self.api_secret)
             
             if result and 'orderId' in result:
+                # Lấy PnL thực tế cuối cùng
+                unrealized_pnl, roi = self.get_actual_pnl()
                 current_price = self.current_price or get_current_price(self.symbol)
-                pnl = 0
-                if self.entry > 0:
-                    if self.side == "BUY":
-                        pnl = (current_price - self.entry) * abs(self.qty)
-                    else:
-                        pnl = (self.entry - current_price) * abs(self.qty)
                 
                 message = (
                     f"⛔ <b>ĐÃ ĐÓNG VỊ THẾ {self.symbol}</b>\n"
@@ -1462,7 +1514,7 @@ class BaseBot:
                     f"📌 Lý do: {reason}\n"
                     f"🏷️ Giá ra: {current_price:.4f}\n"
                     f"📊 Khối lượng: {close_qty:.4f}\n"
-                    f"💰 PnL: {pnl:.2f} USDT"
+                    f"💰 PnL thực tế: {unrealized_pnl:.2f} USDT (ROI: {roi:.2f}%)"
                 )
                 self.log(message)
                 
@@ -1483,45 +1535,71 @@ class BaseBot:
             return False
 
     def check_tp_sl(self):
-        if not self.position_open or self.entry <= 0 or self._close_attempted:
+        if self._close_attempted:
             return
-    
+        
         try:
-            # Sử dụng giá từ WebSocket thay vì API call
+            # Lấy vị thế THỰC TẾ từ Binance
+            positions = get_positions(self.symbol, self.api_key, self.api_secret)
+            if not positions:
+                return
+                
+            current_position = None
+            for pos in positions:
+                if pos['symbol'] == self.symbol:
+                    position_amt = float(pos.get('positionAmt', 0))
+                    if abs(position_amt) > 0:
+                        current_position = pos
+                        break
+            
+            if not current_position:
+                return
+                
+            # Lấy dữ liệu THỰC TẾ từ Binance
+            position_amt = float(current_position.get('positionAmt', 0))
+            entry_price = float(current_position.get('entryPrice', 0))
+            leverage = float(current_position.get('leverage', 1))
+            
+            if position_amt == 0 or entry_price <= 0:
+                return
+            
+            # Sử dụng giá hiện tại từ WebSocket
             current_price = self.current_price
             if current_price <= 0:
                 current_price = get_current_price(self.symbol)
             if current_price <= 0:
                 return
-
-            # Tính toán chính xác hơn
-            if self.side == "BUY":
-                price_diff = current_price - self.entry
-            else:
-                price_diff = self.entry - current_price
+            
+            # Tính toán PnL THỰC TẾ
+            if position_amt > 0:  # LONG position
+                price_diff = current_price - entry_price
+            else:  # SHORT position  
+                price_diff = entry_price - current_price
                 
-            profit = price_diff * abs(self.qty)
-            invested = (self.entry * abs(self.qty)) / self.lev
+            # Tính ROI dựa trên vốn thực tế
+            position_size = abs(position_amt) * entry_price
+            invested = position_size / leverage
+            unrealized_pnl = price_diff * abs(position_amt)
             
             if invested <= 0:
                 return
                 
-            roi = (profit / invested) * 100
+            roi = (unrealized_pnl / invested) * 100
 
-            # THÊM LOG ĐỂ DEBUG
-            if roi > self.tp * 0.8:  # Log khi gần đạt TP
-                self.log(f"📊 Theo dõi TP: ROI={roi:.2f}%, TP={self.tp}%")
+            # Log theo dõi
+            if abs(roi) > max(self.tp, self.sl if self.sl > 0 else 0) * 0.7:
+                self.log(f"📊 Theo dõi PnL: ROI={roi:.2f}%, Giá vào={entry_price:.4f}, Giá hiện tại={current_price:.4f}")
 
+            # Kiểm tra TP/SL
             if self.tp is not None and roi >= self.tp:
                 self.log(f"🎯 ĐẠT TP: {roi:.2f}% >= {self.tp}%")
-                self.close_position(f"✅ Đạt TP {self.tp}% (ROI: {roi:.2f}%)")
+                self.close_position(f"✅ Đạt TP {self.tp}% (ROI thực tế: {roi:.2f}%)")
             elif self.sl is not None and self.sl > 0 and roi <= -self.sl:
                 self.log(f"🛑 ĐẠT SL: {roi:.2f}% <= -{self.sl}%")
-                self.close_position(f"❌ Đạt SL {self.sl}% (ROI: {roi:.2f}%)")
+                self.close_position(f"❌ Đạt SL {self.sl}% (ROI thực tế: {roi:.2f}%)")
                 
         except Exception as e:
-            self.log(f"💥 Lỗi check_tp_sl: {str(e)}")
-
+            self.log(f"💥 Lỗi check_tp_sl thực tế: {str(e)}")
 
 # ========== BOT VOLUME & MACD ==========
 class VolumeMACDBot(BaseBot):
@@ -1534,10 +1612,11 @@ class VolumeMACDBot(BaseBot):
         
         self.analyzer = VolumeMACDStrategy()
         self.last_analysis_time = 0
-        self.analysis_interval = 60
+        self.analysis_interval = 10  # Giảm từ 60s xuống 10s
         
     def get_signal(self):
         if not self.symbol:
+            self.log("❌ Không có symbol để phân tích")
             return None
             
         try:
@@ -1547,18 +1626,22 @@ class VolumeMACDBot(BaseBot):
             
             self.last_analysis_time = current_time
             
+            self.log(f"🔍 Đang phân tích tín hiệu cho {self.symbol}")
             signal = self.analyzer.analyze_volume_macd(self.symbol)
             
-            # Thêm log để debug tín hiệu
-            if signal != "NEUTRAL":
-                self.log(f"🎯 Tín hiệu {signal} từ Volume & MACD")
-            
+            # THÊM LOG CHI TIẾT
+            if signal == "NEUTRAL":
+                self.log(f"⚪ Không có tín hiệu rõ ràng từ Volume MACD")
+            else:
+                self.log(f"🎯 PHÁT HIỆN TÍN HIỆU: {signal} cho {self.symbol}")
+                
             return signal
             
         except Exception as e:
             self.log(f"💥 Lỗi phân tích tín hiệu: {str(e)}")
             return None
 
+# trading_bot_volume_fixed_part2.py - PHẦN 2: BOT MANAGER & SYSTEM LAUNCHER
 # ========== BOT MANAGER HOÀN CHỈNH ==========
 class BotManager:
     def __init__(self, api_key=None, api_secret=None, telegram_bot_token=None, telegram_chat_id=None):
