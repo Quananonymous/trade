@@ -1,4 +1,4 @@
-# trading_bot_volume_candle_fibonacci_complete.py - HOÀN CHỈNH VỚI NHỒI LỆNH FIBONACCI
+# trading_bot_volume_candle_fibonacci_complete.py - HOÀN CHỈNH VỚI NHỒI LỆNH FIBONACCI ĐÃ SỬA LỖI
 import json
 import hmac
 import hashlib
@@ -424,7 +424,6 @@ def get_positions(symbol=None, api_key=None, api_secret=None):
         logger.error(f"Lỗi lấy vị thế: {str(e)}")
     return []
 
-
 # ========== PHẦN 1: HỆ THỐNG PHÂN TÍCH VOLUME & NẾN ==========
 
 class VolumeCandleStrategy:
@@ -521,9 +520,9 @@ class VolumeCandleStrategy:
             sell_count = sum(1 for _, s in signals if s == "SELL")
             
             if buy_count > sell_count:
-                final_signal = "SELL"
-            elif sell_count > buy_count:
                 final_signal = "BUY"
+            elif sell_count > buy_count:
+                final_signal = "SELL"
             else:
                 final_signal = "NEUTRAL"
             
@@ -1080,6 +1079,7 @@ class BaseBot:
     def check_averaging_down(self):
         """KIỂM TRA ĐIỀU KIỆN NHỒI LỆNH THEO DÃY FIBONACCI"""
         if not self.position_open or self.entry_base <= 0:
+            self.log(f"⚠️ Không thể nhồi lệnh: position_open={self.position_open}, entry_base={self.entry_base}")
             return False
             
         try:
@@ -1103,6 +1103,9 @@ class BaseBot:
             else:
                 current_fibo_level = fibo_levels[-1]
             
+            # DEBUG LOG - THÊM ĐỂ THEO DÕI
+            self.log(f"🔍 Kiểm tra nhồi lệnh: Biến động={price_change_pct:.2f}%, Mốc yêu cầu={current_fibo_level}%, Số lần đã nhồi={self.average_down_count}")
+            
             # Kiểm tra điều kiện nhồi lệnh
             if (price_change_pct >= current_fibo_level and 
                 current_time - self.last_average_down_time > self.average_down_cooldown and
@@ -1118,67 +1121,53 @@ class BaseBot:
             return False
 
     def average_down(self):
-        """THỰC HIỆN NHỒI LỆNH THEO TỶ LỆ FIBONACCI (đồng bộ cách tính với open_position)"""
+        """THỰC HIỆN NHỒI LỆNH THEO TỶ LỆ FIBONACCI"""
         try:
-            # Chỉ nhồi khi đang có vị thế
             if not self.position_open:
                 return False
-    
-            # Kiểm tra số dư
+                
             balance = get_balance(self.api_key, self.api_secret)
-            if balance is None or balance < 0:
+            if balance is None or balance <= 0:
                 return False
-    
-            # Lấy giá hiện tại
+
             current_price = self.current_price or get_current_price(self.symbol)
-            if not current_price or current_price < 0:
+            if current_price <= 0:
                 return False
-    
-            # Tính toán khối lượng NHỒI (giống open_position)
+
             step_size = get_step_size(self.symbol, self.api_key, self.api_secret)
-            usd_amount = balance * (self.percent / 100)            # margin cho lần nhồi
+            usd_amount = balance * (self.percent / 100)
             additional_qty = (usd_amount * self.lev) / current_price
-    
-            if step_size and step_size > 0:
+            
+            if step_size > 0:
                 additional_qty = math.floor(additional_qty / step_size) * step_size
                 additional_qty = round(additional_qty, 8)
-    
-            if additional_qty < (step_size or 0):
+
+            if additional_qty < step_size:
                 return False
-    
-            self.log(f"📊 Đang NHỒI {self.side} - SL: {step_size}, Qty+: {additional_qty}, Giá: {current_price}")
-    
-            # Hủy mọi lệnh chờ trước đó (giống open_position)
-            cancel_all_orders(self.symbol, self.api_key, self.api_secret)
-            time.sleep(0.2)
-    
-            # Đặt lệnh nhồi theo cùng hướng vị thế
+
             result = place_order(self.symbol, self.side, additional_qty, self.api_key, self.api_secret)
-    
+
             if result and 'orderId' in result:
                 executed_qty = float(result.get('executedQty', 0))
                 avg_price = float(result.get('avgPrice', current_price))
-    
-                # CHỈ cập nhật khi có khớp thực
-                if executed_qty >= 0:
-                    old_abs = abs(self.qty)
-                    new_total = old_abs + executed_qty
-    
-                    # Giá trung bình mới (giống công thức bạn đang dùng)
-                    self.entry = (self.entry * old_abs + avg_price * executed_qty) / new_total
-                    self.qty = new_total if self.side == "BUY" else -new_total
-    
-                    # Cập nhật đếm lần nhồi & thời điểm
+
+                if executed_qty > 0:
+                    # Cập nhật giá trung bình và khối lượng
+                    total_qty = abs(self.qty) + executed_qty
+                    self.entry = (self.entry * abs(self.qty) + avg_price * executed_qty) / total_qty
+                    self.qty = total_qty if self.side == "BUY" else -total_qty
+                    
+                    # Cập nhật số lần nhồi
                     self.average_down_count += 1
                     self.last_average_down_time = time.time()
-    
+
                     message = (
                         f"📈 <b>ĐÃ NHỒI LỆNH LẦN {self.average_down_count} - {self.symbol}</b>\n"
                         f"📌 Hướng: {self.side}\n"
                         f"🏷️ Giá vào ban đầu: {self.entry_base:.4f}\n"
                         f"🏷️ Giá trung bình mới: {self.entry:.4f}\n"
                         f"📊 Khối lượng thêm: {executed_qty:.4f}\n"
-                        f"📊 Tổng khối lượng: {new_total:.4f}\n"
+                        f"📊 Tổng khối lượng: {total_qty:.4f}\n"
                         f"💵 Giá trị nhồi: {executed_qty * avg_price:.2f} USDT\n"
                         f"💰 Đòn bẩy: {self.lev}x\n"
                         f"🎯 Ngưỡng nhồi tiếp theo: {self._get_next_fibo_level()}%"
@@ -1186,19 +1175,13 @@ class BaseBot:
                     self.log(message)
                     return True
                 else:
-                    self.log(f"❌ Nhồi lệnh không khớp - Số lượng: {additional_qty}")
                     return False
             else:
-                error_msg = result.get('msg', 'Unknown error') if result else 'No response'
-                self.log(f"❌ Lỗi nhồi lệnh {self.side}: {error_msg}")
-                if result and 'code' in result:
-                    self.log(f"📋 Mã lỗi Binance: {result['code']} - {result.get('msg', '')}")
                 return False
-    
+                
         except Exception as e:
-            self.log(f"❌ Lỗi khi nhồi lệnh: {str(e)}")
+            self.log(f"Lỗi khi nhồi lệnh: {str(e)}")
             return False
-
 
     def _get_next_fibo_level(self):
         """Lấy mốc Fibonacci tiếp theo cho lần nhồi kế tiếp"""
@@ -1240,11 +1223,16 @@ class BaseBot:
                 if current_time - self.last_position_check > self.position_check_interval:
                     self.check_position_status()
                     self.last_position_check = current_time
+                
+                # ========== SỬA LỖI QUAN TRỌNG: LUÔN KIỂM TRA NHỒI LỆNH KHI CÓ VỊ THẾ ==========
+                if self.position_open and self.entry_base > 0:
+                    self.check_averaging_down()
+                # ========== KẾT THÚC PHẦN SỬA LỖI ==========
                               
                 if not self.position_open:
                     # Nếu không có symbol, tìm coin mới LIÊN TỤC
                     if not self.symbol:
-                        self.find_and_set_coin()  # LUÔN GỌI, KHÔNG KIỂM TRA KẾT QUẢ
+                        self.find_and_set_coin()
                         time.sleep(1)
                         continue
                     
@@ -1266,8 +1254,6 @@ class BaseBot:
                         time.sleep(1)
                 
                 if self.position_open and not self._close_attempted:
-                    # KIỂM TRA NHỒI LỆNH FIBONACCI
-                    self.check_averaging_down()
                     self.check_tp_sl()
                     
                 time.sleep(1)
@@ -2404,4 +2390,3 @@ class BotManager:
 
 # ========== KHỞI TẠO GLOBAL INSTANCES ==========
 coin_manager = CoinManager()
-
