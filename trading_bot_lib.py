@@ -676,26 +676,23 @@ class SmartCoinFinder:
             
             self.last_find_time = current_time
             
-            self.log(f"🔍 Đang tìm coin mới...")
-            
-            # Xác định hướng ưu tiên
+            # Bước 1: Xác định hướng ưu tiên từ TÍN HIỆU TOÀN THỊ TRƯỜNG
             target_direction = self.coin_finder.get_combined_signal()
             if target_direction == "NEUTRAL":
+                # Nếu thị trường cân bằng, chọn ngẫu nhiên
                 target_direction = random.choice(["BUY", "SELL"])
             
             # Lấy danh sách coin đang active để tránh trùng lặp
             active_coins = self.coin_manager.get_active_coins()
             
-            self.log(f"🎯 Hướng ưu tiên: {target_direction} | Coin đang active: {len(active_coins)}")
-            
-            # Tìm coin phù hợp
+            # Bước 3: Tìm coin phù hợp (RANDOM TỪ 600 COIN)
             new_symbol = self.coin_finder.find_best_coin(
                 target_direction, 
                 excluded_coins=active_coins
             )
             
             if new_symbol:
-                # Kiểm tra đòn bẩy
+                # Kiểm tra đòn bẩy một lần nữa
                 max_lev = self.coin_finder.get_symbol_leverage(new_symbol)
                 if max_lev >= self.lev:
                     # Đăng ký coin mới
@@ -712,13 +709,9 @@ class SmartCoinFinder:
                     
                     self.log(f"🎯 Đã tìm thấy coin: {new_symbol} - Hướng ưu tiên: {target_direction}")
                     return True
-                else:
-                    self.log(f"⚠️ Coin {new_symbol} không đủ đòn bẩy ({max_lev}x < {self.lev}x)")
-            else:
-                self.log("🔍 Không tìm thấy coin phù hợp, thử lại sau...")
             
             return False
-                
+            
         except Exception as e:
             self.log(f"❌ Lỗi tìm coin: {str(e)}")
             return False
