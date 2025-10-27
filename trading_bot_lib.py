@@ -16,6 +16,19 @@ import traceback
 import random
 from datetime import datetime
 from concurrent.futures import ThreadPoolExecutor
+from concurrent.futures import ThreadPoolExecutor, as_completed
+import time
+
+def _last_closed_1m_quote_volume(symbol):
+    data = binance_api_request(
+        "https://fapi.binance.com/fapi/v1/klines",
+        params={"symbol": symbol, "interval": "1m", "limit": 2}
+    )
+    if not data or len(data) < 2:
+        return None
+    k = data[-2]               # nến 1m đã đóng gần nhất
+    return float(k[7])         # quoteVolume (USDT)
+
 
 # ========== CẤU HÌNH LOGGING ==========
 def setup_logging():
@@ -282,47 +295,34 @@ def get_all_usdt_pairs(limit=600):
         return []
 
 def get_top_volume_symbols(limit=100):
-    """Lấy top coin có khối lượng giao dịch cao nhất TRONG 1 PHÚT GẦN NHẤT (thay vì 24h)"""
+    """Top {limit} USDT pairs theo quoteVolume của NẾN 1M đã đóng (đa luồng)."""
     try:
-        # Lấy danh sách tối đa 600 coin USDT
-        all_symbols = get_all_usdt_pairs(limit=600)
-        if not all_symbols:
+        universe = get_all_usdt_pairs(limit=600) or []
+        if not universe:
             logger.warning("❌ Không lấy được danh sách coin USDT")
             return []
-        
-        volumes = []
-        analyzed = 0
-        failed = 0
-        
-        for symbol in all_symbols:
-            try:
-                # Lấy 2 nến 1m để chắc chắn nến đầu tiên đã đóng
-                url = "https://fapi.binance.com/fapi/v1/klines"
-                params = {"symbol": symbol, "interval": "1m", "limit": 2}
-                data = binance_api_request(url, params=params)
-                
-                if not data or len(data) < 2:
+
+        scored, failed = [], 0
+        max_workers = 16
+        with ThreadPoolExecutor(max_workers=max_workers) as ex:
+            futmap = {ex.submit(_last_closed_1m_quote_volume, s): s for s in universe}
+            for fut in as_completed(futmap):
+                sym = futmap[fut]
+                try:
+                    qv = fut.result()
+                    if qv is not None:
+                        scored.append((sym, qv))
+                except Exception:
                     failed += 1
-                    continue
-                
-                last_closed = data[-2]  # nến đã đóng gần nhất
-                quote_vol = float(last_closed[7])  # cột 7 = khối lượng USDT (quote asset volume)
-                volumes.append((symbol, quote_vol))
-                analyzed += 1
-                
-            except Exception as e:
-                failed += 1
-                continue
-        
-        # Sắp xếp theo khối lượng USDT giảm dần
-        volumes.sort(key=lambda x: x[1], reverse=True)
-        
-        top_symbols = [sym for sym, vol in volumes[:limit]]
-        logger.info(f"✅ Lấy được {len(top_symbols)} coin volume cao nhất trong 1 phút (phân tích: {analyzed}, lỗi: {failed})")
-        return top_symbols
-    
+                time.sleep(0.002)  # nhỏ giọt tránh 429
+
+        scored.sort(key=lambda x: x[1], reverse=True)
+        top_syms = [s for s, _ in scored[:limit]]
+        logger.info(f"✅ Top {len(top_syms)} theo 1m quoteVolume (phân tích: {len(scored)}, lỗi: {failed})")
+        return top_syms
+
     except Exception as e:
-        logger.error(f"❌ Lỗi lấy top volume 1 phút: {str(e)}")
+        logger.error(f"❌ Lỗi lấy top volume 1 phút (đa luồng): {str(e)}")
         return []
 
 def get_max_leverage(symbol, api_key, api_secret):
@@ -545,108 +545,113 @@ class GlobalMarketAnalyzer:
         self.previous_neutral_count = 0
         
     def analyze_global_market(self):
-        """Phân tích toàn thị trường - ĐẾM CHÍNH XÁC 100 COIN"""
+        """Phân tích toàn thị trường theo 2 phút liên tiếp:
+           - Đếm màu nến của phút TRƯỚC (prev) và phút HIỆN TẠI (curr) trên 100 cặp top 1m quoteVolume
+           - Nếu nến xanh curr tăng >= 10% so với prev => BUY
+           - Nếu nến đỏ  curr tăng >= 10% so với prev => SELL
+        """
         try:
             current_time = time.time()
             if current_time - self.last_analysis_time < self.analysis_interval:
                 return self.current_market_signal
-            
-            # Lấy CHÍNH XÁC 100 coin volume cao nhất
+    
+            # 1) Lấy danh sách 100 cặp theo 1m quoteVolume (đã đóng)
             top_symbols = get_top_volume_symbols(limit=100)
-            if not top_symbols or len(top_symbols) < 100:
-                logger.warning("❌ Không lấy được đủ 100 coin volume cao")
+            if not top_symbols or len(top_symbols) < 80:
+                logger.warning(f"⚠️ Không đủ ứng viên 1m: {len(top_symbols) if top_symbols else 0}/100")
                 return "NEUTRAL"
-            
-            current_green_count = 0
-            current_red_count = 0
-            current_neutral_count = 0
+    
+            # 2) Biến đếm cho 2 phút liên tiếp
+            prev_green = prev_red = prev_neutral = 0
+            curr_green = curr_red = curr_neutral = 0
             failed_symbols = 0
-            
-            # Phân tích từng symbol - ĐẢM BẢO ĐẾM ĐỦ 100
+            sample_count = 0
+    
+            # 3) Duyệt từng symbol, lấy 3 nến để có 2 nến đã đóng: [-3] và [-2]
             for symbol in top_symbols:
                 try:
-                    # Lấy dữ liệu 2 nến 1 phút
-                    klines = self.get_klines(symbol, '1m', limit=2)
-                    if not klines or len(klines) < 2:
+                    klines = self.get_klines(symbol, '1m', limit=3)
+                    if not klines or len(klines) < 3:
                         failed_symbols += 1
                         continue
-                    
-                    # Nến hiện tại (nến mới nhất)
-                    current_candle = klines[1]
-                    current_open = float(current_candle[1])
-                    current_close = float(current_candle[4])
-                    
-                    # Phân tích màu nến
-                    if current_close > current_open:
-                        current_green_count += 1
-                    elif current_close < current_open:
-                        current_red_count += 1
-                    else:
-                        current_neutral_count += 1
-                        
-                except Exception as e:
+    
+                    prev_candle = klines[-3]  # nến đã đóng của phút trước
+                    curr_candle = klines[-2]  # nến đã đóng của phút hiện tại
+    
+                    po, pc = float(prev_candle[1]), float(prev_candle[4])
+                    co, cc = float(curr_candle[1]), float(curr_candle[4])
+    
+                    # Đếm màu phút TRƯỚC
+                    if pc > po:      prev_green += 1
+                    elif pc < po:    prev_red   += 1
+                    else:            prev_neutral += 1
+    
+                    # Đếm màu phút HIỆN TẠI
+                    if cc > co:      curr_green += 1
+                    elif cc < co:    curr_red   += 1
+                    else:            curr_neutral += 1
+    
+                    sample_count += 1
+    
+                except Exception:
                     failed_symbols += 1
                     continue
-            
-            # KIỂM TRA: Tổng phải bằng 100
-            total_analyzed = current_green_count + current_red_count + current_neutral_count
-            if total_analyzed + failed_symbols != 100:
-                logger.error(f"❌ LỖI ĐẾM NẾN: {total_analyzed} nến + {failed_symbols} lỗi = {total_analyzed + failed_symbols} (phải = 100)")
+    
+            # 4) Kiểm tra đủ dữ liệu
+            if sample_count < 80:
+                logger.warning(f"⚠️ Phân tích không đủ sâu: {sample_count}/100 coin (lỗi: {failed_symbols})")
                 return "NEUTRAL"
-            
-            if total_analyzed < 90:  # Cho phép mất 10 coin
-                logger.warning(f"⚠️ Chỉ phân tích được {total_analyzed}/100 coin")
-                return "NEUTRAL"
-            
-            # LOGIC 10% - SO SÁNH VỚI PHIÊN TRƯỚC
+    
+            # 5) Tính % thay đổi giữa 2 phút
+            #    Tránh chia cho 0: dùng "Laplace smoothing" nhỏ (+1 ở mẫu số)
+            green_change = ((curr_green - prev_green) / max(1, prev_green)) * 100.0
+            red_change   = ((curr_red   - prev_red)   / max(1, prev_red))   * 100.0
+    
+            logger.info(
+                f"📊 2-PHÚT | "
+                f"Prev 🟢{prev_green} 🔴{prev_red} ⚪{prev_neutral}  →  "
+                f"Curr 🟢{curr_green} 🔴{curr_red} ⚪{curr_neutral} | "
+                f"Δ🟢 {green_change:+.1f}% | Δ🔴 {red_change:+.1f}% | "
+                f"Số mẫu: {sample_count}, Lỗi: {failed_symbols}"
+            )
+    
+            # 6) Ra tín hiệu theo ngưỡng 10%
             signal = "NEUTRAL"
-            
-            # Chỉ so sánh khi có dữ liệu phiên trước
-            if self.previous_green_count > 0 and self.previous_red_count > 0:
-                # Tính % thay đổi so với phiên trước
-                green_change = 0
-                red_change = 0
-                
-                if self.previous_green_count > 0:
-                    green_change = ((current_green_count - self.previous_green_count) / self.previous_green_count) * 100
-                
-                if self.previous_red_count > 0:
-                    red_change = ((current_red_count - self.previous_red_count) / self.previous_red_count) * 100
-                
-                logger.info(f"📊 THAY ĐỔI: 🟢 Xanh: {green_change:+.1f}% | 🔴 Đỏ: {red_change:+.1f}%")
-                
-                # Điều kiện BUY: nến xanh tăng ≥10%
-                if green_change >= 10:
-                    signal = "BUY"
-                    logger.info(f"🎯 TÍN HIỆU BUY: Nến xanh tăng {green_change:.1f}%")
-                
-                # Điều kiện SELL: nến đỏ tăng ≥10%
-                elif red_change >= 10:
-                    signal = "SELL" 
-                    logger.info(f"🎯 TÍN HIỆU SELL: Nến đỏ tăng {red_change:.1f}%")
-                
-                else:
-                    signal = self.current_market_signal  # Giữ nguyên tín hiệu cũ
-            
-            # Cập nhật dữ liệu phiên trước
-            self.previous_green_count = current_green_count
-            self.previous_red_count = current_red_count
-            self.previous_neutral_count = current_neutral_count
-            
+            if green_change >= 10:
+                signal = "BUY"
+                logger.info(f"🎯 TÍN HIỆU BUY: Nến xanh tăng {green_change:.1f}% (2 phút liên tiếp)")
+            elif red_change >= 10:
+                signal = "SELL"
+                logger.info(f"🎯 TÍN HIỆU SELL: Nến đỏ tăng {red_change:.1f}% (2 phút liên tiếp)")
+            else:
+                # nếu không đủ mạnh, giữ nguyên tín hiệu cũ
+                signal = self.current_market_signal
+    
+            # 7) Cập nhật state (nếu bạn vẫn muốn lưu lại để hiển thị chỗ khác)
+            self.previous_green_count = prev_green
+            self.previous_red_count = prev_red
+            self.previous_neutral_count = prev_neutral
+    
             self.current_market_signal = signal
             self.last_analysis_time = current_time
-            self.last_green_count = current_green_count
-            self.last_red_count = current_red_count
-            self.last_neutral_count = current_neutral_count
-            
-            # LOG CHI TIẾT
-            logger.info(f"📊 TOÀN THỊ TRƯỜNG: {signal} | 🟢 Xanh: {current_green_count}/100 | 🔴 Đỏ: {current_red_count}/100 | ⚪ Không đổi: {current_neutral_count}/100 | ❌ Lỗi: {failed_symbols}/100")
-            
+            self.last_green_count = curr_green
+            self.last_red_count = curr_red
+            self.last_neutral_count = curr_neutral
+    
+            # 8) Log tổng hợp
+            logger.info(
+                f"📊 TOÀN THỊ TRƯỜNG (2P): {signal} | "
+                f"HIỆN TẠI: 🟢 {curr_green}/{sample_count} | 🔴 {curr_red}/{sample_count} | ⚪ {curr_neutral}/{sample_count} | "
+                f"TRƯỚC ĐÓ: 🟢 {prev_green}/{sample_count} | 🔴 {prev_red}/{sample_count} | ⚪ {prev_neutral}/{sample_count} | "
+                f"❌ Lỗi: {failed_symbols}"
+            )
+    
             return signal
-            
+    
         except Exception as e:
             logger.error(f"❌ Lỗi phân tích toàn thị trường: {str(e)}")
             return "NEUTRAL"
+
     
     def get_klines(self, symbol, interval, limit=2):
         """Lấy dữ liệu nến từ Binance - THÊM RETRY"""
