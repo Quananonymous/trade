@@ -716,6 +716,37 @@ class SmartCoinFinder:
             self.log(f"❌ Lỗi tìm coin: {str(e)}")
             return False
 
+    def find_best_coin(self, target_direction, excluded_coins=None):
+        """Bước 3: Tìm coin tốt nhất theo hướng mong muốn - RANDOM TỪ 600 COIN"""
+        try:
+            all_symbols = get_all_usdt_pairs(limit=600)  # Lấy 600 coin
+            if not all_symbols:
+                return None
+            
+            # Trộn ngẫu nhiên danh sách coin
+            random.shuffle(all_symbols)
+            
+            for symbol in all_symbols:
+                # Kiểm tra coin không trong danh sách loại trừ
+                if excluded_coins and symbol in excluded_coins:
+                    continue
+                
+                # Kiểm tra đòn bẩy
+                max_lev = self.get_symbol_leverage(symbol)
+                if max_lev < 10:  # Yêu cầu đòn bẩy tối thiểu
+                    continue
+                
+                # KHÔNG PHÂN TÍCH TÍN HIỆU TỪNG COIN - CHỈ CẦN ĐÒN BẨY VÀ KHÔNG TRÙNG
+                logger.info(f"✅ Tìm thấy coin phù hợp: {symbol} - Đòn bẩy: {max_lev}x")
+                return symbol
+            
+            return None
+            
+        except Exception as e:
+            logger.error(f"Lỗi tìm coin: {str(e)}")
+            return None
+
+
 # ========== WEBSOCKET MANAGER ==========
 class WebSocketManager:
     def __init__(self):
