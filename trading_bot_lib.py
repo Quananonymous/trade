@@ -512,6 +512,7 @@ class CoinManager:
             return list(self.active_coins)
 
 # ========== GLOBAL MARKET ANALYZER (ĐÃ SỬA LỖI 10%) ==========
+# ========== GLOBAL MARKET ANALYZER (ĐÃ SỬA LỖI HOÀN TOÀN) ==========
 class GlobalMarketAnalyzer:
     def __init__(self, api_key, api_secret):
         self.api_key = api_key
@@ -521,87 +522,108 @@ class GlobalMarketAnalyzer:
         self.current_market_signal = "NEUTRAL"
         self.last_green_count = 0
         self.last_red_count = 0
-        self.previous_green_count = 0  # Thêm biến lưu số nến xanh của phiên trước
-        self.previous_red_count = 0    # Thêm biến lưu số nến đỏ của phiên trước
+        self.last_neutral_count = 0
+        self.previous_green_count = 0
+        self.previous_red_count = 0
+        self.previous_neutral_count = 0
         
     def analyze_global_market(self):
-        """Phân tích toàn thị trường dựa trên 100 coin volume cao nhất - 2 NẾN 1 PHÚT"""
+        """Phân tích toàn thị trường - ĐẾM CHÍNH XÁC 100 COIN"""
         try:
             current_time = time.time()
             if current_time - self.last_analysis_time < self.analysis_interval:
                 return self.current_market_signal
             
-            # Lấy top 100 coin volume cao nhất
+            # Lấy CHÍNH XÁC 100 coin volume cao nhất
             top_symbols = get_top_volume_symbols(limit=100)
-            if not top_symbols:
+            if not top_symbols or len(top_symbols) < 100:
+                logger.warning("❌ Không lấy được đủ 100 coin volume cao")
                 return "NEUTRAL"
             
             current_green_count = 0
             current_red_count = 0
-            total_analyzed = 0
+            current_neutral_count = 0
+            failed_symbols = 0
             
+            # Phân tích từng symbol - ĐẢM BẢO ĐẾM ĐỦ 100
             for symbol in top_symbols:
                 try:
-                    # Lấy dữ liệu 2 NẾN 1 PHÚT
+                    # Lấy dữ liệu 2 nến 1 phút
                     klines = self.get_klines(symbol, '1m', limit=2)
                     if not klines or len(klines) < 2:
+                        failed_symbols += 1
                         continue
                     
-                    # Nến trước đó (index 0)
-                    prev_candle = klines[0]
-                    prev_open = float(prev_candle[1])
-                    prev_close = float(prev_candle[4])
-                    
-                    # Nến hiện tại (index 1) 
+                    # Nến hiện tại (nến mới nhất)
                     current_candle = klines[1]
                     current_open = float(current_candle[1])
                     current_close = float(current_candle[4])
                     
-                    # Phân tích nến hiện tại
+                    # Phân tích màu nến
                     if current_close > current_open:
                         current_green_count += 1
                     elif current_close < current_open:
                         current_red_count += 1
-                    
-                    total_analyzed += 1
-                    
+                    else:
+                        current_neutral_count += 1
+                        
                 except Exception as e:
+                    failed_symbols += 1
                     continue
             
-            if total_analyzed == 0:
+            # KIỂM TRA: Tổng phải bằng 100
+            total_analyzed = current_green_count + current_red_count + current_neutral_count
+            if total_analyzed + failed_symbols != 100:
+                logger.error(f"❌ LỖI ĐẾM NẾN: {total_analyzed} nến + {failed_symbols} lỗi = {total_analyzed + failed_symbols} (phải = 100)")
                 return "NEUTRAL"
             
-            # SO SÁNH VỚI PHIÊN TRƯỚC - LOGIC 10%
-            if total_analyzed < 80:
-                logger.warning(f"⚠️ Chỉ phân tích được {total_analyzed}/100 coin - BỎ QUA TÍN HIỆU")
+            if total_analyzed < 90:  # Cho phép mất 10 coin
+                logger.warning(f"⚠️ Chỉ phân tích được {total_analyzed}/100 coin")
                 return "NEUTRAL"
             
+            # LOGIC 10% - SO SÁNH VỚI PHIÊN TRƯỚC
             signal = "NEUTRAL"
             
+            # Chỉ so sánh khi có dữ liệu phiên trước
             if self.previous_green_count > 0 and self.previous_red_count > 0:
-                # Tính % thay đổi
-                green_change = ((current_green_count - self.previous_green_count) / self.previous_green_count) * 100
-                red_change = ((current_red_count - self.previous_red_count) / self.previous_red_count) * 100
+                # Tính % thay đổi so với phiên trước
+                green_change = 0
+                red_change = 0
                 
-                # Điều kiện mua: nến xanh tăng 10% so với phiên trước
+                if self.previous_green_count > 0:
+                    green_change = ((current_green_count - self.previous_green_count) / self.previous_green_count) * 100
+                
+                if self.previous_red_count > 0:
+                    red_change = ((current_red_count - self.previous_red_count) / self.previous_red_count) * 100
+                
+                logger.info(f"📊 THAY ĐỔI: 🟢 Xanh: {green_change:+.1f}% | 🔴 Đỏ: {red_change:+.1f}%")
+                
+                # Điều kiện BUY: nến xanh tăng ≥10%
                 if green_change >= 10:
                     signal = "BUY"
-                # Điều kiện bán: nến đỏ tăng 10% so với phiên trước  
+                    logger.info(f"🎯 TÍN HIỆU BUY: Nến xanh tăng {green_change:.1f}%")
+                
+                # Điều kiện SELL: nến đỏ tăng ≥10%
                 elif red_change >= 10:
-                    signal = "SELL"
-                # Ngược lại giữ nguyên tín hiệu trước đó
+                    signal = "SELL" 
+                    logger.info(f"🎯 TÍN HIỆU SELL: Nến đỏ tăng {red_change:.1f}%")
+                
                 else:
-                    signal = self.current_market_signal
+                    signal = self.current_market_signal  # Giữ nguyên tín hiệu cũ
             
-            # Cập nhật biến cho lần sau
+            # Cập nhật dữ liệu phiên trước
             self.previous_green_count = current_green_count
             self.previous_red_count = current_red_count
+            self.previous_neutral_count = current_neutral_count
+            
             self.current_market_signal = signal
             self.last_analysis_time = current_time
             self.last_green_count = current_green_count
             self.last_red_count = current_red_count
+            self.last_neutral_count = current_neutral_count
             
-            logger.info(f"📊 TÍN HIỆU TOÀN THỊ TRƯỜNG: {signal} | 🟢 Xanh: {current_green_count} (trước: {self.previous_green_count}) | 🔴 Đỏ: {current_red_count} (trước: {self.previous_red_count}) | 🟡 Thay đổi: Xanh +{green_change:.1f}% / Đỏ +{red_change:.1f}%")
+            # LOG CHI TIẾT
+            logger.info(f"📊 TOÀN THỊ TRƯỜNG: {signal} | 🟢 Xanh: {current_green_count}/100 | 🔴 Đỏ: {current_red_count}/100 | ⚪ Không đổi: {current_neutral_count}/100 | ❌ Lỗi: {failed_symbols}/100")
             
             return signal
             
@@ -609,18 +631,28 @@ class GlobalMarketAnalyzer:
             logger.error(f"❌ Lỗi phân tích toàn thị trường: {str(e)}")
             return "NEUTRAL"
     
-    def get_klines(self, symbol, interval, limit=1):
-        """Lấy dữ liệu nến từ Binance"""
-        try:
-            url = "https://fapi.binance.com/fapi/v1/klines"
-            params = {
-                'symbol': symbol.upper(),
-                'interval': interval,
-                'limit': limit
-            }
-            return binance_api_request(url, params=params)
-        except Exception as e:
-            return None
+    def get_klines(self, symbol, interval, limit=2):
+        """Lấy dữ liệu nến từ Binance - THÊM RETRY"""
+        max_retries = 2
+        for attempt in range(max_retries):
+            try:
+                url = "https://fapi.binance.com/fapi/v1/klines"
+                params = {
+                    'symbol': symbol.upper(),
+                    'interval': interval,
+                    'limit': limit
+                }
+                data = binance_api_request(url, params=params)
+                if data and len(data) >= limit:
+                    return data
+                elif attempt < max_retries - 1:
+                    time.sleep(0.1)
+                    continue
+            except Exception as e:
+                if attempt < max_retries - 1:
+                    time.sleep(0.1)
+                    continue
+        return None
 
 # ========== SMART COIN FINDER NÂNG CẤP ==========
 class SmartCoinFinder:
