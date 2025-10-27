@@ -314,7 +314,7 @@ def get_top_volume_symbols(limit=100):
                         scored.append((sym, qv))
                 except Exception:
                     failed += 1
-                time.sleep(0.002)  # nhỏ giọt tránh 429
+                time.sleep(1)  # nhỏ giọt tránh 429
 
         scored.sort(key=lambda x: x[1], reverse=True)
         top_syms = [s for s, _ in scored[:limit]]
