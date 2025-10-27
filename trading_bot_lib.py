@@ -282,30 +282,47 @@ def get_all_usdt_pairs(limit=600):
         return []
 
 def get_top_volume_symbols(limit=100):
-    """Lấy top coin có khối lượng giao dịch cao nhất"""
+    """Lấy top coin có khối lượng giao dịch cao nhất TRONG 1 PHÚT GẦN NHẤT (thay vì 24h)"""
     try:
-        url = "https://fapi.binance.com/fapi/v1/ticker/24hr"
-        data = binance_api_request(url)
-        if not data:
+        # Lấy danh sách tối đa 600 coin USDT
+        all_symbols = get_all_usdt_pairs(limit=600)
+        if not all_symbols:
+            logger.warning("❌ Không lấy được danh sách coin USDT")
             return []
         
-        # Lọc các cặp USDT và sắp xếp theo volume
-        usdt_pairs = []
-        for item in data:
-            symbol = item.get('symbol', '')
-            if symbol.endswith('USDT'):
-                volume = float(item.get('volume', 0))
-                usdt_pairs.append((symbol, volume))
+        volumes = []
+        analyzed = 0
+        failed = 0
         
-        # Sắp xếp giảm dần theo volume
-        usdt_pairs.sort(key=lambda x: x[1], reverse=True)
+        for symbol in all_symbols:
+            try:
+                # Lấy 2 nến 1m để chắc chắn nến đầu tiên đã đóng
+                url = "https://fapi.binance.com/fapi/v1/klines"
+                params = {"symbol": symbol, "interval": "1m", "limit": 2}
+                data = binance_api_request(url, params=params)
+                
+                if not data or len(data) < 2:
+                    failed += 1
+                    continue
+                
+                last_closed = data[-2]  # nến đã đóng gần nhất
+                quote_vol = float(last_closed[7])  # cột 7 = khối lượng USDT (quote asset volume)
+                volumes.append((symbol, quote_vol))
+                analyzed += 1
+                
+            except Exception as e:
+                failed += 1
+                continue
         
-        top_symbols = [symbol for symbol, volume in usdt_pairs[:limit]]
-        logger.info(f"✅ Lấy được {len(top_symbols)} coin volume cao nhất")
+        # Sắp xếp theo khối lượng USDT giảm dần
+        volumes.sort(key=lambda x: x[1], reverse=True)
+        
+        top_symbols = [sym for sym, vol in volumes[:limit]]
+        logger.info(f"✅ Lấy được {len(top_symbols)} coin volume cao nhất trong 1 phút (phân tích: {analyzed}, lỗi: {failed})")
         return top_symbols
-        
+    
     except Exception as e:
-        logger.error(f"❌ Lỗi lấy top volume: {str(e)}")
+        logger.error(f"❌ Lỗi lấy top volume 1 phút: {str(e)}")
         return []
 
 def get_max_leverage(symbol, api_key, api_secret):
