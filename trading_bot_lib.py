@@ -1568,7 +1568,7 @@ class BotManager:
                     if bot_id in self.bots:
                         continue
                     
-                    bot_class = GlobalMarketBot
+                    bot_class = VolatilityBot
                     
                     if not bot_class:
                         continue
@@ -1583,7 +1583,7 @@ class BotManager:
                     if bot_id in self.bots:
                         continue
                     
-                    bot_class = GlobalMarketBot
+                    bot_class = VolatilityBot
                     
                     if not bot_class:
                         continue
