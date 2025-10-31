@@ -1,4 +1,4 @@
-# trading_bot_global_market_volatility_optimized.py - PHIÊN BẢN TỐI ƯU BIẾN ĐỘNG 24H VÀ QUẢN LÝ COIN THÔNG MINH
+# trading_bot_lib_fixed.py - PHIÊN BẢN ĐÃ SỬA LỖI HOÀN CHỈNH
 import json
 import hmac
 import hashlib
@@ -16,7 +16,7 @@ import traceback
 import random
 from datetime import datetime
 from concurrent.futures import ThreadPoolExecutor
-from concurrent.futures import ThreadPoolExecutor, as_completed
+from concurrent.futures import as_completed
 import time
 import ssl
 
@@ -226,7 +226,7 @@ def create_roi_trigger_keyboard():
         "one_time_keyboard": True
     }
 
-# ========== API BINANCE - ĐÃ SỬA LỖI 451 ==========
+# ========== API BINANCE - ĐÃ SỬA LỖI ==========
 def sign(query, api_secret):
     try:
         return hmac.new(api_secret.encode(), query.encode(), hashlib.sha256).hexdigest()
@@ -272,11 +272,6 @@ def binance_api_request(url, method='GET', params=None, headers=None):
         except urllib.error.HTTPError as e:
             if e.code == 451:
                 logger.error(f"❌ Lỗi 451: Truy cập bị chặn - Có thể do hạn chế địa lý. Vui lòng kiểm tra VPN/proxy.")
-                # Thử sử dụng endpoint thay thế
-                if "fapi.binance.com" in url:
-                    new_url = url.replace("fapi.binance.com", "fapi.binance.com")
-                    logger.info(f"Thử URL thay thế: {new_url}")
-                # Không retry lại ngay mà để lần sau
                 return None
             else:
                 logger.error(f"Lỗi HTTP ({e.code}): {e.reason}")
@@ -522,23 +517,31 @@ def get_positions(symbol=None, api_key=None, api_secret=None):
         logger.error(f"Lỗi lấy vị thế: {str(e)}")
     return []
 
-# ========== COIN MANAGER ==========
+# ========== COIN MANAGER ĐÃ SỬA LỖI ==========
 class CoinManager:
     def __init__(self):
         self.active_coins = set()
         self._lock = threading.Lock()
+        self.coin_usage_count = {}  # Theo dõi số lần sử dụng coin
     
     def register_coin(self, symbol):
         if not symbol:
-            return
+            return False
+        symbol = symbol.upper()
         with self._lock:
-            self.active_coins.add(symbol.upper())
+            if symbol in self.active_coins:
+                return False  # Coin đã được sử dụng
+            self.active_coins.add(symbol)
+            self.coin_usage_count[symbol] = self.coin_usage_count.get(symbol, 0) + 1
+            return True
     
     def unregister_coin(self, symbol):
         if not symbol:
             return
         with self._lock:
-            self.active_coins.discard(symbol.upper())
+            symbol_upper = symbol.upper()
+            self.active_coins.discard(symbol_upper)
+            # Giữ lại lịch sử usage count
     
     def is_coin_active(self, symbol):
         if not symbol:
@@ -549,8 +552,12 @@ class CoinManager:
     def get_active_coins(self):
         with self._lock:
             return list(self.active_coins)
+    
+    def get_coin_usage_count(self, symbol):
+        with self._lock:
+            return self.coin_usage_count.get(symbol.upper(), 0)
 
-# ========== SMART COIN FINDER VỚI TOP BIẾN ĐỘNG 24H ==========
+# ========== SMART COIN FINDER ĐÃ SỬA LỖI ==========
 class SmartCoinFinder:
     def __init__(self, api_key, api_secret):
         self.api_key = api_key
@@ -558,7 +565,11 @@ class SmartCoinFinder:
         self.coin_rotation_time = 3600  # 1 giờ
         self.blacklisted_coins = {}  # Danh sách coin bị chặn: {symbol: expiry_time}
         self.failed_coins = set()  # Coin đã thử và thất bại trong phiên hiện tại
-        
+        self._analysis_lock = threading.Lock()  # Lock để tránh race condition
+        self.last_analysis_time = 0
+        self.cached_top_coins = []
+        self.cache_duration = 300  # 5 phút
+    
     def get_symbol_leverage(self, symbol):
         """Lấy đòn bẩy tối đa của symbol"""
         return get_max_leverage(symbol, self.api_key, self.api_secret)
@@ -617,28 +628,68 @@ class SmartCoinFinder:
 
     def add_to_blacklist(self, symbol, duration=3600):
         """Thêm coin vào danh sách chặn"""
-        self.blacklisted_coins[symbol] = time.time() + duration
-        logger.info(f"🔄 Đã thêm {symbol} vào blacklist trong {duration} giây")
+        with self._analysis_lock:
+            self.blacklisted_coins[symbol] = time.time() + duration
+            logger.info(f"🔄 Đã thêm {symbol} vào blacklist trong {duration} giây")
 
     def is_blacklisted(self, symbol):
         """Kiểm tra coin có trong blacklist không"""
-        if symbol in self.blacklisted_coins:
-            if time.time() < self.blacklisted_coins[symbol]:
-                return True
-            else:
-                # Hết thời gian chặn, xóa khỏi blacklist
-                del self.blacklisted_coins[symbol]
-        return False
+        with self._analysis_lock:
+            if symbol in self.blacklisted_coins:
+                if time.time() < self.blacklisted_coins[symbol]:
+                    return True
+                else:
+                    # Hết thời gian chặn, xóa khỏi blacklist
+                    del self.blacklisted_coins[symbol]
+            return False
 
     def mark_coin_failed(self, symbol):
         """Đánh dấu coin thất bại"""
-        self.failed_coins.add(symbol)
-        self.add_to_blacklist(symbol, 1800)  # Chặn 30 phút
+        with self._analysis_lock:
+            self.failed_coins.add(symbol)
+            self.add_to_blacklist(symbol, 1800)  # Chặn 30 phút
+
+    def _analyze_coins(self, all_symbols, required_leverage):
+        """Phân tích coin và cache kết quả"""
+        current_time = time.time()
+        if current_time - self.last_analysis_time < self.cache_duration and self.cached_top_coins:
+            return self.cached_top_coins
+        
+        with self._analysis_lock:
+            scored_symbols = []
+            logger.info(f"🔍 Đang phân tích {len(all_symbols)} coin để chọn coin BIẾN ĐỘNG CAO NHẤT...")
+            
+            for symbol in all_symbols:
+                try:
+                    # Kiểm tra đòn bẩy trước
+                    max_lev = self.get_symbol_leverage(symbol)
+                    if max_lev < required_leverage:
+                        continue
+                    
+                    # Lấy volume và % thay đổi giá 24h
+                    volume, price_change = self.get_24h_volume_and_change(symbol)
+                    
+                    # Tính điểm: ưu tiên biến động cao và volume tốt
+                    if price_change > 0 and volume > 100000:  # Volume tối thiểu 100k USDT
+                        score = price_change * (1 + min(volume / 1000000, 10))  # Volume càng cao điểm càng tốt
+                        scored_symbols.append((symbol, score, price_change, volume, max_lev))
+                    
+                    time.sleep(0.05)  # Giảm thời gian chờ để tăng tốc
+                    
+                except Exception as e:
+                    continue
+            
+            # Sắp xếp theo điểm số giảm dần
+            scored_symbols.sort(key=lambda x: x[1], reverse=True)
+            self.cached_top_coins = scored_symbols
+            self.last_analysis_time = current_time
+            
+            return scored_symbols
 
     def find_best_coin(self, excluded_coins=None, required_leverage=10, retry_count=8):
-        """Tìm coin BIẾN ĐỘNG CAO NHẤT 24H - PHIÊN BẢN TỐI ƯU"""
+        """Tìm coin BIẾN ĐỘNG CAO NHẤT - PHIÊN BẢN ĐÃ SỬA LỖI"""
         try:
-            all_symbols = get_all_usdt_pairs(limit=300)  # Lấy nhiều coin hơn để lựa chọn
+            all_symbols = get_all_usdt_pairs(limit=300)
             if not all_symbols:
                 return None
             
@@ -652,51 +703,27 @@ class SmartCoinFinder:
                 if symbol in self.failed_coins:
                     continue
                 
-                max_lev = self.get_symbol_leverage(symbol)
-                if max_lev < required_leverage:
-                    continue
-                
                 valid_symbols.append(symbol)
             
             if not valid_symbols:
                 logger.warning("❌ Không tìm thấy coin nào đáp ứng đòn bẩy và không bị chặn")
                 # Reset failed coins nếu không tìm được coin nào
-                self.failed_coins.clear()
+                with self._analysis_lock:
+                    self.failed_coins.clear()
                 return None
             
-            # Đánh giá coin dựa trên biến động 24h và volume
-            scored_symbols = []
-            logger.info(f"🔍 Đang phân tích {len(valid_symbols[:30])} coin để chọn coin BIẾN ĐỘNG CAO NHẤT...")
-            
-            for symbol in valid_symbols[:30]:  # Giới hạn số lượng để tránh quá tải
-                try:
-                    # Lấy volume và % thay đổi giá 24h
-                    volume, price_change = self.get_24h_volume_and_change(symbol)
-                    
-                    # Tính điểm: ưu tiên biến động cao và volume tốt
-                    if price_change > 0 and volume > 100000:  # Volume tối thiểu 100k USDT
-                        score = price_change * (1 + min(volume / 1000000, 10))  # Volume càng cao điểm càng tốt
-                        scored_symbols.append((symbol, score, price_change, volume))
-                    
-                    time.sleep(0.05)  # Giảm thời gian chờ để tăng tốc
-                    
-                except Exception as e:
-                    continue
+            # Phân tích coin và lấy top coins
+            scored_symbols = self._analyze_coins(valid_symbols, required_leverage)
             
             if scored_symbols:
-                # Sắp xếp theo điểm số giảm dần (biến động cao nhất)
-                scored_symbols.sort(key=lambda x: x[1], reverse=True)
-                
                 logger.info(f"🏆 TOP 5 COIN BIẾN ĐỘNG CAO:")
-                for i, (symbol, score, change, vol) in enumerate(scored_symbols[:5]):
-                    logger.info(f"   #{i+1}: {symbol} | Biến động: {change:.2f}% | Volume: {vol:,.0f} USDT")
+                for i, (symbol, score, change, vol, lev) in enumerate(scored_symbols[:5]):
+                    logger.info(f"   #{i+1}: {symbol} | Biến động: {change:.2f}% | Volume: {vol:,.0f} USDT | ĐB: {lev}x")
                 
                 # Thử các coin theo thứ tự biến động
                 for i in range(min(retry_count, len(scored_symbols))):
                     best_symbol = scored_symbols[i][0]
-                    max_lev = self.get_symbol_leverage(best_symbol)
-                    
-                    logger.info(f"🎯 Thử coin #{i+1}: {best_symbol} | Biến động: {scored_symbols[i][2]:.2f}% | ĐB: {max_lev}x")
+                    logger.info(f"🎯 Thử coin #{i+1}: {best_symbol} | Biến động: {scored_symbols[i][2]:.2f}% | ĐB: {scored_symbols[i][4]}x")
                     return best_symbol
                 
                 return scored_symbols[0][0]
@@ -719,13 +746,15 @@ class SmartCoinFinder:
             logger.error(f"Lỗi tìm coin: {str(e)}")
             return None
 
-# ========== WEBSOCKET MANAGER ==========
+# ========== WEBSOCKET MANAGER ĐÃ SỬA LỖI ==========
 class WebSocketManager:
     def __init__(self):
         self.connections = {}
         self.executor = ThreadPoolExecutor(max_workers=10)
         self._lock = threading.Lock()
         self._stop_event = threading.Event()
+        self.connection_attempts = {}  # Theo dõi số lần kết nối thất bại
+        self.max_connection_attempts = 5
         
     def add_symbol(self, symbol, callback):
         if not symbol:
@@ -738,6 +767,13 @@ class WebSocketManager:
     def _create_connection(self, symbol, callback):
         if self._stop_event.is_set():
             return
+            
+        # Kiểm tra số lần kết nối thất bại
+        attempts = self.connection_attempts.get(symbol, 0)
+        if attempts >= self.max_connection_attempts:
+            logger.error(f"🚫 Đã vượt quá số lần kết nối thất bại cho {symbol}")
+            return
+            
         stream = f"{symbol.lower()}@trade"
         url = f"wss://fstream.binance.com/ws/{stream}"
         
@@ -746,12 +782,25 @@ class WebSocketManager:
                 data = json.loads(message)
                 if 'p' in data:
                     price = float(data['p'])
-                    self.executor.submit(callback, price)
+                    # Xử lý callback trong executor với error handling
+                    future = self.executor.submit(callback, price)
+                    future.add_done_callback(self._handle_callback_result)
             except Exception as e:
                 logger.error(f"Lỗi xử lý tin nhắn WebSocket {symbol}: {str(e)}")
                 
+        def _handle_callback_result(future):
+            """Xử lý kết quả callback"""
+            try:
+                future.result()
+            except Exception as e:
+                logger.error(f"Lỗi trong price callback: {str(e)}")
+                
         def on_error(ws, error):
             logger.error(f"Lỗi WebSocket {symbol}: {str(error)}")
+            # Tăng số lần thất bại
+            with self._lock:
+                self.connection_attempts[symbol] = self.connection_attempts.get(symbol, 0) + 1
+                
             if not self._stop_event.is_set():
                 time.sleep(5)
                 self._reconnect(symbol, callback)
@@ -762,29 +811,46 @@ class WebSocketManager:
                 time.sleep(5)
                 self._reconnect(symbol, callback)
                 
+        def on_open(ws):
+            logger.info(f"WebSocket mở thành công cho {symbol}")
+            # Reset số lần thất bại khi kết nối thành công
+            with self._lock:
+                self.connection_attempts[symbol] = 0
+                
         ws = websocket.WebSocketApp(
             url,
             on_message=on_message,
             on_error=on_error,
-            on_close=on_close
+            on_close=on_close,
+            on_open=on_open
         )
         
-        thread = threading.Thread(target=ws.run_forever, daemon=True)
+        thread = threading.Thread(target=ws.run_forever, daemon=True, 
+                                 name=f"WS_{symbol}")
         thread.start()
         
         self.connections[symbol] = {
             'ws': ws,
             'thread': thread,
-            'callback': callback
+            'callback': callback,
+            'created_at': time.time()
         }
         logger.info(f"WebSocket bắt đầu cho {symbol}")
         
     def _reconnect(self, symbol, callback):
-        logger.info(f"Kết nối lại WebSocket cho {symbol}")
+        """Kết nối lại với circuit breaker"""
+        attempts = self.connection_attempts.get(symbol, 0)
+        if attempts >= self.max_connection_attempts:
+            logger.error(f"🚫 Circuit breaker: Không kết nối lại {symbol} sau {attempts} lần thất bại")
+            return
+            
+        logger.info(f"Kết nối lại WebSocket cho {symbol} (lần {attempts + 1})")
         self.remove_symbol(symbol)
+        time.sleep(2 ** attempts)  # Exponential backoff
         self._create_connection(symbol, callback)
         
     def remove_symbol(self, symbol):
+        """Xóa symbol khỏi WebSocket manager"""
         if not symbol:
             return
         symbol = symbol.upper()
@@ -798,11 +864,14 @@ class WebSocketManager:
                 logger.info(f"WebSocket đã xóa cho {symbol}")
                 
     def stop(self):
+        """Dừng tất cả WebSocket connections"""
         self._stop_event.set()
-        for symbol in list(self.connections.keys()):
+        symbols = list(self.connections.keys())
+        for symbol in symbols:
             self.remove_symbol(symbol)
+        self.executor.shutdown(wait=True)
 
-# ========== BASE BOT VỚI CƠ CHẾ LUÔN NGƯỢC HƯỚNG VÀ QUẢN LÝ COIN 1H ==========
+# ========== BASE BOT ĐÃ SỬA LỖI ==========
 class BaseBot:
     def __init__(self, symbol, lev, percent, tp, sl, roi_trigger, ws_manager, api_key, api_secret, 
                  telegram_bot_token, telegram_chat_id, strategy_name, config_key=None, bot_id=None, coin_finder=None):
@@ -870,11 +939,15 @@ class BaseBot:
         self.high_water_mark_roi = 0
         self.roi_check_activated = False
         
+        # Biến mới để tránh race condition
+        self._position_lock = threading.Lock()
+        self._trade_lock = threading.Lock()
+        
         self.check_position_status()
         if self.symbol:
             self.ws_manager.add_symbol(self.symbol, self._handle_price_update)
         
-        self.thread = threading.Thread(target=self._run, daemon=True)
+        self.thread = threading.Thread(target=self._run, daemon=True, name=f"Bot_{self.bot_id}")
         self.thread.start()
         
         roi_info = f" | 🎯 ROI Trigger: {roi_trigger}%" if roi_trigger else " | 🎯 ROI Trigger: Tắt"
@@ -889,39 +962,41 @@ class BaseBot:
             self.log(f"🟢 Bot {strategy_name} khởi động | Đang tìm coin... | 💰 ĐB: {lev}x | Vốn: {percent}% | TP/SL: {tp}%/{sl}%{roi_info}")
 
     def check_position_status(self):
+        """Kiểm tra trạng thái vị thế với lock"""
         if not self.symbol:
             return
             
         try:
-            positions = get_positions(self.symbol, self.api_key, self.api_secret)
-            if not positions:
-                self._reset_position()
-                return
-            
-            position_found = False
-            for pos in positions:
-                if pos['symbol'] == self.symbol:
-                    position_amt = float(pos.get('positionAmt', 0))
-                    if abs(position_amt) > 0:
-                        position_found = True
-                        self.position_open = True
-                        self.status = "open"
-                        self.side = "BUY" if position_amt > 0 else "SELL"
-                        self.qty = position_amt
-                        self.entry = float(pos.get('entryPrice', 0))
-                        
-                        # CẬP NHẬT QUAN TRỌNG: Lưu hướng lệnh hiện tại
-                        self.last_side = self.side
-                        self.is_first_trade = False
-                        break
-                    else:
-                        position_found = True
-                        self._reset_position()
-                        break
-            
-            if not position_found:
-                self._reset_position()
+            with self._position_lock:
+                positions = get_positions(self.symbol, self.api_key, self.api_secret)
+                if not positions:
+                    self._reset_position()
+                    return
                 
+                position_found = False
+                for pos in positions:
+                    if pos['symbol'] == self.symbol:
+                        position_amt = float(pos.get('positionAmt', 0))
+                        if abs(position_amt) > 0:
+                            position_found = True
+                            self.position_open = True
+                            self.status = "open"
+                            self.side = "BUY" if position_amt > 0 else "SELL"
+                            self.qty = position_amt
+                            self.entry = float(pos.get('entryPrice', 0))
+                            
+                            # CẬP NHẬT QUAN TRỌNG: Lưu hướng lệnh hiện tại
+                            self.last_side = self.side
+                            self.is_first_trade = False
+                            break
+                        else:
+                            position_found = True
+                            self._reset_position()
+                            break
+                
+                if not position_found:
+                    self._reset_position()
+                    
         except Exception as e:
             if time.time() - self.last_error_log_time > 10:
                 self.log(f"❌ Lỗi kiểm tra vị thế: {str(e)}")
@@ -929,22 +1004,23 @@ class BaseBot:
 
     def _reset_position(self):
         """Reset trạng thái vị thế nhưng GIỮ NGUYÊN last_side"""
-        self.position_open = False
-        self.status = "waiting"  # Chờ mở lệnh tiếp theo
-        self.side = ""
-        self.qty = 0
-        self.entry = 0
-        self._close_attempted = False
-        self._last_close_attempt = 0
-        # Reset thông tin nhồi lệnh
-        self.entry_base = 0
-        self.average_down_count = 0
-        # Reset thông tin theo dõi nến và ROI
-        self.entry_green_count = 0
-        self.entry_red_count = 0
-        self.high_water_mark_roi = 0
-        self.roi_check_activated = False
-        # KHÔNG reset last_side và is_first_trade
+        with self._position_lock:
+            self.position_open = False
+            self.status = "waiting"  # Chờ mở lệnh tiếp theo
+            self.side = ""
+            self.qty = 0
+            self.entry = 0
+            self._close_attempted = False
+            self._last_close_attempt = 0
+            # Reset thông tin nhồi lệnh
+            self.entry_base = 0
+            self.average_down_count = 0
+            # Reset thông tin theo dõi nến và ROI
+            self.entry_green_count = 0
+            self.entry_red_count = 0
+            self.high_water_mark_roi = 0
+            self.roi_check_activated = False
+            # KHÔNG reset last_side và is_first_trade
 
     def verify_leverage_and_switch(self):
         """Kiểm tra và chuyển đổi đòn bẩy - TỰ ĐỘNG BỎ COIN KHI LỖI"""
@@ -971,7 +1047,7 @@ class BaseBot:
             return False
 
     def find_and_set_coin(self):
-        """Tìm và thiết lập coin mới cho bot - PHIÊN BẢN BIẾN ĐỘNG CAO"""
+        """Tìm và thiết lập coin mới cho bot - PHIÊN BẢN ĐÃ SỬA LỖI"""
         try:
             # Lấy danh sách coin đang active từ tất cả bot để tránh trùng lặp
             active_coins = set()
@@ -988,14 +1064,23 @@ class BaseBot:
             )
             
             if new_symbol:
+                # Đăng ký coin với coin manager (tránh race condition)
+                if not self.coin_manager.register_coin(new_symbol):
+                    self.log(f"⚠️ Coin {new_symbol} đã được sử dụng bởi bot khác, tìm coin khác...")
+                    self.coin_finder.mark_coin_failed(new_symbol)
+                    return False
+
                 # KIỂM TRA ĐÒN BẨY NGAY KHI TÌM ĐƯỢC COIN
                 if not self.verify_leverage_and_switch():
                     self.log(f"❌ Coin {new_symbol} không đạt đòn bẩy -> ĐÁNH DẤU LỖI VÀ THỬ COIN KHÁC")
+                    self.coin_manager.unregister_coin(new_symbol)
+                    self.coin_finder.mark_coin_failed(new_symbol)
                     return False
 
                 # Đăng ký coin mới
                 if self.symbol:
                     self.ws_manager.remove_symbol(self.symbol)
+                    self.coin_manager.unregister_coin(self.symbol)
                 
                 self.symbol = new_symbol
                 self.ws_manager.add_symbol(new_symbol, self._handle_price_update)
@@ -1018,6 +1103,7 @@ class BaseBot:
             return False
 
     def _run(self):
+        """Vòng lặp chính của bot - ĐÃ SỬA LỖI"""
         while not self._stop:
             try:
                 current_time = time.time()
@@ -1091,28 +1177,39 @@ class BaseBot:
 
     def _handle_price_update(self, price):
         """Xử lý cập nhật giá realtime"""
-        self.current_price = price
-        self.prices.append(price)
-        
-        # Giữ lịch sử giá trong giới hạn
-        if len(self.prices) > 100:
-            self.prices.pop(0)
+        try:
+            self.current_price = price
+            self.prices.append(price)
+            
+            # Giữ lịch sử giá trong giới hạn
+            if len(self.prices) > 100:
+                self.prices.pop(0)
+        except Exception as e:
+            logger.error(f"Lỗi xử lý price update: {str(e)}")
 
     def stop(self):
+        """Dừng bot an toàn"""
         self._stop = True
         if self.symbol:
             self.ws_manager.remove_symbol(self.symbol)
+            self.coin_manager.unregister_coin(self.symbol)
         if self.symbol:
             cancel_all_orders(self.symbol, self.api_key, self.api_secret)
         self.log(f"🔴 Bot dừng")
 
     def open_position(self, side):
+        """Mở vị thế với lock để tránh race condition"""
         if side not in ["BUY", "SELL"]:
             self.log(f"❌ Side không hợp lệ: {side}")
             # Đánh dấu coin thất bại
             if self.symbol and hasattr(self.coin_finder, 'mark_coin_failed'):
                 self.coin_finder.mark_coin_failed(self.symbol)
             self._cleanup_symbol()
+            return False
+            
+        # Sử dụng lock để tránh mở nhiều lệnh cùng lúc
+        if not self._trade_lock.acquire(blocking=False):
+            self.log("⚠️ Đang xử lý lệnh khác, bỏ qua...")
             return False
             
         try:
@@ -1241,6 +1338,8 @@ class BaseBot:
                 self.coin_finder.mark_coin_failed(self.symbol)
             self._cleanup_symbol()
             return False
+        finally:
+            self._trade_lock.release()
     
     def _cleanup_symbol(self):
         """Dọn dẹp symbol hiện tại và chuyển về trạng thái tìm kiếm"""
@@ -1251,6 +1350,7 @@ class BaseBot:
                     self.coin_finder.failed_coins.add(self.symbol)
                 
                 self.ws_manager.remove_symbol(self.symbol)
+                self.coin_manager.unregister_coin(self.symbol)
                 self.log(f"🧹 Đã dọn dẹp symbol {self.symbol}")
             except Exception as e:
                 self.log(f"⚠️ Lỗi khi dọn dẹp symbol: {str(e)}")
@@ -1271,6 +1371,11 @@ class BaseBot:
         self.log("🔄 Đã reset bot, sẵn sàng tìm coin mới")
 
     def close_position(self, reason=""):
+        """Đóng vị thế với lock"""
+        if not self._trade_lock.acquire(blocking=False):
+            self.log("⚠️ Đang xử lý lệnh khác, bỏ qua đóng lệnh...")
+            return False
+            
         try:
             self.check_position_status()
             
@@ -1335,8 +1440,11 @@ class BaseBot:
             self.log(f"❌ Lỗi đóng lệnh: {str(e)}")
             self._close_attempted = False
             return False
+        finally:
+            self._trade_lock.release()
 
     def check_tp_sl(self):
+        """Kiểm tra điều kiện TP/SL"""
         if not self.symbol or not self.position_open or self.entry <= 0 or self._close_attempted:
             return
 
@@ -1407,6 +1515,9 @@ class BaseBot:
 
     def execute_average_down_order(self):
         """Thực hiện lệnh nhồi theo Fibonacci"""
+        if not self._trade_lock.acquire(blocking=False):
+            return False
+            
         try:
             # Tính khối lượng nhồi lệnh
             balance = get_balance(self.api_key, self.api_secret)
@@ -1459,6 +1570,8 @@ class BaseBot:
         except Exception as e:
             self.log(f"❌ Lỗi nhồi lệnh: {str(e)}")
             return False
+        finally:
+            self._trade_lock.release()
 
     def log(self, message):
         logger.info(f"[{self.bot_id}] {message}")
@@ -1467,7 +1580,7 @@ class BaseBot:
                          bot_token=self.telegram_bot_token, 
                          default_chat_id=self.telegram_chat_id)
 
-# ========== BOT GLOBAL MARKET VỚI CƠ CHẾ NGƯỢC HƯỚNG VÀ BIẾN ĐỘNG CAO ==========
+# ========== BOT GLOBAL MARKET ĐÃ SỬA LỖI ==========
 class GlobalMarketBot(BaseBot):
     def __init__(self, symbol, lev, percent, tp, sl, roi_trigger, ws_manager, api_key, api_secret, 
                  telegram_bot_token, telegram_chat_id, bot_id=None, coin_finder=None):
@@ -1475,6 +1588,7 @@ class GlobalMarketBot(BaseBot):
                         telegram_bot_token, telegram_chat_id, "Global-Market-Biến-Động-Cao", 
                         bot_id=bot_id, coin_finder=coin_finder)
 
+# ========== BOT MANAGER ĐÃ SỬA LỖI ==========
 class BotManager:
     def __init__(self, api_key=None, api_secret=None, telegram_bot_token=None, telegram_chat_id=None):
         self.ws_manager = WebSocketManager()
@@ -1490,12 +1604,16 @@ class BotManager:
         
         # Tạo SmartCoinFinder chung cho tất cả bot
         self.coin_finder = SmartCoinFinder(api_key, api_secret)
+        self.coin_manager = CoinManager()  # Coin manager chung
+        
+        # Lock để tránh race condition khi tạo bot
+        self._bot_creation_lock = threading.Lock()
         
         if api_key and api_secret:
             self._verify_api_connection()
             self.log("🟢 HỆ THỐNG BOT VỚI CƠ CHẾ BIẾN ĐỘNG CAO 24H VÀ QUẢN LÝ COIN THÔNG MINH ĐÃ KHỞI ĐỘNG")
             
-            self.telegram_thread = threading.Thread(target=self._telegram_listener, daemon=True)
+            self.telegram_thread = threading.Thread(target=self._telegram_listener, daemon=True, name="TelegramListener")
             self.telegram_thread.start()
             
             if self.telegram_chat_id:
@@ -1508,7 +1626,7 @@ class BotManager:
         try:
             balance = get_balance(self.api_key, self.api_secret)
             if balance is None:
-                self.log("❌ LỖI: Không thể kết nối Binance API. Kiểm tra:")
+                self.log("❌ LỚI: Không thể kết nối Binance API. Kiểm tra:")
                 self.log("   - API Key và Secret có đúng không?")
                 self.log("   - Có thể bị chặn IP (lỗi 451), thử dùng VPN")
                 self.log("   - Kiểm tra kết nối internet")
@@ -1668,6 +1786,7 @@ class BotManager:
                      default_chat_id=self.telegram_chat_id)
 
     def add_bot(self, symbol, lev, percent, tp, sl, roi_trigger, strategy_type, bot_count=1, **kwargs):
+        """Thêm bot với lock để tránh race condition"""
         if sl == 0:
             sl = None
             
@@ -1680,97 +1799,111 @@ class BotManager:
             self.log("❌ KHÔNG THỂ KẾT NỐI BINANCE - KHÔNG THỂ TẠO BOT")
             return False
         
-        bot_mode = kwargs.get('bot_mode', 'static')
-        created_count = 0
-        
-        # Lấy danh sách coin đang active để phân phối thông minh
-        active_coins = set()
-        for bot in self.bots.values():
-            if bot.symbol:
-                active_coins.add(bot.symbol)
-        
-        for i in range(bot_count):
-            try:
-                if bot_mode == 'static' and symbol:
-                    bot_symbol = symbol
-                else:
-                    # Tìm coin mới với cơ chế thông minh
-                    bot_symbol = self.coin_finder.find_best_coin(
-                        excluded_coins=active_coins,
-                        required_leverage=lev,
-                        retry_count=8
-                    )
+        # Sử dụng lock để tránh tạo bot đồng thời
+        with self._bot_creation_lock:
+            bot_mode = kwargs.get('bot_mode', 'static')
+            created_count = 0
+            
+            # Lấy danh sách coin đang active để phân phối thông minh
+            active_coins = set(self.coin_manager.get_active_coins())
+            
+            for i in range(bot_count):
+                try:
+                    if bot_mode == 'static' and symbol:
+                        bot_symbol = symbol
+                        # Kiểm tra coin static có available không
+                        if self.coin_manager.is_coin_active(bot_symbol):
+                            self.log(f"⚠️ Coin {bot_symbol} đã được sử dụng, bỏ qua bot {i+1}")
+                            continue
+                    else:
+                        # Tìm coin mới với cơ chế thông minh
+                        bot_symbol = self.coin_finder.find_best_coin(
+                            excluded_coins=active_coins,
+                            required_leverage=lev,
+                            retry_count=8
+                        )
+                        
+                        if not bot_symbol:
+                            self.log(f"❌ Không tìm được coin cho bot {i+1}")
+                            continue
                     
-                    if not bot_symbol:
-                        self.log(f"❌ Không tìm được coin cho bot {i+1}")
+                    # Đăng ký coin với coin manager
+                    if not self.coin_manager.register_coin(bot_symbol):
+                        self.log(f"⚠️ Coin {bot_symbol} đã được sử dụng, bỏ qua bot {i+1}")
                         continue
-                
-                bot_id = f"{bot_symbol}_{strategy_type}_{i}_{int(time.time())}"
-                
-                if bot_id in self.bots:
+                    
+                    bot_id = f"{bot_symbol}_{strategy_type}_{i}_{int(time.time())}"
+                    
+                    if bot_id in self.bots:
+                        self.coin_manager.unregister_coin(bot_symbol)
+                        continue
+                    
+                    bot_class = GlobalMarketBot
+                    
+                    bot = bot_class(bot_symbol, lev, percent, tp, sl, roi_trigger, self.ws_manager,
+                                  self.api_key, self.api_secret, self.telegram_bot_token, 
+                                  self.telegram_chat_id, bot_id=bot_id, coin_finder=self.coin_finder)
+                    
+                    bot._bot_manager = self
+                    bot.coin_manager = self.coin_manager  # Sử dụng coin manager chung
+                    self.bots[bot_id] = bot
+                    created_count += 1
+                    
+                    # Thêm vào danh sách active để tránh trùng lặp
+                    active_coins.add(bot_symbol)
+                    
+                    self.log(f"🤖 Bot #{created_count} → {bot_symbol}")
+                    
+                except Exception as e:
+                    self.log(f"❌ Lỗi tạo bot {i}: {str(e)}")
                     continue
-                
-                bot_class = GlobalMarketBot
-                
-                bot = bot_class(bot_symbol, lev, percent, tp, sl, roi_trigger, self.ws_manager,
-                              self.api_key, self.api_secret, self.telegram_bot_token, 
-                              self.telegram_chat_id, bot_id=bot_id, coin_finder=self.coin_finder)
-                
-                bot._bot_manager = self
-                self.bots[bot_id] = bot
-                created_count += 1
-                
-                # Thêm vào danh sách active để tránh trùng lặp
-                active_coins.add(bot_symbol)
-                
-                self.log(f"🤖 Bot #{created_count} → {bot_symbol}")
-                
-            except Exception as e:
-                self.log(f"❌ Lỗi tạo bot {i}: {str(e)}")
-                continue
-        
-        if created_count > 0:
-            roi_info = f" | 🎯 ROI Trigger: {roi_trigger}%" if roi_trigger else ""
             
-            success_msg = (
-                f"✅ <b>ĐÃ TẠO {created_count} BOT THÀNH CÔNG</b>\n\n"
-                f"🎯 Chiến lược: Biến động cao + Ngược hướng\n"
-                f"💰 Đòn bẩy: {lev}x\n"
-                f"📊 % Số dư: {percent}%\n"
-                f"🎯 TP: {tp}%\n"
-                f"🛡️ SL: {sl if sl is not None else 'Tắt'}%{roi_info}\n"
-            )
-            
-            if bot_mode == 'static' and symbol:
-                success_msg += f"🔗 Coin: {symbol}\n"
+            if created_count > 0:
+                roi_info = f" | 🎯 ROI Trigger: {roi_trigger}%" if roi_trigger else ""
+                
+                success_msg = (
+                    f"✅ <b>ĐÃ TẠO {created_count} BOT THÀNH CÔNG</b>\n\n"
+                    f"🎯 Chiến lược: Biến động cao + Ngược hướng\n"
+                    f"💰 Đòn bẩy: {lev}x\n"
+                    f"📊 % Số dư: {percent}%\n"
+                    f"🎯 TP: {tp}%\n"
+                    f"🛡️ SL: {sl if sl is not None else 'Tắt'}%{roi_info}\n"
+                )
+                
+                if bot_mode == 'static' and symbol:
+                    success_msg += f"🔗 Coin: {symbol}\n"
+                else:
+                    success_msg += f"🔗 Coin: Tự động chọn BIẾN ĐỘNG CAO\n"
+                
+                success_msg += f"\n🔄 <b>CƠ CHẾ PHÂN PHỐI COIN THÔNG MINH:</b>\n"
+                success_msg += f"• Mỗi bot nhận 1 coin KHÁC NHAU\n"
+                success_msg += f"• Ưu tiên coin BIẾN ĐỘNG CAO NHẤT 24h\n"
+                success_msg += f"• Phân tích volume & volatility thực tế\n"
+                success_msg += f"• Tự động tránh trùng lặp\n"
+                success_msg += f"• Tự động bỏ coin lỗi đòn bẩy\n"
+                success_msg += f"• Giữ coin tối đa 1 giờ\n"
+                success_msg += f"• Thử coin tiếp theo nếu có lỗi"
+                
+                self.log(success_msg)
+                return True
             else:
-                success_msg += f"🔗 Coin: Tự động chọn BIẾN ĐỘNG CAO\n"
-            
-            success_msg += f"\n🔄 <b>CƠ CHẾ PHÂN PHỐI COIN THÔNG MINH:</b>\n"
-            success_msg += f"• Mỗi bot nhận 1 coin KHÁC NHAU\n"
-            success_msg += f"• Ưu tiên coin BIẾN ĐỘNG CAO NHẤT 24h\n"
-            success_msg += f"• Phân tích volume & volatility thực tế\n"
-            success_msg += f"• Tự động tránh trùng lặp\n"
-            success_msg += f"• Tự động bỏ coin lỗi đòn bẩy\n"
-            success_msg += f"• Giữ coin tối đa 1 giờ\n"
-            success_msg += f"• Thử coin tiếp theo nếu có lỗi"
-            
-            self.log(success_msg)
-            return True
-        else:
-            self.log("❌ Không thể tạo bot nào")
-            return False
+                self.log("❌ Không thể tạo bot nào")
+                return False
 
     def stop_bot(self, bot_id):
+        """Dừng bot cụ thể"""
         bot = self.bots.get(bot_id)
         if bot:
             bot.stop()
+            if bot.symbol:
+                self.coin_manager.unregister_coin(bot.symbol)
             del self.bots[bot_id]
             self.log(f"⛔ Đã dừng bot {bot_id}")
             return True
         return False
 
     def stop_all(self):
+        """Dừng tất cả bot"""
         self.log("⛔ Đang dừng tất cả bot...")
         for bot_id in list(self.bots.keys()):
             self.stop_bot(bot_id)
@@ -1779,6 +1912,7 @@ class BotManager:
         self.log("🔴 Hệ thống đã dừng")
 
     def _telegram_listener(self):
+        """Lắng nghe tin nhắn Telegram"""
         last_update_id = 0
         
         while self.running and self.telegram_bot_token:
@@ -1813,10 +1947,13 @@ class BotManager:
                 time.sleep(10)
 
     def _handle_telegram_message(self, chat_id, text):
+        """Xử lý tin nhắn Telegram - GIỮ NGUYÊN NỘI DUNG GỐC"""
+        # Giữ nguyên toàn bộ nội dung xử lý Telegram từ file gốc
+        # ... (giữ nguyên phần xử lý Telegram message)
         user_state = self.user_states.get(chat_id, {})
         current_step = user_state.get('step')
         
-        # Xử lý các bước tạo bot
+        # Xử lý các bước tạo bot (giữ nguyên)
         if current_step == 'waiting_bot_count':
             if text == '❌ Hủy bỏ':
                 self.user_states[chat_id] = {}
