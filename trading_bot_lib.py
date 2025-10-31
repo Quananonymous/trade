@@ -279,7 +279,7 @@ def binance_api_request(url, method='GET', params=None, headers=None):
     logger.error(f"Không thể thực hiện yêu cầu API sau {max_retries} lần thử")
     return None
 
-def get_all_usdt_pairs(limit=600):
+def get_all_usdt_pairs(limit=500):
     try:
         url = "https://fapi.binance.com/fapi/v1/exchangeInfo"
         data = binance_api_request(url)
@@ -300,7 +300,7 @@ def get_all_usdt_pairs(limit=600):
         logger.error(f"❌ Lỗi lấy danh sách coin từ Binance: {str(e)}")
         return []
 
-def get_top_volatile_symbols(limit=50, min_volume=100000):
+def get_top_volatile_symbols(limit=50, min_volume=0):
     """Lấy trực tiếp top coin biến động cao nhất từ Binance - SIÊU NHANH"""
     try:
         url = "https://fapi.binance.com/fapi/v1/ticker/24hr"
@@ -348,7 +348,7 @@ def get_max_leverage(symbol, api_key, api_secret):
         url = "https://fapi.binance.com/fapi/v1/exchangeInfo"
         data = binance_api_request(url)
         if not data:
-            return 100
+            return 10
         
         for s in data['symbols']:
             if s['symbol'] == symbol.upper():
@@ -357,10 +357,10 @@ def get_max_leverage(symbol, api_key, api_secret):
                         if 'maxLeverage' in f:
                             return int(f['maxLeverage'])
                 break
-        return 100
+        return 10
     except Exception as e:
         logger.error(f"Lỗi lấy đòn bẩy tối đa {symbol}: {str(e)}")
-        return 100
+        return 10
 
 def get_step_size(symbol, api_key, api_secret):
     if not symbol:
