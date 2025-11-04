@@ -869,22 +869,12 @@ class BaseBot:
         long_score = 0
         short_score = 0
         
-        # So sánh tổng giá trị vị thế
-        if self.global_long_value > self.global_short_value:
-            # Tổng giá trị LONG nhỏ hơn -> ưu tiên Sell để cân bằng
+        if self.global_long_pnl > self.global_short_pnl:
+            # LONG đang có PnL thấp hơn SHORT -> ưu tiên SEll để cân bằng
             long_score += 2
-        elif self.global_short_value > self.global_long_value:
-            # Tổng giá trị SHORT nhỏ hơn -> ưu tiên Buy để cân bằng
+        elif self.global_short_pnl > self.global_long_pnl:
+            # SHORT đang có PnL thấp hơn LONG -> ưu tiên SELL để cân bằng
             short_score += 2
-        
-        # 2. Điểm số dựa trên PnL (nếu không quyết định được từ giá trị)
-        if long_score == short_score:
-            if self.global_long_pnl > self.global_short_pnl:
-                # LONG đang có PnL thấp hơn SHORT -> ưu tiên SEll để cân bằng
-                long_score += 1
-            elif self.global_short_pnl > self.global_long_pnl:
-                # SHORT đang có PnL thấp hơn LONG -> ưu tiên SELL để cân bằng
-                short_score += 1
         
         # 3. Điểm số dựa trên số lượng vị thế (nếu vẫn không quyết định được)
         if long_score == short_score:
