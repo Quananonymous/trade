@@ -1,4 +1,4 @@
-# trading_bot_lib.py - HOÀN CHỈNH VỚI CƠ CHẾ TÍNH TỔNG LỖ VÀ NHỒI LỆNH FIBONACCI THEO ROI
+# trading_bot_lib.py - HOÀN CHỈNH VỚI CƠ CHẾ TÍNH TOÀN DIỆN LỜI/LỖ VÀ ĐẾM COIN
 import json
 import hmac
 import hashlib
@@ -680,7 +680,7 @@ class WebSocketManager:
         for symbol in list(self.connections.keys()):
             self.remove_symbol(symbol)
 
-# ========== BASE BOT VỚI CƠ CHẾ TÍNH TỔNG LỖ VÀ NHỒI LỆNH FIBONACCI THEO ROI ==========
+# ========== BASE BOT VỚI CƠ CHẾ TÍNH TOÀN DIỆN LỜI/LỖ VÀ ĐẾM COIN ==========
 class BaseBot:
     def __init__(self, symbol, lev, percent, tp, sl, roi_trigger, ws_manager, api_key, api_secret, 
                  telegram_bot_token, telegram_chat_id, strategy_name, config_key=None, bot_id=None):
@@ -742,9 +742,11 @@ class BaseBot:
         self.high_water_mark_roi = 0
         self.roi_check_activated = False
         
-        # CƠ CHẾ MỚI: Tính tổng lỗ toàn tài khoản thay vì đếm số lượng
-        self.global_long_loss = 0  # Tổng lỗ của các vị thế LONG
-        self.global_short_loss = 0  # Tổng lỗ của các vị thế SHORT
+        # CƠ CHẾ MỚI: Tính toán toàn diện - cả số lượng và tổng lợi nhuận (cả âm và dương)
+        self.global_long_count = 0  # Số lượng vị thế LONG
+        self.global_short_count = 0  # Số lượng vị thế SHORT
+        self.global_long_pnl = 0  # Tổng PnL của vị thế LONG (cả âm và dương)
+        self.global_short_pnl = 0  # Tổng PnL của vị thế SHORT (cả âm và dương)
         self.last_global_position_check = 0
         self.global_position_check_interval = 10  # 10 giây kiểm tra 1 lần
         
@@ -806,52 +808,75 @@ class BaseBot:
                 self.last_error_log_time = time.time()
 
     def check_global_positions(self):
-        """Kiểm tra vị thế toàn tài khoản và tính tổng lỗ của LONG/SHORT"""
+        """Kiểm tra vị thế toàn tài khoản - tính cả số lượng và tổng PnL (cả âm và dương)"""
         try:
             positions = get_positions(api_key=self.api_key, api_secret=self.api_secret)
             if not positions:
-                self.global_long_loss = 0
-                self.global_short_loss = 0
+                self.global_long_count = 0
+                self.global_short_count = 0
+                self.global_long_pnl = 0
+                self.global_short_pnl = 0
                 return
             
-            long_loss_total = 0
-            short_loss_total = 0
+            long_count = 0
+            short_count = 0
+            long_pnl_total = 0
+            short_pnl_total = 0
             
             for pos in positions:
                 position_amt = float(pos.get('positionAmt', 0))
                 unrealized_pnl = float(pos.get('unRealizedProfit', 0))
                 
-                # Chỉ tính các vị thế đang LỖ (unrealized_pnl < 0)
-                if unrealized_pnl < 0:
-                    if position_amt > 0:  # LONG position
-                        long_loss_total += abs(unrealized_pnl)
-                    elif position_amt < 0:  # SHORT position
-                        short_loss_total += abs(unrealized_pnl)
+                if position_amt > 0:  # LONG position
+                    long_count += 1
+                    long_pnl_total += unrealized_pnl
+                elif position_amt < 0:  # SHORT position
+                    short_count += 1
+                    short_pnl_total += unrealized_pnl
             
-            self.global_long_loss = long_loss_total
-            self.global_short_loss = short_loss_total
+            self.global_long_count = long_count
+            self.global_short_count = short_count
+            self.global_long_pnl = long_pnl_total
+            self.global_short_pnl = short_pnl_total
             
             # Log thống kê định kỳ
             if random.random() < 0.1:  # 10% tỷ lệ log để tránh spam
-                self.log(f"📊 Thống kê lỗ toàn tài khoản: LONG={long_loss_total:.2f} USDC | SHORT={short_loss_total:.2f} USDC")
+                self.log(f"📊 Thống kê toàn diện: LONG={long_count} vị thế, PnL={long_pnl_total:.2f} USDC | SHORT={short_count} vị thế, PnL={short_pnl_total:.2f} USDC")
                 
         except Exception as e:
             if time.time() - self.last_error_log_time > 30:
                 self.log(f"❌ Lỗi kiểm tra vị thế toàn tài khoản: {str(e)}")
                 self.last_error_log_time = time.time()
 
-    def get_next_side_based_on_global_loss(self):
-        """Xác định hướng lệnh tiếp theo dựa trên TỔNG LỖ toàn tài khoản"""
-        # Cập nhật thống kê lỗ toàn tài khoản
+    def get_next_side_based_on_comprehensive_analysis(self):
+        """Xác định hướng lệnh tiếp theo dựa trên phân tích toàn diện: số lượng và PnL"""
+        # Cập nhật thống kê toàn tài khoản
         self.check_global_positions()
         
-        # QUY TẮC MỚI: Dựa trên tổng lỗ của vị thế LONG/SHORT
-        if self.global_long_loss > self.global_short_loss:
-            # Lỗ LONG nhiều hơn -> Ưu tiên vào SHORT (bán) để cân bằng
-            return "SELL"
-        elif self.global_short_loss > self.global_long_loss:
-            # Lỗ SHORT nhiều hơn -> Ưu tiên vào LONG (mua) để cân bằng
+        # QUY TẮC MỚI: Kết hợp cả số lượng và PnL
+        # Tạo điểm số cho mỗi hướng
+        long_score = 0
+        short_score = 0
+        
+        # 1. Điểm số dựa trên số lượng vị thế
+        if self.global_long_count > self.global_short_count:
+            short_score += 1  # Nhiều LONG hơn -> ưu tiên SELL
+        elif self.global_short_count > self.global_long_count:
+            long_score += 1  # Nhiều SHORT hơn -> ưu tiên BUY
+        
+        # 2. Điểm số dựa trên PnL
+        if self.global_long_pnl < self.global_short_pnl:
+            # LONG đang có PnL thấp hơn SHORT -> ưu tiên BUY để cân bằng
+            long_score += 1
+        elif self.global_short_pnl < self.global_long_pnl:
+            # SHORT đang có PnL thấp hơn LONG -> ưu tiên SELL để cân bằng
+            short_score += 1
+        
+        # 3. Quyết định dựa trên điểm số
+        if long_score > short_score:
             return "BUY"
+        elif short_score > long_score:
+            return "SELL"
         else:
             # Bằng nhau -> Chọn ngẫu nhiên
             return random.choice(["BUY", "SELL"])
@@ -882,7 +907,7 @@ class BaseBot:
             
             # Tìm coin phù hợp
             new_symbol = self.coin_finder.find_best_coin(
-                target_direction="BUY",  # Không quan trọng vì sẽ đi theo global loss
+                target_direction="BUY",  # Không quan trọng vì sẽ đi theo phân tích toàn diện
                 excluded_coins=active_coins,
                 required_leverage=self.lev
             )
@@ -962,8 +987,8 @@ class BaseBot:
                         time.sleep(1)
                         continue
                     
-                    # CƠ CHẾ MỚI: VÀO LỆNH DỰA TRÊN TỔNG LỖ TOÀN TÀI KHOẢN
-                    target_side = self.get_next_side_based_on_global_loss()
+                    # CƠ CHẾ MỚI: VÀO LỆNH DỰA TRÊN PHÂN TÍCH TOÀN DIỆN
+                    target_side = self.get_next_side_based_on_comprehensive_analysis()
                     
                     if target_side:
                         if current_time - self.last_trade_time > 3 and current_time - self.last_close_time > self.cooldown_period:
@@ -1096,8 +1121,8 @@ class BaseBot:
                     
                     roi_trigger_info = f" | 🎯 ROI Trigger: {self.roi_trigger}%" if self.roi_trigger else ""
                     
-                    # Thêm thông tin tổng lỗ toàn tài khoản vào log
-                    loss_info = f" | 📊 Tổng lỗ: LONG={self.global_long_loss:.2f} USDC | SHORT={self.global_short_loss:.2f} USDC"
+                    # Thêm thông tin phân tích toàn diện vào log
+                    analysis_info = f" | 📊 Phân tích: LONG={self.global_long_count} vị thế, PnL={self.global_long_pnl:.2f} USDC | SHORT={self.global_short_count} vị thế, PnL={self.global_short_pnl:.2f} USDC"
                     
                     message = (
                         f"✅ <b>ĐÃ MỞ VỊ THẾ {self.symbol}</b>\n"
@@ -1107,7 +1132,7 @@ class BaseBot:
                         f"📊 Khối lượng: {executed_qty:.4f}\n"
                         f"💵 Giá trị: {executed_qty * self.entry:.2f} USDC\n"
                         f"💰 Đòn bẩy: {self.lev}x\n"
-                        f"🎯 TP: {self.tp}% | 🛡️ SL: {self.sl}%{roi_trigger_info}{loss_info}"
+                        f"🎯 TP: {self.tp}% | 🛡️ SL: {self.sl}%{roi_trigger_info}{analysis_info}"
                     )
                     
                     if self.roi_trigger:
@@ -1383,14 +1408,14 @@ class BaseBot:
                          bot_token=self.telegram_bot_token, 
                          default_chat_id=self.telegram_chat_id)
 
-# ========== BOT GLOBAL MARKET VỚI CƠ CHẾ TÍNH TỔNG LỖ VÀ NHỒI LỆNH FIBONACCI ==========
+# ========== BOT GLOBAL MARKET VỚI CƠ CHẾ PHÂN TÍCH TOÀN DIỆN ==========
 class GlobalMarketBot(BaseBot):
     def __init__(self, symbol, lev, percent, tp, sl, roi_trigger, ws_manager, api_key, api_secret, 
                  telegram_bot_token, telegram_chat_id, bot_id=None):
         super().__init__(symbol, lev, percent, tp, sl, roi_trigger, ws_manager, api_key, api_secret,
-                        telegram_bot_token, telegram_chat_id, "Global-Market-Tổng-Lỗ", bot_id=bot_id)
+                        telegram_bot_token, telegram_chat_id, "Global-Market-Toàn-Diện", bot_id=bot_id)
 
-# ========== BOT MANAGER HOÀN CHỈNH VỚI CƠ CHẾ TÍNH TỔNG LỖ ==========
+# ========== BOT MANAGER HOÀN CHỈNH VỚI CƠ CHẾ PHÂN TÍCH TOÀN DIỆN ==========
 class BotManager:
     def __init__(self, api_key=None, api_secret=None, telegram_bot_token=None, telegram_chat_id=None):
         self.ws_manager = WebSocketManager()
@@ -1406,7 +1431,7 @@ class BotManager:
         
         if api_key and api_secret:
             self._verify_api_connection()
-            self.log("🟢 HỆ THỐNG BOT VỚI CƠ CHẾ TÍNH TỔNG LỖ VÀ NHỒI LỆNH FIBONACCI ĐÃ KHỞI ĐỘNG")
+            self.log("🟢 HỆ THỐNG BOT VỚI CƠ CHẾ PHÂN TÍCH TOÀN DIỆN ĐÃ KHỞI ĐỘNG")
             
             self.telegram_thread = threading.Thread(target=self._telegram_listener, daemon=True)
             self.telegram_thread.start()
@@ -1438,12 +1463,14 @@ class BotManager:
         try:
             all_positions = get_positions(api_key=self.api_key, api_secret=self.api_secret)
             
-            total_long_loss = 0
-            total_short_loss = 0
+            total_long_count = 0
+            total_short_count = 0
+            total_long_pnl = 0
+            total_short_pnl = 0
             total_unrealized_pnl = 0
             binance_positions = []
             
-            # Tính tổng lỗ từ Binance
+            # Tính toán toàn diện từ Binance
             for pos in all_positions:
                 position_amt = float(pos.get('positionAmt', 0))
                 if position_amt != 0:
@@ -1455,13 +1482,9 @@ class BotManager:
                     
                     total_unrealized_pnl += unrealized_pnl
                     
-                    if unrealized_pnl < 0:  # Chỉ tính các vị thế đang lỗ
-                        if position_amt > 0:
-                            total_long_loss += abs(unrealized_pnl)
-                        else:
-                            total_short_loss += abs(unrealized_pnl)
-                    
                     if position_amt > 0:
+                        total_long_count += 1
+                        total_long_pnl += unrealized_pnl
                         binance_positions.append({
                             'symbol': symbol,
                             'side': 'LONG',
@@ -1472,6 +1495,8 @@ class BotManager:
                             'pnl': unrealized_pnl
                         })
                     else:
+                        total_short_count += 1
+                        total_short_pnl += unrealized_pnl
                         binance_positions.append({
                             'symbol': symbol, 
                             'side': 'SHORT',
@@ -1501,8 +1526,10 @@ class BotManager:
                     'roi_trigger': bot.roi_trigger,
                     'last_side': bot.last_side,
                     'is_first_trade': bot.is_first_trade,
-                    'global_long_loss': bot.global_long_loss,
-                    'global_short_loss': bot.global_short_loss,
+                    'global_long_count': bot.global_long_count,
+                    'global_short_count': bot.global_short_count,
+                    'global_long_pnl': bot.global_long_pnl,
+                    'global_short_pnl': bot.global_short_pnl,
                     'average_down_count': bot.average_down_count
                 }
                 bot_details.append(bot_info)
@@ -1531,11 +1558,11 @@ class BotManager:
             summary += f"   🟡 Đang chờ: {waiting_bots}\n" 
             summary += f"   📈 Đang trade: {trading_bots}\n\n"
             
-            # Phần 3: Tổng lỗ toàn tài khoản
-            summary += f"📉 **TỔNG LỖ TOÀN TÀI KHOẢN**:\n"
-            summary += f"   📈 Lỗ LONG: {total_long_loss:.2f} USDC\n"
-            summary += f"   📉 Lỗ SHORT: {total_short_loss:.2f} USDC\n"
-            summary += f"   ⚖️ Chênh lệch: {abs(total_long_loss - total_short_loss):.2f} USDC\n\n"
+            # Phần 3: Phân tích toàn diện
+            summary += f"📈 **PHÂN TÍCH TOÀN DIỆN**:\n"
+            summary += f"   📊 Số lượng: LONG={total_long_count} | SHORT={total_short_count}\n"
+            summary += f"   💰 PnL: LONG={total_long_pnl:.2f} USDC | SHORT={total_short_pnl:.2f} USDC\n"
+            summary += f"   ⚖️ Chênh lệch: {abs(total_long_pnl - total_short_pnl):.2f} USDC\n\n"
             
             # Phần 4: Chi tiết từng bot
             if bot_details:
@@ -1550,14 +1577,14 @@ class BotManager:
                     status = status_map.get(bot['status'], bot['status'])
                     
                     roi_info = f" | 🎯 ROI: {bot['roi_trigger']}%" if bot['roi_trigger'] else ""
-                    trade_info = f" | Lệnh đầu" if bot['is_first_trade'] else f" | Tiếp theo dựa trên tổng lỗ"
+                    trade_info = f" | Lệnh đầu" if bot['is_first_trade'] else f" | Tiếp theo dựa trên phân tích toàn diện"
                     
                     summary += f"   🔹 {bot['bot_id'][:15]}...\n"
                     summary += f"      📊 {symbol_info} | {status}{trade_info}\n"
                     summary += f"      💰 ĐB: {bot['leverage']}x | Vốn: {bot['percent']}%{roi_info}\n"
                     if bot['tp'] is not None and bot['sl'] is not None:
                         summary += f"      🎯 TP: {bot['tp']}% | 🛡️ SL: {bot['sl']}%\n"
-                    summary += f"      📉 Tổng lỗ: LONG={bot['global_long_loss']:.2f} | SHORT={bot['global_short_loss']:.2f}\n"
+                    summary += f"      📊 Phân tích: LONG={bot['global_long_count']} vị thế, PnL={bot['global_long_pnl']:.2f} | SHORT={bot['global_short_count']} vị thế, PnL={bot['global_short_pnl']:.2f}\n"
                     if bot['average_down_count'] > 0:
                         summary += f"      📈 Số lần nhồi: {bot['average_down_count']}\n"
                     summary += "\n"
@@ -1580,12 +1607,16 @@ class BotManager:
     def send_main_menu(self, chat_id):
         welcome = (
             "🤖 <b>BOT GIAO DỊCH FUTURES ĐA LUỒNG</b>\n\n"
-            "🎯 <b>HỆ THỐNG VỚI CƠ CHẾ TÍNH TỔNG LỖ VÀ NHỒI LỆNH FIBONACCI THEO ROI</b>\n\n"
-            "📉 <b>Cơ chế tính tổng lỗ:</b>\n"
-            "• Bot sẽ tính TỔNG SỐ TIỀN ĐANG LỖ của tất cả vị thế\n"
-            "• So sánh tổng lỗ của vị thế LONG và SHORT\n"
-            "• Lỗ LONG nhiều hơn -> Ưu tiên vào SHORT (bán)\n"
-            "• Lỗ SHORT nhiều hơn -> Ưu tiên vào LONG (mua)\n"
+            "🎯 <b>HỆ THỐNG VỚI CƠ CHẾ PHÂN TÍCH TOÀN DIỆN</b>\n\n"
+            "📊 <b>Phân tích toàn diện:</b>\n"
+            "• Kết hợp cả SỐ LƯỢNG vị thế và TỔNG LỢI NHUẬN (cả âm và dương)\n"
+            "• Xem xét cả số lượng LONG/SHORT và PnL của từng loại\n"
+            "• Quyết định dựa trên phân tích đa chiều\n\n"
+            "📈 <b>Quy tắc quyết định:</b>\n"
+            "• Nhiều LONG hơn -> Ưu tiên SELL\n"
+            "• Nhiều SHORT hơn -> Ưu tiên BUY\n"
+            "• PnL LONG thấp hơn -> Ưu tiên BUY\n"
+            "• PnL SHORT thấp hơn -> Ưu tiên SELL\n"
             "• Bằng nhau -> Chọn ngẫu nhiên\n\n"
             "📈 <b>Nhồi lệnh Fibonacci theo ROI:</b>\n"
             "• Khi ROI ÂM đạt các mốc Fibonacci (200%, 300%, 500%, ...)\n"
@@ -1660,8 +1691,8 @@ class BotManager:
             roi_info = f" | 🎯 ROI Trigger: {roi_trigger}%" if roi_trigger else " | 🎯 ROI Trigger: Tắt"
             
             success_msg = (
-                f"✅ <b>ĐÃ TẠO {created_count}/{bot_count} BOT TÍNH TỔNG LỖ</b>\n\n"
-                f"🎯 Hệ thống: Tính tổng lỗ toàn tài khoản\n"
+                f"✅ <b>ĐÃ TẠO {created_count}/{bot_count} BOT PHÂN TÍCH TOÀN DIỆN</b>\n\n"
+                f"🎯 Hệ thống: Phân tích toàn diện (số lượng + PnL)\n"
                 f"💰 Đòn bẩy: {lev}x\n"
                 f"📈 % Số dư: {percent}%\n"
                 f"🎯 TP: {tp}%\n"
@@ -1674,10 +1705,10 @@ class BotManager:
             else:
                 success_msg += f"🔗 Coin: Tự động tìm kiếm\n"
             
-            success_msg += f"\n📉 <b>CƠ CHẾ TÍNH TỔNG LỖ ĐÃ KÍCH HOẠT</b>\n"
-            success_msg += f"📈 Lỗ LONG nhiều -> Ưu tiên SELL\n"
-            success_msg += f"📉 Lỗ SHORT nhiều -> Ưu tiên BUY\n"
-            success_msg += f"⚖️ Bằng nhau -> Chọn ngẫu nhiên\n\n"
+            success_msg += f"\n📊 <b>CƠ CHẾ PHÂN TÍCH TOÀN DIỆN ĐÃ KÍCH HOẠT</b>\n"
+            success_msg += f"📈 Xem xét cả số lượng và PnL (cả âm và dương)\n"
+            success_msg += f"⚖️ Quyết định dựa trên phân tích đa chiều\n"
+            success_msg += f"🔄 Kết hợp: Số lượng + Lợi nhuận = Quyết định tối ưu\n\n"
             success_msg += f"📈 <b>NHỒI LỆNH FIBONACCI THEO ROI</b>\n"
             success_msg += f"🔢 Các mốc: 200%, 300%, 500%, 800%, 1300%, 2100%, 3400%\n"
             success_msg += f"⏰ Kiểm tra 10 giây/lần"
