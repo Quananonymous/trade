@@ -816,63 +816,89 @@ class BaseBot:
                 self.global_short_count = 0
                 self.global_long_pnl = 0
                 self.global_short_pnl = 0
+                self.global_long_value = 0
+                self.global_short_value = 0
                 return
             
             long_count = 0
             short_count = 0
             long_pnl_total = 0
             short_pnl_total = 0
+            long_value_total = 0
+            short_value_total = 0
             
             for pos in positions:
                 position_amt = float(pos.get('positionAmt', 0))
                 unrealized_pnl = float(pos.get('unRealizedProfit', 0))
+                entry_price = float(pos.get('entryPrice', 0))
+                leverage = float(pos.get('leverage', 1))
+                
+                # Tính giá trị vị thế (position value)
+                position_value = abs(position_amt) * entry_price / leverage
                 
                 if position_amt > 0:  # LONG position
                     long_count += 1
                     long_pnl_total += unrealized_pnl
+                    long_value_total += position_value
                 elif position_amt < 0:  # SHORT position
                     short_count += 1
                     short_pnl_total += unrealized_pnl
+                    short_value_total += position_value
             
             self.global_long_count = long_count
             self.global_short_count = short_count
             self.global_long_pnl = long_pnl_total
             self.global_short_pnl = short_pnl_total
+            self.global_long_value = long_value_total
+            self.global_short_value = short_value_total
             
             # Log thống kê định kỳ
             if random.random() < 0.1:  # 10% tỷ lệ log để tránh spam
-                self.log(f"📊 Thống kê toàn diện: LONG={long_count} vị thế, PnL={long_pnl_total:.2f} USDC | SHORT={short_count} vị thế, PnL={short_pnl_total:.2f} USDC")
+                self.log(f"📊 Thống kê toàn diện: LONG={long_count} vị thế, PnL={long_pnl_total:.2f} USDC, Giá trị={long_value_total:.2f} USDC | SHORT={short_count} vị thế, PnL={short_pnl_total:.2f} USDC, Giá trị={short_value_total:.2f} USDC")
                 
         except Exception as e:
             if time.time() - self.last_error_log_time > 30:
                 self.log(f"❌ Lỗi kiểm tra vị thế toàn tài khoản: {str(e)}")
                 self.last_error_log_time = time.time()
-
+    
     def get_next_side_based_on_comprehensive_analysis(self):
-        """Xác định hướng lệnh tiếp theo dựa trên phân tích toàn diện: số lượng và PnL"""
+        """Xác định hướng lệnh tiếp theo dựa trên phân tích toàn diện: tổng giá trị và PnL"""
         # Cập nhật thống kê toàn tài khoản
         self.check_global_positions()
         
-        # QUY TẮC MỚI: Kết hợp cả số lượng và PnL
-        # Tạo điểm số cho mỗi hướng
+        # QUY TẮC MỚI: Ưu tiên tổng giá trị vị thế trước, sau đó đến PnL, cuối cùng là số lượng
+        
+        # 1. Điểm số dựa trên TỔNG GIÁ TRỊ vị thế
         long_score = 0
         short_score = 0
         
-        # 1. Điểm số dựa trên số lượng vị thế
-        if self.global_long_count > self.global_short_count:
-            short_score += 1  # Nhiều LONG hơn -> ưu tiên SELL
-        elif self.global_short_count > self.global_long_count:
-            long_score += 1  # Nhiều SHORT hơn -> ưu tiên BUY
+        # So sánh tổng giá trị vị thế
+        if self.global_long_value > self.global_short_value:
+            # Tổng giá trị LONG nhỏ hơn -> ưu tiên Sell để cân bằng
+            long_score += 2
+        elif self.global_short_value > self.global_long_value:
+            # Tổng giá trị SHORT nhỏ hơn -> ưu tiên Buy để cân bằng
+            short_score += 2
         
-        # 2. Điểm số dựa trên PnL
-        if self.global_long_pnl < self.global_short_pnl:
-            # LONG đang có PnL thấp hơn SHORT -> ưu tiên BUY để cân bằng
-            long_score += 1
-        elif self.global_short_pnl < self.global_long_pnl:
-            # SHORT đang có PnL thấp hơn LONG -> ưu tiên SELL để cân bằng
-            short_score += 1
+        # 2. Điểm số dựa trên PnL (nếu không quyết định được từ giá trị)
+        if long_score == short_score:
+            if self.global_long_pnl > self.global_short_pnl:
+                # LONG đang có PnL thấp hơn SHORT -> ưu tiên SEll để cân bằng
+                long_score += 1
+            elif self.global_short_pnl > self.global_long_pnl:
+                # SHORT đang có PnL thấp hơn LONG -> ưu tiên SELL để cân bằng
+                short_score += 1
         
-        # 3. Quyết định dựa trên điểm số
+        # 3. Điểm số dựa trên số lượng vị thế (nếu vẫn không quyết định được)
+        if long_score == short_score:
+            if self.global_long_count > self.global_short_count:
+                # Nhiều LONG hơn -> ưu tiên SELL để cân bằng
+                short_score += 1
+            elif self.global_short_count > self.global_long_count:
+                # Nhiều SHORT hơn -> ưu tiên BUY để cân bằng
+                long_score += 1
+        
+        # 4. Quyết định dựa trên điểm số
         if long_score > short_score:
             return "BUY"
         elif short_score > long_score:
