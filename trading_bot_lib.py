@@ -853,9 +853,6 @@ class BaseBot:
             self.global_short_value = short_value_total
             
             # Log thống kê định kỳ
-            if random.random() < 0.1:  # 10% tỷ lệ log để tránh spam
-                self.log(f"📊 Thống kê toàn diện: LONG={long_count} vị thế, PnL={long_pnl_total:.2f} USDC, Giá trị={long_value_total:.2f} USDC | SHORT={short_count} vị thế, PnL={short_pnl_total:.2f} USDC, Giá trị={short_value_total:.2f} USDC")
-                
         except Exception as e:
             if time.time() - self.last_error_log_time > 30:
                 self.log(f"❌ Lỗi kiểm tra vị thế toàn tài khoản: {str(e)}")
