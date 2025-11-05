@@ -1575,6 +1575,145 @@ class BotManager:
                 # Nếu không đăng ký được, thử lại với coin khác
                 return self.get_available_coin(excluded_coins | {selected_coin})
 
+    def get_position_summary(self):
+        """Lấy thống kê tổng quan"""
+        try:
+            all_positions = get_positions(api_key=self.api_key, api_secret=self.api_secret)
+            
+            total_long_count = 0
+            total_short_count = 0
+            total_long_pnl = 0
+            total_short_pnl = 0
+            total_unrealized_pnl = 0
+            binance_positions = []
+            
+            # Tính toán toàn diện từ Binance
+            for pos in all_positions:
+                position_amt = float(pos.get('positionAmt', 0))
+                if position_amt != 0:
+                    symbol = pos.get('symbol', 'UNKNOWN')
+                    entry_price = float(pos.get('entryPrice', 0))
+                    unrealized_pnl = float(pos.get('unRealizedProfit', 0))
+                    leverage = float(pos.get('leverage', 1))
+                    position_value = abs(position_amt) * entry_price / leverage
+                    
+                    total_unrealized_pnl += unrealized_pnl
+                    
+                    if position_amt > 0:
+                        total_long_count += 1
+                        total_long_pnl += unrealized_pnl
+                        binance_positions.append({
+                            'symbol': symbol,
+                            'side': 'LONG',
+                            'leverage': leverage,
+                            'size': abs(position_amt),
+                            'entry': entry_price,
+                            'value': position_value,
+                            'pnl': unrealized_pnl
+                        })
+                    else:
+                        total_short_count += 1
+                        total_short_pnl += unrealized_pnl
+                        binance_positions.append({
+                            'symbol': symbol, 
+                            'side': 'SHORT',
+                            'leverage': leverage,
+                            'size': abs(position_amt),
+                            'entry': entry_price,
+                            'value': position_value,
+                            'pnl': unrealized_pnl
+                        })
+        
+            # Thống kê bot
+            bot_details = []
+            searching_bots = 0
+            waiting_bots = 0
+            trading_bots = 0
+            
+            for bot_id, bot in self.bots.items():
+                bot_info = {
+                    'bot_id': bot_id,
+                    'symbol': bot.symbol or 'Đang tìm...',
+                    'status': bot.status,
+                    'side': bot.side,
+                    'leverage': bot.lev,
+                    'percent': bot.percent,
+                    'tp': bot.tp,
+                    'sl': bot.sl,
+                    'roi_trigger': bot.roi_trigger,
+                    'last_side': bot.last_side,
+                    'is_first_trade': bot.is_first_trade,
+                    'global_long_count': bot.global_long_count,
+                    'global_short_count': bot.global_short_count,
+                    'global_long_pnl': bot.global_long_pnl,
+                    'global_short_pnl': bot.global_short_pnl,
+                    'average_down_count': bot.average_down_count
+                }
+                bot_details.append(bot_info)
+                
+                if bot.status == "searching":
+                    searching_bots += 1
+                elif bot.status == "waiting":
+                    waiting_bots += 1
+                elif bot.status == "open":
+                    trading_bots += 1
+            
+            # Tạo báo cáo chi tiết
+            summary = "📊 **THỐNG KÊ CHI TIẾT HỆ THỐNG**\n\n"
+            
+            # Phần 1: Số dư
+            balance = get_balance(self.api_key, self.api_secret)
+            if balance is not None:
+                summary += f"💰 **SỐ DƯ**: {balance:.2f} USDC\n"
+                summary += f"📈 **Tổng PnL**: {total_unrealized_pnl:.2f} USDC\n\n"
+            else:
+                summary += f"💰 **SỐ DƯ**: ❌ Lỗi kết nối\n\n"
+            
+            # Phần 2: Bot hệ thống
+            summary += f"🤖 **BOT HỆ THỐNG**: {len(self.bots)} bots\n"
+            summary += f"   🔍 Đang tìm coin: {searching_bots}\n"
+            summary += f"   🟡 Đang chờ: {waiting_bots}\n" 
+            summary += f"   📈 Đang trade: {trading_bots}\n\n"
+            
+            # Phần 3: Phân tích toàn diện
+            summary += f"📈 **PHÂN TÍCH TOÀN DIỆN**:\n"
+            summary += f"   📊 Số lượng: LONG={total_long_count} | SHORT={total_short_count}\n"
+            summary += f"   💰 PnL: LONG={total_long_pnl:.2f} USDC | SHORT={total_short_pnl:.2f} USDC\n"
+            summary += f"   ⚖️ Chênh lệch: {abs(total_long_pnl - total_short_pnl):.2f} USDC\n\n"
+            
+            # Phần 4: Chi tiết từng bot
+            if bot_details:
+                summary += "📋 **CHI TIẾT TỪNG BOT**:\n"
+                for bot in bot_details[:8]:
+                    symbol_info = bot['symbol'] if bot['symbol'] != 'Đang tìm...' else '🔍 Đang tìm'
+                    status_map = {
+                        "searching": "🔍 Tìm coin",
+                        "waiting": "🟡 Chờ tín hiệu", 
+                        "open": "🟢 Đang trade"
+                    }
+                    status = status_map.get(bot['status'], bot['status'])
+                    
+                    roi_info = f" | 🎯 ROI: {bot['roi_trigger']}%" if bot['roi_trigger'] else ""
+                    trade_info = f" | Lệnh đầu" if bot['is_first_trade'] else f" | Tiếp theo dựa trên phân tích toàn diện"
+                    
+                    summary += f"   🔹 {bot['bot_id'][:15]}...\n"
+                    summary += f"      📊 {symbol_info} | {status}{trade_info}\n"
+                    summary += f"      💰 ĐB: {bot['leverage']}x | Vốn: {bot['percent']}%{roi_info}\n"
+                    if bot['tp'] is not None and bot['sl'] is not None:
+                        summary += f"      🎯 TP: {bot['tp']}% | 🛡️ SL: {bot['sl']}%\n"
+                    summary += f"      📊 Phân tích: LONG={bot['global_long_count']} vị thế, PnL={bot['global_long_pnl']:.2f} | SHORT={bot['global_short_count']} vị thế, PnL={bot['global_short_pnl']:.2f}\n"
+                    if bot['average_down_count'] > 0:
+                        summary += f"      📈 Số lần nhồi: {bot['average_down_count']}\n"
+                    summary += "\n"
+                
+                if len(bot_details) > 8:
+                    summary += f"   ... và {len(bot_details) - 8} bot khác\n\n"
+            
+            return summary
+                    
+        except Exception as e:
+            return f"❌ Lỗi thống kê: {str(e)}"
+
     def log(self, message):
         logger.info(f"[SYSTEM] {message}")
         if self.telegram_bot_token and self.telegram_chat_id:
