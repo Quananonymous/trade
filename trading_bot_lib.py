@@ -1575,6 +1575,40 @@ class BotManager:
                 # Nếu không đăng ký được, thử lại với coin khác
                 return self.get_available_coin(excluded_coins | {selected_coin})
 
+    def log(self, message):
+        logger.info(f"[SYSTEM] {message}")
+        if self.telegram_bot_token and self.telegram_chat_id:
+            send_telegram(f"<b>SYSTEM</b>: {message}", 
+                         bot_token=self.telegram_bot_token, 
+                         default_chat_id=self.telegram_chat_id)
+
+    def send_main_menu(self, chat_id):
+        welcome = (
+            "🤖 <b>BOT GIAO DỊCH FUTURES ĐA LUỒNG</b>\n\n"
+            "🎯 <b>HỆ THỐNG VỚI CƠ CHẾ PHÂN TÍCH TOÀN DIỆN</b>\n\n"
+            "📊 <b>Phân tích toàn diện:</b>\n"
+            "• Kết hợp cả SỐ LƯỢNG vị thế và TỔNG LỢI NHUẬN (cả âm và dương)\n"
+            "• Xem xét cả số lượng LONG/SHORT và PnL của từng loại\n"
+            "• Quyết định dựa trên phân tích đa chiều\n\n"
+            "📈 <b>Quy tắc quyết định:</b>\n"
+            "• Nhiều LONG hơn -> Ưu tiên SELL\n"
+            "• Nhiều SHORT hơn -> Ưu tiên BUY\n"
+            "• PnL LONG thấp hơn -> Ưu tiên BUY\n"
+            "• PnL SHORT thấp hơn -> Ưu tiên SELL\n"
+            "• Bằng nhau -> Chọn ngẫu nhiên\n\n"
+            "📈 <b>Nhồi lệnh Fibonacci theo ROI:</b>\n"
+            "• Khi ROI ÂM đạt các mốc Fibonacci (200%, 300%, 500%, ...)\n"
+            "• Tự động nhồi lệnh để giảm giá trung bình\n"
+            "• Các mốc: 200%, 300%, 500%, 800%, 1300%, 2100%, 3400%\n\n"
+            "🔄 <b>Tìm bot mới sau đóng lệnh:</b>\n"
+            "• Mỗi khi đóng lệnh -> Tự động tìm coin mới\n"
+            "• Luôn thay đổi coin giao dịch\n"
+            "• Đa dạng hóa rủi ro"
+        )
+        send_telegram(welcome, chat_id, create_main_menu(),
+                     bot_token=self.telegram_bot_token, 
+                     default_chat_id=self.telegram_chat_id)
+
     def add_bot(self, symbol, lev, percent, tp, sl, roi_trigger, strategy_type, bot_count=1, **kwargs):
         if sl == 0:
             sl = None
