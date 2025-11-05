@@ -913,42 +913,32 @@ class BaseBot:
         self.roi_check_activated = False
 
     def find_and_set_coin(self):
-        """Tìm và thiết lập coin mới cho bot - SỬ DỤNG CƠ CHẾ CHỐNG TRÙNG"""
+        """Tìm và thiết lập coin mới cho bot"""
         try:
-            # Sử dụng BotManager để lấy coin không trùng lặp
-            if hasattr(self, 'bot_manager') and self.bot_manager:
-                new_symbol = self.bot_manager.get_available_coin()
-            else:
-                # Fallback: sử dụng cơ chế cũ nếu không có bot_manager
-                active_coins = self.coin_manager.get_active_coins()
-                new_symbol = self.coin_finder.find_best_coin(
-                    target_direction="BUY",
-                    excluded_coins=active_coins,
-                    required_leverage=self.lev
-                )
+            # Lấy danh sách coin đang active để tránh trùng lặp
+            active_coins = self.coin_manager.get_active_coins()
+            
+            # Tìm coin phù hợp
+            new_symbol = self.coin_finder.find_best_coin(
+                target_direction="BUY",  # Không quan trọng vì sẽ đi theo phân tích toàn diện
+                excluded_coins=active_coins,
+                required_leverage=self.lev
+            )
             
             if new_symbol:
                 # Đăng ký coin mới
-                if hasattr(self, 'bot_manager') and self.bot_manager:
-                    # BotManager sẽ tự động đăng ký trong get_available_coin
-                    pass
-                else:
-                    self.coin_manager.register_coin(new_symbol)
+                self.coin_manager.register_coin(new_symbol)
                 
                 # Cập nhật symbol cho bot
                 if self.symbol:
                     self.ws_manager.remove_symbol(self.symbol)
-                    # Hủy đăng ký coin cũ
-                    if hasattr(self, 'bot_manager') and self.bot_manager:
-                        self.bot_manager.unregister_coin(self.symbol)
-                    else:
-                        self.coin_manager.unregister_coin(self.symbol)
+                    self.coin_manager.unregister_coin(self.symbol)
                 
                 self.symbol = new_symbol
                 self.ws_manager.add_symbol(new_symbol, self._handle_price_update)
                 self.status = "waiting"
                 
-                self.log(f"🎯 Đã tìm thấy coin mới (không trùng): {new_symbol}")
+                self.log(f"🎯 Đã tìm thấy coin mới: {new_symbol}")
                 return True
             
             return False
@@ -956,7 +946,6 @@ class BaseBot:
         except Exception as e:
             self.log(f"❌ Lỗi tìm coin: {str(e)}")
             return False
-    
 
     def verify_leverage_and_switch(self):
         """Kiểm tra và chuyển đổi đòn bẩy nếu cần"""
@@ -1000,7 +989,7 @@ class BaseBot:
                     self.last_position_check = current_time
                 
                 # KIỂM TRA NHỒI LỆNH KHI CÓ VỊ THẾ
-                if self.position_open:
+                if self.position_open and self.entry_base > 0:
                     self.check_averaging_down()
                               
                 if not self.position_open:
@@ -1049,12 +1038,8 @@ class BaseBot:
         self._stop = True
         if self.symbol:
             self.ws_manager.remove_symbol(self.symbol)
-        # Hủy đăng ký coin khi dừng bot
         if self.symbol:
-            if hasattr(self, 'bot_manager') and self.bot_manager:
-                self.bot_manager.unregister_coin(self.symbol)
-            else:
-                self.coin_manager.unregister_coin(self.symbol)
+            self.coin_manager.unregister_coin(self.symbol)
         if self.symbol:
             cancel_all_orders(self.symbol, self.api_key, self.api_secret)
         self.log(f"🔴 Bot dừng")
@@ -1323,7 +1308,7 @@ class BaseBot:
                 return
                 
             current_price = get_current_price(self.symbol)
-            if current_price < 0:
+            if current_price <= 0:
                 return
                 
             # Tính ROI ÂM hiện tại (lỗ)
@@ -1333,7 +1318,7 @@ class BaseBot:
                 profit = (self.entry_base - current_price) * abs(self.qty)
                 
             invested = self.entry_base * abs(self.qty) / self.lev
-            if invested < 0:
+            if invested <= 0:
                 return
                 
             current_roi = (profit / invested) * 100
@@ -1369,11 +1354,11 @@ class BaseBot:
         try:
             # Tính khối lượng nhồi lệnh
             balance = get_balance(self.api_key, self.api_secret)
-            if balance is None or balance < 0:
+            if balance is None or balance <= 0:
                 return False
                 
             current_price = get_current_price(self.symbol)
-            if current_price < 0:
+            if current_price <= 0:
                 return False
                 
             # Khối lượng nhồi = % số dư * (số lần nhồi + 1) để tăng dần
@@ -1452,11 +1437,6 @@ class BotManager:
         self.start_time = time.time()
         self.user_states = {}
         
-        # CƠ CHẾ MỚI: Quản lý coin để tránh trùng lặp
-        self.used_coins = set()  # Set lưu các coin đang được sử dụng
-        self.max_bot_limit = 0   # Giới hạn số bot tối đa
-        self._coin_lock = threading.Lock()  # Lock để đồng bộ hóa
-        
         self.api_key = api_key
         self.api_secret = api_secret
         self.telegram_bot_token = telegram_bot_token
@@ -1490,90 +1470,6 @@ class BotManager:
         except Exception as e:
             self.log(f"❌ Lỗi kiểm tra kết nối: {str(e)}")
             return False
-
-    # CƠ CHẾ MỚI: Quản lý coin để tránh trùng lặp
-    def update_bot_limit(self, new_bots_count):
-        """Cập nhật giới hạn số bot và lấy danh sách coin mới"""
-        with self._coin_lock:
-            self.max_bot_limit += new_bots_count
-            self.log(f"🎯 Đã cập nhật giới hạn bot: {self.max_bot_limit} bot")
-            
-            # Lấy danh sách coin mới nếu cần
-            if len(self.used_coins) < self.max_bot_limit:
-                available_coins = self._get_available_coins()
-                return available_coins
-            return []
-
-    def _get_available_coins(self):
-        """Lấy danh sách coin có sẵn (chưa được sử dụng)"""
-        try:
-            # Lấy tất cả coin USDC từ Binance
-            all_coins = get_all_usdc_pairs(limit=100)
-            if not all_coins:
-                return []
-            
-            # Lọc ra các coin chưa được sử dụng
-            available_coins = [coin for coin in all_coins if coin not in self.used_coins]
-            
-            # Nếu không đủ coin, thử lấy top volume
-            if len(available_coins) < self.max_bot_limit:
-                top_coins = get_top_volume_symbols(limit=50)
-                available_coins = list(set(available_coins + [coin for coin in top_coins if coin not in self.used_coins]))
-            
-            self.log(f"📊 Coin có sẵn: {len(available_coins)}/{self.max_bot_limit}")
-            return available_coins
-            
-        except Exception as e:
-            self.log(f"❌ Lỗi lấy danh sách coin có sẵn: {str(e)}")
-            return []
-
-    def register_coin(self, coin):
-        """Đăng ký coin đã được sử dụng"""
-        if not coin:
-            return False
-            
-        with self._coin_lock:
-            if coin in self.used_coins:
-                return False
-            self.used_coins.add(coin)
-            self.log(f"✅ Đã đăng ký coin: {coin}")
-            return True
-
-    def unregister_coin(self, coin):
-        """Hủy đăng ký coin"""
-        if not coin:
-            return
-            
-        with self._coin_lock:
-            if coin in self.used_coins:
-                self.used_coins.remove(coin)
-                self.log(f"🗑️ Đã hủy đăng ký coin: {coin}")
-
-    def get_available_coin(self, excluded_coins=None):
-        """Lấy một coin khả dụng ngẫu nhiên không trùng lặp"""
-        if excluded_coins is None:
-            excluded_coins = set()
-            
-        with self._coin_lock:
-            # Lấy tất cả coin có sẵn
-            available_coins = self._get_available_coins()
-            
-            # Loại bỏ các coin đã bị loại trừ
-            available_coins = [coin for coin in available_coins if coin not in excluded_coins]
-            
-            if not available_coins:
-                self.log("⚠️ Không còn coin khả dụng")
-                return None
-                
-            # Chọn ngẫu nhiên một coin
-            selected_coin = random.choice(available_coins)
-            
-            # Đăng ký coin này
-            if self.register_coin(selected_coin):
-                return selected_coin
-            else:
-                # Nếu không đăng ký được, thử lại với coin khác
-                return self.get_available_coin(excluded_coins | {selected_coin})
 
     def get_position_summary(self):
         """Lấy thống kê tổng quan"""
@@ -1761,57 +1657,47 @@ class BotManager:
             self.log("❌ KHÔNG THỂ KẾT NỐI BINANCE - KHÔNG THỂ TẠO BOT")
             return False
         
-        # CƠ CHẾ MỚI: Cập nhật giới hạn bot và lấy coin khả dụng
-        available_coins = self.update_bot_limit(bot_count)
-        
         bot_mode = kwargs.get('bot_mode', 'static')
         created_count = 0
         
         for i in range(bot_count):
             try:
-                current_symbol = symbol
-                
-                # Nếu là bot động và có symbol cụ thể, kiểm tra trùng lặp
                 if bot_mode == 'static' and symbol:
-                    if not self.register_coin(symbol):
-                        self.log(f"❌ Coin {symbol} đã được sử dụng, không thể tạo bot trùng")
+                    bot_id = f"{symbol}_{strategy_type}_{i}_{int(time.time())}"
+                    
+                    if bot_id in self.bots:
                         continue
-                
-                # Nếu là bot động, chọn coin ngẫu nhiên không trùng lặp
-                elif bot_mode == 'dynamic':
-                    current_symbol = self.get_available_coin()
-                    if not current_symbol:
-                        self.log("❌ Không thể tìm thấy coin khả dụng cho bot động")
+                    
+                    bot_class = GlobalMarketBot
+                    
+                    if not bot_class:
                         continue
+                    
+                    bot = bot_class(symbol, lev, percent, tp, sl, roi_trigger, self.ws_manager,
+                                  self.api_key, self.api_secret, self.telegram_bot_token, 
+                                  self.telegram_chat_id, bot_id=bot_id)
+                    
+                else:
+                    bot_id = f"DYNAMIC_{strategy_type}_{i}_{int(time.time())}"
+                    
+                    if bot_id in self.bots:
+                        continue
+                    
+                    bot_class = GlobalMarketBot
+                    
+                    if not bot_class:
+                        continue
+                    
+                    bot = bot_class(None, lev, percent, tp, sl, roi_trigger, self.ws_manager,
+                                  self.api_key, self.api_secret, self.telegram_bot_token,
+                                  self.telegram_chat_id, bot_id=bot_id)
                 
-                bot_id = f"{current_symbol}_{strategy_type}_{i}_{int(time.time())}" if current_symbol else f"DYNAMIC_{strategy_type}_{i}_{int(time.time())}"
-                
-                if bot_id in self.bots:
-                    continue
-                
-                bot_class = GlobalMarketBot
-                
-                if not bot_class:
-                    continue
-                
-                bot = bot_class(current_symbol, lev, percent, tp, sl, roi_trigger, self.ws_manager,
-                              self.api_key, self.api_secret, self.telegram_bot_token, 
-                              self.telegram_chat_id, bot_id=bot_id)
-                
-                # Truyền tham chiếu BotManager cho bot để quản lý coin
-                bot.bot_manager = self
-                bot.coin_manager = self  # Sử dụng BotManager làm coin manager
-                
+                bot._bot_manager = self
                 self.bots[bot_id] = bot
                 created_count += 1
                 
             except Exception as e:
                 self.log(f"❌ Lỗi tạo bot {i}: {str(e)}")
-                # Nếu có lỗi, hủy đăng ký coin
-                if bot_mode == 'static' and symbol:
-                    self.unregister_coin(symbol)
-                elif bot_mode == 'dynamic' and current_symbol:
-                    self.unregister_coin(current_symbol)
                 continue
         
         if created_count > 0:
@@ -1825,19 +1711,20 @@ class BotManager:
                 f"🎯 TP: {tp}%\n"
                 f"🛡️ SL: {sl if sl is not None else 'Tắt'}%{roi_info}\n"
                 f"🔧 Chế độ: {bot_mode}\n"
-                f"🔢 Số bot hiện tại: {len(self.bots)}/{self.max_bot_limit}\n"
-                f"📊 Coin đang dùng: {len(self.used_coins)}"
             )
             
             if bot_mode == 'static' and symbol:
-                success_msg += f"\n🔗 Coin: {symbol}"
+                success_msg += f"🔗 Coin: {symbol}\n"
             else:
-                success_msg += f"\n🔗 Coin: Tự động tìm kiếm (không trùng lặp)"
+                success_msg += f"🔗 Coin: Tự động tìm kiếm\n"
             
-            success_msg += f"\n\n📊 <b>CƠ CHẾ CHỐNG TRÙNG COIN ĐÃ KÍCH HOẠT</b>\n"
-            success_msg += f"✅ Mỗi bot sử dụng coin riêng biệt\n"
-            success_msg += f"🔄 Tự động tìm coin mới khi không khả dụng\n"
-            success_msg += f"📈 Giới hạn: {self.max_bot_limit} bot"
+            success_msg += f"\n📊 <b>CƠ CHẾ PHÂN TÍCH TOÀN DIỆN ĐÃ KÍCH HOẠT</b>\n"
+            success_msg += f"📈 Xem xét cả số lượng và PnL (cả âm và dương)\n"
+            success_msg += f"⚖️ Quyết định dựa trên phân tích đa chiều\n"
+            success_msg += f"🔄 Kết hợp: Số lượng + Lợi nhuận = Quyết định tối ưu\n\n"
+            success_msg += f"📈 <b>NHỒI LỆNH FIBONACCI THEO ROI</b>\n"
+            success_msg += f"🔢 Các mốc: 200%, 300%, 500%, 800%, 1300%, 2100%, 3400%\n"
+            success_msg += f"⏰ Kiểm tra 10 giây/lần"
             
             self.log(success_msg)
             return True
@@ -1848,10 +1735,6 @@ class BotManager:
     def stop_bot(self, bot_id):
         bot = self.bots.get(bot_id)
         if bot:
-            # Hủy đăng ký coin trước khi dừng bot
-            if bot.symbol:
-                self.unregister_coin(bot.symbol)
-            
             bot.stop()
             del self.bots[bot_id]
             self.log(f"⛔ Đã dừng bot {bot_id}")
@@ -2349,7 +2232,7 @@ class BotManager:
                 tp=tp,
                 sl=sl,
                 roi_trigger=roi_trigger,
-                strategy_type="Global-Market-Toàn-Diện",
+                strategy_type="Global-Market-Tổng-Lỗ",
                 bot_mode=bot_mode,
                 bot_count=bot_count
             )
@@ -2359,24 +2242,24 @@ class BotManager:
                 
                 success_msg = (
                     f"✅ <b>ĐÃ TẠO {bot_count} BOT THÀNH CÔNG</b>\n\n"
-                    f"🤖 Chiến lược: Phân tích toàn diện\n"
+                    f"🤖 Chiến lược: Tính tổng lỗ toàn tài khoản\n"
                     f"🔧 Chế độ: {bot_mode}\n"
                     f"🔢 Số lượng: {bot_count} bot độc lập\n"
                     f"💰 Đòn bẩy: {leverage}x\n"
                     f"📊 % Số dư: {percent}%\n"
                     f"🎯 TP: {tp}%\n"
-                    f"🛡️ SL: {sl}%{roi_info}\n"
-                    f"🔢 Tổng số bot: {len(self.bots)}/{self.max_bot_limit}"
+                    f"🛡️ SL: {sl}%{roi_info}"
                 )
                 if bot_mode == 'static' and symbol:
                     success_msg += f"\n🔗 Coin: {symbol}"
-                else:
-                    success_msg += f"\n🔗 Coin: Tự động (không trùng lặp)"
                 
-                success_msg += f"\n\n🔄 <b>CƠ CHẾ CHỐNG TRÙNG COIN ĐANG HOẠT ĐỘNG</b>\n"
-                success_msg += f"✅ Mỗi bot có coin riêng biệt\n"
-                success_msg += f"📊 Đang sử dụng: {len(self.used_coins)} coin\n"
-                success_msg += f"🎯 Giới hạn: {self.max_bot_limit} bot"
+                success_msg += f"\n\n📉 <b>CƠ CHẾ TÍNH TỔNG LỖ ĐÃ KÍCH HOẠT</b>\n"
+                success_msg += f"📈 Lỗ LONG nhiều -> Ưu tiên SELL\n"
+                success_msg += f"📉 Lỗ SHORT nhiều -> Ưu tiên BUY\n"
+                success_msg += f"⚖️ Bằng nhau -> Chọn ngẫu nhiên\n\n"
+                success_msg += f"📈 <b>NHỒI LỆNH FIBONACCI THEO ROI</b>\n"
+                success_msg += f"🔢 Các mốc: 200%, 300%, 500%, 800%, 1300%, 2100%, 3400%\n"
+                success_msg += f"⏰ Kiểm tra 10 giây/lần"
                 
                 send_telegram(success_msg, chat_id, create_main_menu(),
                             self.telegram_bot_token, self.telegram_chat_id)
@@ -2391,5 +2274,6 @@ class BotManager:
             send_telegram(f"❌ Lỗi tạo bot: {str(e)}", chat_id, create_main_menu(),
                         self.telegram_bot_token, self.telegram_chat_id)
             self.user_states[chat_id] = {}
+
 # ========== KHỞI TẠO GLOBAL INSTANCES ==========
 coin_manager = CoinManager()
