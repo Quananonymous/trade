@@ -721,8 +721,10 @@ class BaseBot:
         self._last_close_attempt = 0
         
         self.should_be_removed = False
+        self.coin_manager = bot_manager.coin_manager
+        self.symbol_locks = bot_manager.symbol_locks
+
         
-        self.coin_manager = CoinManager()
         self.coin_finder = SmartCoinFinder(api_key, api_secret)
         
         # BIẾN QUAN TRỌNG: Theo dõi hướng lệnh cuối cùng
@@ -989,7 +991,7 @@ class BaseBot:
                     self.last_position_check = current_time
                 
                 # KIỂM TRA NHỒI LỆNH KHI CÓ VỊ THẾ
-                if self.position_open and self.entry_base > 0:
+                if self.position_open:
                     self.check_averaging_down()
                               
                 if not self.position_open:
@@ -1045,6 +1047,14 @@ class BaseBot:
         self.log(f"🔴 Bot dừng")
 
     def open_position(self, side):
+        lock = self.symbol_locks.setdefault(self.symbol, threading.Lock())
+
+        with lock:
+            self.check_position_status()
+        
+            if self.position_open:
+                return False
+
         if side not in ["BUY", "SELL"]:
             self.log(f"❌ Side không hợp lệ: {side}")
             self._cleanup_symbol()
@@ -1308,7 +1318,7 @@ class BaseBot:
                 return
                 
             current_price = get_current_price(self.symbol)
-            if current_price <= 0:
+            if current_price < 0:
                 return
                 
             # Tính ROI ÂM hiện tại (lỗ)
@@ -1318,7 +1328,7 @@ class BaseBot:
                 profit = (self.entry_base - current_price) * abs(self.qty)
                 
             invested = self.entry_base * abs(self.qty) / self.lev
-            if invested <= 0:
+            if invested < 0:
                 return
                 
             current_roi = (profit / invested) * 100
@@ -1358,7 +1368,7 @@ class BaseBot:
                 return False
                 
             current_price = get_current_price(self.symbol)
-            if current_price <= 0:
+            if current_price < 0:
                 return False
                 
             # Khối lượng nhồi = % số dư * (số lần nhồi + 1) để tăng dần
@@ -1436,7 +1446,8 @@ class BotManager:
         self.running = True
         self.start_time = time.time()
         self.user_states = {}
-        
+        self.coin_manager = CoinManager()
+        self.symbol_locks = {}
         self.api_key = api_key
         self.api_secret = api_secret
         self.telegram_bot_token = telegram_bot_token
